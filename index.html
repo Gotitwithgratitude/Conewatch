@@ -1,34 +1,5 @@
 <!DOCTYPE html>
-<!--
-  ═══════════════════════════════════════════════════════════════
-  CONEWATCH PRO MAX — GPS navigation + road intelligence
-  Engine: MapLibre GL v5 (sky/atmosphere, 3D buildings). Free
-  keyless stack: OpenFreeMap vector tiles (Carto raster fallback),
-  OSRM routing (car/bike/foot), Nominatim autocomplete, Open-Meteo
-  weather/elevation/sun times, Overpass POIs, optional Supabase.
-
-  SENSORS (all on-device, all optional): GPS · compass/gyro ·
-  accelerometer (impact detection) · ambient light (adaptive
-  theme) · battery · network status · wake lock · camera torch.
-
-  PRIVACY: no account, no analytics. Nothing leaves the phone
-  except hazard/feedback reports you explicitly send.
-
-  SUPABASE (optional):
-    create table hazards (id uuid primary key default gen_random_uuid(),
-      type text, lat double precision, lng double precision,
-      note text default '', sev int default 2, reports int default 1,
-      created_at timestamptz default now());
-    create table feedback (id uuid primary key default gen_random_uuid(),
-      category text, message text, lat double precision, lng double precision,
-      created_at timestamptz default now());
-    alter table hazards enable row level security;
-    alter table feedback enable row level security;
-    create policy "r" on hazards for select using (true);
-    create policy "i" on hazards for insert with check (true);
-    create policy "fi" on feedback for insert with check (true);
-  ═══════════════════════════════════════════════════════════════
--->
+<!-- ConeWatch — © Got It With Gratitude LLC. All rights reserved. Free pothole & road-hazard app. -->
 <html lang="en" data-theme="dark">
 <head>
   <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin>
@@ -292,6 +263,33 @@
   <link rel="icon" type="image/png" href="icon-512.png">
 </head>
 <body>
+<script>
+/* ConeWatch — escape in-app browsers (Threads/IG/FB/TikTok/etc.) that crash the live map */
+(function(){
+  var ua = navigator.userAgent || "";
+  var inApp = /Instagram|Threads|Barcelona|FBAN|FBAV|FB_IAB|Messenger|TikTok|musical_ly|BytedanceWebview|Snapchat|Line\/|LinkedInApp|Twitter|Pinterest/i.test(ua);
+  if(!inApp) return;
+  var url = "https://conewatch.vercel.app";
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+  var o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#0d0e12;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;font-family:-apple-system,system-ui,Roboto,sans-serif;";
+  o.innerHTML =
+    '<div style="font-size:46px;margin-bottom:10px;">\uD83D\uDEA7</div>' +
+    '<div style="font-size:22px;font-weight:800;">Open ConeWatch in your browser</div>' +
+    '<div style="opacity:.75;margin:12px 0 22px;line-height:1.5;max-width:320px;">This in-app view can\'t run the live map. ' +
+    (isIOS ? 'Tap <b>\u2022\u2022\u2022</b> at the top-right, then <b>Open in Browser</b>.'
+           : 'Tap the <b>\u22EE</b> menu, then <b>Open in browser</b>.') +
+    '</div>' +
+    '<button id="cwCopy" style="background:#FF6B1A;color:#180a02;border:0;border-radius:14px;padding:14px 22px;font-size:16px;font-weight:800;">Copy link</button>';
+  document.documentElement.appendChild(o);
+  var b = document.getElementById("cwCopy");
+  b.onclick = function(){
+    try{
+      navigator.clipboard.writeText(url).then(function(){ b.textContent = "Link copied \u2713"; }, function(){ b.textContent = url; });
+    }catch(e){ b.textContent = url; }
+  };
+})();
+</script>
 
 <div id="map"></div>
 
