@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v59";
+const APP_VERSION="v61";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -41,7 +41,9 @@ const S = {
   speedMph:0, tripM:0, is3d:false, mapReady:false,
   themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
+  avoidTolls:false, avoidHwy:false, dispPos:null,
 };
+try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
 let toastTimer;
 function toast(msg,ms=2800){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),ms);}
@@ -121,7 +123,7 @@ function hazPopupHTML(h){
 }
 function refreshHazPopup(h){ try{ if(h._marker&&h._marker.getPopup())h._marker.getPopup().setHTML(hazPopupHTML(h)); }catch(e){} }
 // confirm = "still here": bumps count AND freshens the timer (crowd feedback keeps live reports alive, lets stale ones expire)
-window.cwConfirm=function(id){ const h=S.hazards.find(x=>x.id===id); if(!h)return; h.reports=(h.reports||1)+1; h.ts=Date.now(); refreshHazPopup(h); toast(`Confirmed ✓ · ${h.reports} reports`); if(navigator.vibrate)navigator.vibrate(30); };
+window.cwConfirm=function(id){ const h=S.hazards.find(x=>x.id===id); if(!h)return; h.reports=(h.reports||1)+1; h.ts=Date.now(); refreshHazPopup(h); if(h.type==="pothole"&&h._marker){try{h._marker.getElement().style.background=(h.reports>=5?"#E5484D":(h.reports>=2?"#FF8A1E":"#FFC72C"));}catch(e){}} toast(`Confirmed ✓ · ${h.reports} reports`); if(navigator.vibrate)navigator.vibrate(30); };
 // gone/fixed: temporary needs 1 vote, permanent needs 2 (avoids accidental removal of a real pothole)
 window.cwGone=function(id){ const i=S.hazards.findIndex(x=>x.id===id); if(i<0)return; const h=S.hazards[i]; h.gone=(h.gone||0)+1; const need=HAZ_TTL[h.type]===0?2:1;
   if(h.gone>=need){ try{if(h._marker)h._marker.remove();}catch(e){} S.hazards.splice(i,1); toast("Cleared — thanks for the update"); }
@@ -253,17 +255,25 @@ function onPos(p){
   if(heading!==null && !isNaN(heading)) S.course=heading;
   else if(S.lastPos && distM(S.lastPos,S.pos)>3) S.course=bearing(S.lastPos,S.pos);
 
+  // speed: trust the GPS's own speed; when we must derive it, reject GPS scatter so a parked car never shows motion
+  let moved = S.lastPos ? distM(S.lastPos,S.pos) : 0;
   let mph=0;
-  if(speed!==null && !isNaN(speed)) mph=speed*2.23694;
-  else if(S.lastPos){const d=distM(S.lastPos,S.pos),dt=(S.pos.t-S.lastPos.t)/1000;if(dt>0.4)mph=(d/dt)*2.23694;}
-  S.speedMph=S.speedMph*0.55+mph*0.45;
+  if(speed!==null && !isNaN(speed) && speed>=0){ mph=speed*2.23694; if(mph<1.5) mph=0; }
+  else if(S.lastPos){ const dt=(S.pos.t-S.lastPos.t)/1000, acc=accuracy||30; if(dt>0.4 && dt<12 && moved>Math.max(10,acc)) mph=(moved/dt)*2.23694; }
+  if(!(mph>=0) || mph>120) mph=0;                 // reject NaN / impossible teleport jumps
+  S.speedMph=S.speedMph*0.6+mph*0.4;
+  if(S.speedMph<1) S.speedMph=0;
   const vm=Math.round(S.speedMph);
   $("speedV").textContent=S.units==="km"?Math.round(S.speedMph*1.60934):vm;
   $("speed").classList.toggle("over", S.limit ? vm>S.limit : vm>75);
-  if(S.lastPos && mph>1){S.tripM+=distM(S.lastPos,S.pos);$("tripMi").textContent=S.units==="km"?(S.tripM/1000).toFixed(1):(S.tripM/1609.34).toFixed(1);}
+  if(S.lastPos && mph>3 && moved<80){S.tripM+=moved;$("tripMi").textContent=S.units==="km"?(S.tripM/1000).toFixed(1):(S.tripM/1609.34).toFixed(1);}
 
-  if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[lng,lat],zoom:16,duration:800}); toast("GPS locked ✓"); }
-  if(meMarker){ meMarker.setLngLat([lng,lat]); if(S.course!==null) meMarker.setRotation(S.course); }
+  // snap-to-road while navigating: pin the dot AND the heading to the route line so GPS scatter can't drift it off-road
+  let _dispLat=lat,_dispLng=lng;
+  if(S.navigating){ const _snap=snapToRoute(S.pos); if(_snap && _snap.dist<40){ _dispLat=_snap.lat; _dispLng=_snap.lng; S.course=_snap.bearing; } }
+  S.dispPos={lat:_dispLat,lng:_dispLng};
+  if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[_dispLng,_dispLat],zoom:16,duration:800}); toast("GPS locked ✓"); }
+  if(meMarker){ meMarker.setLngLat([_dispLng,_dispLat]); if(S.course!==null) meMarker.setRotation(S.course); }
   if(!sunLoaded){ sunLoaded=true; loadSunTimes(); }
 
   autoParkWatch();
@@ -284,13 +294,14 @@ function speedZoom(){ const mph=S.speedMph||0; if(mph>65)return 15.2; if(mph>45)
 function cameraFollow(){
   if(!S.follow||!S.pos||!S.mapReady||S.touching) return;
   const now=Date.now();
+  const cp=S.dispPos||S.pos;
   if(S.navigating){
     // stationary (light/traffic) → skip re-centering; nothing moved, so don't repaint
-    if(S.speedMph<1.2 && _lastCamPos && distM(_lastCamPos,S.pos)<3){ return; }
-    _lastCamPos={lat:S.pos.lat,lng:S.pos.lng};
+    if(S.speedMph<1.2 && _lastCamPos && distM(_lastCamPos,cp)<3){ return; }
+    _lastCamPos={lat:cp.lat,lng:cp.lng};
     const dur=Math.min(1600,Math.max(300,lastFixT?now-lastFixT:800));
     lastFixT=now;
-    map.easeTo({center:[S.pos.lng,S.pos.lat],
+    map.easeTo({center:[cp.lng,cp.lat],
       zoom:speedZoom(),pitch:S.saver?0:60,   // auto speed-zoom; saver = flat 2D
       bearing:(S.headingUp&&S.course!==null)?S.course:map.getBearing(),
       offset:[0,map.getContainer().clientHeight*0.18],
@@ -298,7 +309,7 @@ function cameraFollow(){
     return;
   }
   if(now-lastFollow<900) return; lastFollow=now;
-  const opts={center:[S.pos.lng,S.pos.lat],duration:S.saver?0:850,essential:true};
+  const opts={center:[cp.lng,cp.lat],duration:S.saver?0:850,essential:true};
   if(S.headingUp&&S.course!==null)opts.bearing=S.course;
   map.easeTo(opts);
 }
@@ -306,6 +317,29 @@ function cameraFollow(){
 /* ═══════════ geo utils ═══════════ */
 function distM(a,b){const R=6371000,r=Math.PI/180,dLa=(b.lat-a.lat)*r,dLo=(b.lng-a.lng)*r;const s=Math.sin(dLa/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(s));}
 function bearing(a,b){const r=Math.PI/180,y=Math.sin((b.lng-a.lng)*r)*Math.cos(b.lat*r),x=Math.cos(a.lat*r)*Math.sin(b.lat*r)-Math.sin(a.lat*r)*Math.cos(b.lat*r)*Math.cos((b.lng-a.lng)*r);return (Math.atan2(y,x)*180/Math.PI+360)%360;}
+// project a lng/lat point onto a segment (local equirectangular meters) → nearest point on the segment
+function _projPointToSeg(plng,plat,alng,alat,blng,blat){
+  const latRef=(alat+blat)/2, mLat=111320, mLng=111320*Math.cos(latRef*Math.PI/180);
+  const ax=alng*mLng, ay=alat*mLat, bx=blng*mLng, by=blat*mLat, px=plng*mLng, py=plat*mLat;
+  const dx=bx-ax, dy=by-ay, len2=dx*dx+dy*dy;
+  let t = len2>0 ? ((px-ax)*dx+(py-ay)*dy)/len2 : 0;
+  t=Math.max(0,Math.min(1,t));
+  return { lng:(ax+t*dx)/mLng, lat:(ay+t*dy)/mLat };
+}
+// nearest point on the active route to pt → {lat,lng,dist(m),bearing(deg down-route)}
+function snapToRoute(pt){
+  const co = S.route && S.route.geometry && S.route.geometry.coordinates;
+  if(!co || co.length<2) return null;
+  let best=null;
+  for(let i=0;i<co.length-1;i++){
+    const a=co[i], b=co[i+1];
+    const q=_projPointToSeg(pt.lng,pt.lat,a[0],a[1],b[0],b[1]);
+    const d=distM(q,pt);
+    if(!best||d<best.dist){ best={dist:d,lat:q.lat,lng:q.lng,a:a,b:b}; }
+  }
+  if(best){ best.bearing=bearing({lat:best.a[1],lng:best.a[0]},{lat:best.b[1],lng:best.b[0]}); }
+  return best;
+}
 function fmtDist(m){
   if(S.units==="km")return m>=1000?(m/1000).toFixed(1)+" km":Math.max(10,Math.round(m/10)*10)+" m";
   return m>=400?(m/1609.34).toFixed(1)+" mi":Math.max(10,Math.round((m*3.28084)/10)*10)+" ft";
@@ -480,13 +514,119 @@ async function osrmFetch(coordsStr,alt){
   try{ const d=await (await fetchT(primary,6000)).json(); if(isOk(d))return d; throw 0; }
   catch{ try{ return await (await fetchT(primary,9000)).json(); }catch{ return {code:"Error"}; } }
 }
+/* ═══════════ Valhalla routing (toll/highway avoidance) — keyless FOSSGIS instance, OSRM fallback ═══════════ */
+function _decodePolyline(str, precision){
+  let index=0,lat=0,lng=0,coords=[],shift,result,byte,factor=Math.pow(10,precision||6);
+  while(index<str.length){
+    shift=0;result=0;
+    do{ byte=str.charCodeAt(index++)-63; result|=(byte&0x1f)<<shift; shift+=5; }while(byte>=0x20);
+    lat += ((result&1)?~(result>>1):(result>>1));
+    shift=0;result=0;
+    do{ byte=str.charCodeAt(index++)-63; result|=(byte&0x1f)<<shift; shift+=5; }while(byte>=0x20);
+    lng += ((result&1)?~(result>>1):(result>>1));
+    coords.push([lng/factor, lat/factor]);   // [lng,lat] for geojson
+  }
+  return coords;
+}
+// Valhalla maneuver-type integer → OSRM {type, modifier, exit}
+function _vMan(t, roundExit){
+  switch(t){
+    case 1: return {type:"depart"};
+    case 2: return {type:"depart",modifier:"right"};
+    case 3: return {type:"depart",modifier:"left"};
+    case 4: return {type:"arrive"};
+    case 5: return {type:"arrive",modifier:"right"};
+    case 6: return {type:"arrive",modifier:"left"};
+    case 7: return {type:"new name"};
+    case 8: return {type:"continue",modifier:"straight"};
+    case 9: return {type:"turn",modifier:"slight right"};
+    case 10:return {type:"turn",modifier:"right"};
+    case 11:return {type:"turn",modifier:"sharp right"};
+    case 12:return {type:"turn",modifier:"uturn"};
+    case 13:return {type:"turn",modifier:"uturn"};
+    case 14:return {type:"turn",modifier:"sharp left"};
+    case 15:return {type:"turn",modifier:"left"};
+    case 16:return {type:"turn",modifier:"slight left"};
+    case 17:return {type:"on ramp",modifier:"straight"};
+    case 18:return {type:"on ramp",modifier:"right"};
+    case 19:return {type:"on ramp",modifier:"left"};
+    case 20:return {type:"off ramp",modifier:"right"};
+    case 21:return {type:"off ramp",modifier:"left"};
+    case 22:return {type:"fork",modifier:"straight"};
+    case 23:return {type:"fork",modifier:"right"};
+    case 24:return {type:"fork",modifier:"left"};
+    case 25:return {type:"merge",modifier:"straight"};
+    case 37:return {type:"merge",modifier:"right"};
+    case 38:return {type:"merge",modifier:"left"};
+    case 26:return {type:"roundabout",exit:roundExit||1};
+    default:return {type:"continue",modifier:"straight"};
+  }
+}
+// translate a Valhalla /route response into the OSRM shape the rest of the app expects
+function valhallaToOSRM(vt){
+  if(!vt||!vt.trip||!vt.trip.legs||!vt.trip.legs.length) return {code:"Error"};
+  let legs=[], allCoords=[];
+  vt.trip.legs.forEach(function(leg){
+    const base=allCoords.length;
+    const shape=_decodePolyline(leg.shape,6);
+    allCoords=allCoords.concat(shape);
+    const steps=(leg.maneuvers||[]).map(function(mn){
+      const man=_vMan(mn.type, mn.roundabout_exit_count);
+      let idx=base+(mn.begin_shape_index||0);
+      if(idx>=allCoords.length) idx=allCoords.length-1;
+      const loc=allCoords[idx]||allCoords[allCoords.length-1]||[0,0];
+      return {
+        name:(mn.street_names&&mn.street_names[0])||(mn.begin_street_names&&mn.begin_street_names[0])||"",
+        distance:(mn.length||0)*1000,
+        duration:(mn.time||0),
+        maneuver:{ type:man.type, modifier:man.modifier, exit:man.exit, location:[loc[0],loc[1]] }
+      };
+    });
+    legs.push({steps:steps});
+  });
+  const dist=((vt.trip.summary&&vt.trip.summary.length)||0)*1000;
+  const time=(vt.trip.summary&&vt.trip.summary.time)||0;
+  return { code:"Ok", routes:[ { geometry:{type:"LineString",coordinates:allCoords}, legs:legs, distance:dist, duration:time } ] };
+}
+async function valhallaFetch(ptsArr){
+  const body={ locations:ptsArr.map(function(p){return {lat:p.lat,lon:p.lng};}),
+    costing:"auto",
+    costing_options:{auto:{ use_tolls:S.avoidTolls?0:1, use_highways:S.avoidHwy?0:1 }},
+    directions_options:{units:"kilometers"} };
+  const ac=new AbortController(); const timer=setTimeout(function(){try{ac.abort();}catch(e){}},9000);
+  const res=await fetch("https://valhalla1.openstreetmap.de/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ac.signal}).finally(function(){clearTimeout(timer);});
+  if(!res.ok) throw new Error("valhalla http "+res.status);
+  return valhallaToOSRM(await res.json());
+}
+// choose the router: Valhalla only when the user opted into avoidance (car mode); otherwise proven OSRM. Always OSRM-fallback.
+async function routeFetch(ptsArr){
+  const coordsStr=ptsArr.map(function(p){return p.lng+","+p.lat;}).join(";");
+  if(S.mode==="car" && (S.avoidTolls||S.avoidHwy)){
+    try{ const v=await valhallaFetch(ptsArr); if(v&&v.code==="Ok"&&v.routes&&v.routes.length) return v; }catch(e){}
+    toast("Toll/highway routing busy — using fastest route.",2600);
+  }
+  return await osrmFetch(coordsStr);
+}
+// toll/highway toggle chips in the route sheet (car mode only)
+function renderRouteOpts(){
+  const sl=$("stopsList"); if(!sl) return;
+  let box=document.getElementById("routeOpts");
+  if(S.mode!=="car"){ if(box)box.remove(); return; }
+  if(!box){ box=document.createElement("div"); box.id="routeOpts"; box.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 12px"; sl.parentNode.insertBefore(box,sl); }
+  box.innerHTML="";
+  [["🛣️ Avoid tolls","avoidTolls"],["🚗 Avoid highways","avoidHwy"]].forEach(function(o){
+    const b=document.createElement("button"); b.className="chip"+(S[o[1]]?" on":""); b.textContent=o[0];
+    b.onclick=function(){ S[o[1]]=!S[o[1]]; try{localStorage.setItem("cw_"+o[1],S[o[1]]?"1":"0");}catch(e){} renderRouteOpts(); toast("Recalculating route…",1500); fetchRoute(); };
+    box.appendChild(b);
+  });
+}
+
 async function fetchRoute(silent){
   if(!S.pos||!S.dest||S.rerouting) return;
   if(!navigator.onLine){ if(!silent)toast("Offline — showing your saved route. It stays active.",3200); return; }
   S.rerouting=true;
   try{
-    const pts=[S.pos,...S.stops,S.dest].map(p=>`${p.lng},${p.lat}`).join(";");
-    const data=await osrmFetch(pts);
+    const data=await routeFetch([S.pos,...S.stops,S.dest]);
     if(data.code!=="Ok"||!data.routes?.length){toast("No route found for this mode.");S.rerouting=false;return;}
     const r=data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
@@ -505,6 +645,7 @@ function renderRouteSheet(r){
   const rush=rushFactor()>1?" · rush-hour adjusted":"";
   const arrClock=new Date(Date.now()+r.duration*rushFactor()*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
   $("rsMeta").textContent=`${fmtDist(r.distance)} · ${fmtDur(r.duration*rushFactor())} · arrive ${arrClock} (${S.mode})${rush}`;
+  try{ renderRouteOpts(); }catch(e){}
   const sl=$("stopsList");sl.innerHTML="";
   S.stops.forEach((s,i)=>{
     const b=document.createElement("button");b.className="row-btn";
@@ -798,7 +939,9 @@ function addHazardMarker(h){
   if(!h.id)h.id="h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   if(!h.ts)h.ts=h.created_at?Date.parse(h.created_at)||Date.now():Date.now();
   const m=HZ_META[h.type]||HZ_META.debris;
-  const el=document.createElement("div");el.className="hz";el.style.background=m.color;el.textContent=m.emoji;
+  const el=document.createElement("div");el.className="hz";
+  el.style.background=(h.type==="pothole")?(((h.reports||1)>=5)?"#E5484D":(((h.reports||1)>=2)?"#FF8A1E":"#FFC72C")):m.color;
+  el.textContent=m.emoji;
   const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
     .setPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h)))
     .addTo(map);
@@ -820,11 +963,13 @@ async function reportHazard(type,note){
   const near=S.hazards.find(x=>x.type===type && distM(S.pos,{lat:x.lat,lng:x.lng})<35);
   if(near){
     near.reports=(near.reports||1)+1; near.ts=Date.now(); refreshHazPopup(near);
+    if(type==="pothole"&&near._marker){try{near._marker.getElement().style.background=(near.reports>=5?"#E5484D":(near.reports>=2?"#FF8A1E":"#FFC72C"));}catch(e){}}
     toast(`${HZ_META[type].label} confirmed ✓ · ${near.reports} reports`);
     if(S.sb.url&&S.sb.key){ try{ await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json"}),body:JSON.stringify({type,lat:S.pos.lat,lng:S.pos.lng,note:note||"confirm",sev:2,reports:1})}); }catch(e){} }
     return;
   }
-  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:S.pos.lat,lng:S.pos.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1};
+  const _p=((type==="pothole"||type==="debris")&&S.course!=null&&!isNaN(S.course))?(function(){const rad=(S.course+90)*Math.PI/180,dM=4;return{lat:S.pos.lat+(dM*Math.cos(rad))/111111,lng:S.pos.lng+(dM*Math.sin(rad))/(111111*Math.cos(S.pos.lat*Math.PI/180))};})():{lat:S.pos.lat,lng:S.pos.lng};
+  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:_p.lat,lng:_p.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1};
   S.hazards.push(h);addHazardMarker(h);
   toast(`${HZ_META[type].label} reported ✓`);
   if(S.sb.url&&S.sb.key){
@@ -954,7 +1099,7 @@ async function requestMotion(){
   window.addEventListener("deviceorientation",(e)=>{
     if(e.webkitCompassHeading!==undefined)S.compass=e.webkitCompassHeading;
     else if(e.alpha!==null)S.compass=(360-e.alpha)%360;
-    if(S.speedMph<2&&S.compass!==null)S.course=S.compass;
+    if(S.speedMph<2&&S.compass!==null&&!S.navigating)S.course=S.compass;
     updateCompassUI();
   });
   window.addEventListener("devicemotion",onMotion);
@@ -976,7 +1121,7 @@ function onMotion(e){
     // strong hit → offer to report a pothole (severity scales with the impact)
     $("bumpBar").style.display="flex";
     beep(520,.2);if(navigator.vibrate)navigator.vibrate(60);
-    setTimeout(()=>{$("bumpBar").style.display="none";},7000);
+    setTimeout(()=>{$("bumpBar").style.display="none";},9000);
   }
 }
 // rolling road-roughness log (kept local + drawn as a heatmap; recent points only)
