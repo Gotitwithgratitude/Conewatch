@@ -219,7 +219,11 @@
 
   try{ console.log("ConeWatch discovery patch active"); }catch(e){}
   try{
-    var vb=document.getElementById("verBadge"); if(vb) vb.textContent="v60";
-    var av=document.getElementById("appVer"); if(av) av.textContent="v60";
+    // reflect the REAL build version from app.js — never hardcode (was stamping a stale number over the badge)
+    var _ver = (typeof APP_VERSION !== "undefined") ? APP_VERSION : null;
+    if(_ver){
+      var vb=document.getElementById("verBadge"); if(vb) vb.textContent=_ver;
+      var av=document.getElementById("appVer"); if(av) av.textContent=_ver;
+    }
   }catch(e){}
 })();
