@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v61";
+const APP_VERSION="v62";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -41,7 +41,7 @@ const S = {
   speedMph:0, tripM:0, is3d:false, mapReady:false,
   themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
-  avoidTolls:false, avoidHwy:false, dispPos:null,
+  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0,
 };
 try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
@@ -185,9 +185,9 @@ function toggleHeat(){
 function addMapLayers(){
   const a=ACCENT[S.themeNow];
   if(!map.getSource("route")) map.addSource("route",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-  if(!map.getLayer("route-casing")) map.addLayer({id:"route-casing",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.casing,"line-width":11,"line-opacity":.95}});
-  if(!map.getLayer("route-line")) map.addLayer({id:"route-line",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.route,"line-width":7}});
-  if(!map.getLayer("route-core")) map.addLayer({id:"route-core",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"rgba(255,255,255,.75)","line-width":2.2}});
+  if(!map.getLayer("route-casing")) map.addLayer({id:"route-casing",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.casing,"line-width":["interpolate",["linear"],["zoom"],10,7,14,13,18,22],"line-opacity":.95}});
+  if(!map.getLayer("route-line")) map.addLayer({id:"route-line",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.route,"line-width":["interpolate",["linear"],["zoom"],10,4.5,14,9,18,15]}});
+  if(!map.getLayer("route-core")) map.addLayer({id:"route-core",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"rgba(255,255,255,.82)","line-width":["interpolate",["linear"],["zoom"],10,1.4,14,2.6,18,4.2]}});
   // 3D buildings from whichever vector source the style ships
   try{
     const sources=map.getStyle().sources;
@@ -251,7 +251,18 @@ function autoParkWatch(){
 }
 function onPos(p){
   const {latitude:lat,longitude:lng,accuracy,speed,heading}=p.coords;
-  S.lastPos=S.pos; S.pos={lat,lng,t:p.timestamp}; S.accuracy=accuracy;
+  const _new={lat,lng,t:p.timestamp};
+  // ── reject junk GPS fixes: poor accuracy or an impossible jump → hold last good position (kills teleport / circling / stuck marker) ──
+  const _accBad=(accuracy!=null && accuracy>75);
+  if(!S.pos){
+    if(accuracy!=null && accuracy>2000){ return; }              // wait for a usable first fix
+  } else {
+    const _jump=distM(S.pos,_new), _dt=Math.max(0.001,(_new.t-S.pos.t)/1000);
+    const _teleport=(_jump>150 && (_jump/_dt)>100);             // >~224 mph between fixes = not real
+    if((_accBad || _teleport) && (S.goodFixes||0)>0){ S.accuracy=accuracy; return; }
+  }
+  if(!_accBad) S.goodFixes=(S.goodFixes||0)+1;
+  S.lastPos=S.pos; S.pos=_new; S.accuracy=accuracy;
   if(heading!==null && !isNaN(heading)) S.course=heading;
   else if(S.lastPos && distM(S.lastPos,S.pos)>3) S.course=bearing(S.lastPos,S.pos);
 
