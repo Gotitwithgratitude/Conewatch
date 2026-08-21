@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v62";
+const APP_VERSION="v63";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -369,9 +369,10 @@ const acCache=new Map(); let acAbort=null, acTimer=null;
 $("search").addEventListener("input",()=>{
   const q=$("search").value.trim();
   clearTimeout(acTimer);
-  if(q.length<3){$("results").style.display="none";return;}
+  if(q.length<3){showRecentsPanel();return;}
   acTimer=setTimeout(()=>suggest(q),190);
 });
+$("search").addEventListener("focus",()=>{ if(!$("search").value.trim()) showRecentsPanel(); });
 function offlineMatches(q){
   const ql=q.trim().toLowerCase();const out=[];
   try{const c=JSON.parse(localStorage.getItem("cw_geo")||"{}");
@@ -483,6 +484,7 @@ function setDestination(latlng,name){
     saveQK();renderQuick();
 try{if($("tripCount")&&TRIPS.length)$("tripCount").textContent=TRIPS.length+" drives logged";}catch{}
   }
+  try{ learnVisit(name,latlng); }catch(e){}   // on-device pattern learning (frequency + time of day)
   if(destMarker)destMarker.remove();
   const el=document.createElement("div");el.className="dest-flag";el.textContent="🏁";
   destMarker=new maplibregl.Marker({element:el,anchor:"bottom"}).setLngLat([latlng.lng,latlng.lat]).addTo(map);
@@ -1786,6 +1788,69 @@ function renderQuick(){
   layout();
 }
 renderQuick();
+
+/* ═══════════ on-device personalization: learns which places you go, when ═══════════
+   Everything stays in localStorage on this phone — nothing is uploaded.
+   Score = how often you go + whether it matches this hour/day + how recently. */
+let LEARN={}; try{ LEARN=JSON.parse(localStorage.getItem("cw_learn")||"{}")||{}; }catch(e){ LEARN={}; }
+function saveLearn(){ try{
+  const keys=Object.keys(LEARN);
+  if(keys.length>60){ keys.sort((a,b)=>(LEARN[a].last||0)-(LEARN[b].last||0)); keys.slice(0,keys.length-60).forEach(k=>delete LEARN[k]); }
+  localStorage.setItem("cw_learn",JSON.stringify(LEARN));
+}catch(e){} }
+function learnKey(name,ll){ return (name||"?").toLowerCase().trim()+"@"+(+ll.lat).toFixed(3)+","+(+ll.lng).toFixed(3); }
+function learnVisit(name,ll){
+  if(!name||!ll) return;
+  const k=learnKey(name,ll), now=new Date();
+  const e=LEARN[k]||{name:name,lat:+ll.lat,lng:+ll.lng,n:0,hours:{},days:{},last:0};
+  e.n=(e.n||0)+1;
+  e.hours[now.getHours()]=(e.hours[now.getHours()]||0)+1;
+  e.days[now.getDay()]=(e.days[now.getDay()]||0)+1;
+  e.last=Date.now(); e.name=name; e.lat=+ll.lat; e.lng=+ll.lng;
+  LEARN[k]=e; saveLearn();
+}
+// score a learned place for RIGHT NOW
+function learnScore(e){
+  const now=new Date(), h=now.getHours(), d=now.getDay();
+  let s=Math.min(10,(e.n||0))*2;                                  // frequency (capped so one place can't dominate forever)
+  const hourHits=(e.hours&&((e.hours[h]||0)+(e.hours[(h+23)%24]||0)+(e.hours[(h+1)%24]||0)))||0;
+  s+=Math.min(12,hourHits*4);                                     // goes here around this time of day
+  s+=Math.min(6,((e.days&&e.days[d])||0)*2);                      // and on this weekday
+  const daysAgo=(Date.now()-(e.last||0))/86400000;
+  s+=daysAgo<1?5:daysAgo<7?3:daysAgo<30?1:0;                      // recency
+  return s;
+}
+// the places this user most likely wants right now
+function smartPlaces(limit){
+  const out=Object.keys(LEARN).map(k=>({e:LEARN[k],sc:learnScore(LEARN[k])}))
+    .filter(x=>x.e&&x.e.name).sort((a,b)=>b.sc-a.sc).slice(0,limit||5);
+  return out.map(x=>({name:x.e.name,lat:x.e.lat,lng:x.e.lng,sc:x.sc,n:x.e.n}));
+}
+// Apple-Maps-style: tapping the empty search box shows Home / Work / favorites / recents — one tap to route, no retyping
+function showRecentsPanel(){
+  const box=$("results"); if(!box) return;
+  const items=[], seen={};
+  const add=(o)=>{ const k=(o.name||"").toLowerCase(); if(!o.name||seen[k])return; seen[k]=1; items.push(o); };
+  if(QK.home) add({name:"Home",label:"Saved place",icon:"🏠",bg:"#34C98A",lat:QK.home.lat,lng:QK.home.lng});
+  if(QK.work) add({name:"Work",label:"Saved place",icon:"💼",bg:"#5B9CF6",lat:QK.work.lat,lng:QK.work.lng});
+  // learned suggestions for this time of day, ranked
+  smartPlaces(4).forEach(p=>{ if(p.sc>=8) add({name:p.name,label:(p.n>2?"You often go here now":"Suggested for now"),icon:"✨",bg:"#FF6B1A",lat:p.lat,lng:p.lng}); });
+  (QK.favorites||[]).slice(0,4).forEach(f=>add({name:f.name,label:"Favorite",icon:"⭐",bg:"#FF9F0A",lat:f.lat,lng:f.lng}));
+  (QK.recents||[]).slice(0,6).forEach(r=>add({name:r.name,label:"Recent",icon:"🕘",bg:"#6B7280",lat:r.lat,lng:r.lng}));
+  if(!items.length){ box.style.display="none"; return; }
+  box.innerHTML="";
+  const head=document.createElement("div");
+  head.style.cssText="padding:9px 14px 5px;font-size:11px;letter-spacing:1px;color:var(--muted,#8a8d96);text-transform:uppercase";
+  head.textContent="Recent & Saved";
+  box.appendChild(head);
+  items.slice(0,10).forEach(it=>{
+    const div=document.createElement("div"); div.className="result ricon";
+    div.innerHTML='<span class="pin" style="background:'+it.bg+'">'+it.icon+'</span><span class="rtext"><b>'+it.name+'</b><small>'+it.label+'</small></span>';
+    div.onclick=(e)=>{ e.stopPropagation(); box.style.display="none"; $("search").blur(); $("search").value=it.name; setDestination({lat:it.lat,lng:it.lng},it.name); };
+    box.appendChild(div);
+  });
+  box.style.display="block";
+}
 $("setHome").onclick=()=>{if(!S.dest)return toast("Pick a destination first.");QK.home={lat:S.dest.lat,lng:S.dest.lng};saveQK();renderQuick();toast("🏠 Home saved");};
 $("setWork").onclick=()=>{if(!S.dest)return toast("Pick a destination first.");QK.work={lat:S.dest.lat,lng:S.dest.lng};saveQK();renderQuick();toast("💼 Work saved");};
 $("setFav")&&($("setFav").onclick=()=>{ if(!S.dest)return toast("Pick a destination first."); const name=(S.destName||"Saved place").slice(0,40); QK.favorites=[{lat:S.dest.lat,lng:S.dest.lng,name},...(QK.favorites||[]).filter(f=>f.name!==name)].slice(0,20); saveQK(); renderQuick(); toast("⭐ Saved to Favorites"); });
