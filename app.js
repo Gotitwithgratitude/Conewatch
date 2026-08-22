@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v63";
+const APP_VERSION="v64";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -52,9 +52,13 @@ function toast(msg,ms=2800){const t=$("toast");t.textContent=msg;t.classList.add
 function isDayNow(){
   if(S.themeMode==="light") return true;
   if(S.themeMode==="dark") return false;
-  if(S.lux!==null && S.lux<12) return false; // ambient light override: dark garage/tunnel
   const h=new Date().getHours()+new Date().getMinutes()/60;
-  return h>=S.sun.rise && h<S.sun.set;
+  const rise=(S.sun&&isFinite(S.sun.rise))?S.sun.rise:7.0;
+  const set =(S.sun&&isFinite(S.sun.set)) ?S.sun.set :19.5;
+  const daylight = h>=rise && h<set;
+  // ambient light can only DARKEN during a genuine tunnel/garage, never override real daylight hours
+  if(daylight && S.lux!==null && S.lux<3 && h>rise+1 && h<set-1) return false;
+  return daylight;
 }
 function applyTheme(force){
   const next=isDayNow()?"light":"dark";
@@ -210,13 +214,58 @@ function addMapLayers(){
 let styleSwapping=false;
 function swapMapStyle(theme){
   if(styleSwapping)return;
+  // NEVER restyle mid-navigation — setStyle wipes every layer (incl. the route line). Defer until the drive ends.
+  if(S.navigating){ S.pendingTheme=theme; return; }
   styleSwapping=true;
   styleFor(theme).then(st=>{
+    // register BEFORE setStyle so the restore can't be missed (this race was killing the route line)
+    const done=()=>{ mapStyleTheme=theme; styleSwapping=false; addMapLayers(); ensureRouteLayers(); };
+    map.once("style.load",done);
+    setTimeout(()=>{ if(styleSwapping){ try{ if(map.isStyleLoaded&&map.isStyleLoaded()) done(); }catch(e){} styleSwapping=false; } },2500);
     map.setStyle(st);
-    map.once("style.load",()=>{ mapStyleTheme=theme; styleSwapping=false; addMapLayers(); });
-    setTimeout(()=>{styleSwapping=false;},8000); // failsafe unlock
   }).catch(()=>{ styleSwapping=false; });
 }
+// safety net: if the route line ever goes missing (style swap, GL context loss), put it back
+function ensureRouteLayers(){
+  try{
+    if(!S.mapReady||!map) return;
+    if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
+    if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
+  }catch(e){}
+}
+/* ═══════════ smooth motion: glide between GPS fixes instead of teleporting ═══════════
+   The GPS only reports ~1x/sec. Rendering only on those ticks makes the car jump a
+   car-length at a time and feel "all over the place". We animate every frame using the
+   last known speed + heading (dead reckoning), then gently correct to each real fix. */
+let _dr={lat:null,lng:null,brg:0,t:0,raf:null};
+function _drStep(){
+  _dr.raf=requestAnimationFrame(_drStep);
+  if(!S.navigating||!S.pos||!meMarker||!S.mapReady) return;
+  const now=performance.now();
+  const dt=Math.min(0.5,(now-(_dr.t||now))/1000); _dr.t=now;
+  const target=S.dispPos||S.pos;
+  if(_dr.lat===null){ _dr.lat=target.lat; _dr.lng=target.lng; _dr.brg=(S.course||0); return; }
+  // 1) predict forward along current heading at current speed
+  const mps=Math.max(0,(S.speedMph||0)*0.44704);
+  if(mps>0.6){
+    const rad=(_dr.brg)*Math.PI/180, d=mps*dt;
+    _dr.lat += (d*Math.cos(rad))/111111;
+    _dr.lng += (d*Math.sin(rad))/(111111*Math.cos(_dr.lat*Math.PI/180)||1);
+  }
+  // 2) ease toward the real fix so prediction never drifts away from truth
+  const k=Math.min(1,dt*3.2);
+  _dr.lat += (target.lat-_dr.lat)*k;
+  _dr.lng += (target.lng-_dr.lng)*k;
+  // 3) smooth the heading (kills compass twitch)
+  if(S.course!==null&&!isNaN(S.course)){
+    let diff=((S.course-_dr.brg+540)%360)-180;
+    _dr.brg=(_dr.brg+diff*Math.min(1,dt*4)+360)%360;
+  }
+  try{ meMarker.setLngLat([_dr.lng,_dr.lat]); meMarker.setRotation(_dr.brg); }catch(e){}
+}
+function startSmooth(){ if(!_dr.raf){ _dr.t=performance.now(); _dr.raf=requestAnimationFrame(_drStep); } }
+function stopSmooth(){ if(_dr.raf){ cancelAnimationFrame(_dr.raf); _dr.raf=null; } _dr.lat=null; _dr.lng=null; }
+
 function initUserMarker(){
   const el=document.createElement("div"); el.id="meArrow";
   meMarker=new maplibregl.Marker({element:el,rotationAlignment:"map",pitchAlignment:"map"}).setLngLat([-83.0790,42.3316]);
@@ -284,7 +333,7 @@ function onPos(p){
   if(S.navigating){ const _snap=snapToRoute(S.pos); if(_snap && _snap.dist<40){ _dispLat=_snap.lat; _dispLng=_snap.lng; S.course=_snap.bearing; } }
   S.dispPos={lat:_dispLat,lng:_dispLng};
   if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[_dispLng,_dispLat],zoom:16,duration:800}); toast("GPS locked ✓"); }
-  if(meMarker){ meMarker.setLngLat([_dispLng,_dispLat]); if(S.course!==null) meMarker.setRotation(S.course); }
+  if(meMarker && !S.navigating){ meMarker.setLngLat([_dispLng,_dispLat]); if(S.course!==null) meMarker.setRotation(S.course); }
   if(!sunLoaded){ sunLoaded=true; loadSunTimes(); }
 
   autoParkWatch();
@@ -754,7 +803,7 @@ async function startNavigation(){
   $("navbanner").style.display="block";
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
-  cameraFollow();navTick();loadWeather();
+  cameraFollow();navTick();loadWeather();startSmooth();
   document.body.classList.add("driving"); layout();
   try{if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}catch{}
   requestWakeLock(); requestMotion();
@@ -763,7 +812,8 @@ async function startNavigation(){
   toast("Navigation started — drive safe. Screen will stay awake.");
 }
 function endNavigation(){
-  S.navigating=false;S.headingUp=false;
+  S.navigating=false;S.headingUp=false;stopSmooth();
+  try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
   try{speechSynthesis.cancel();}catch{}
   document.body.classList.remove("driving"); layout();
   try{if(document.fullscreenElement&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});}catch{}
@@ -777,8 +827,10 @@ $("endnav").onclick=endNavigation;
 $("startNav").onclick=startNavigation;
 $("closeRoute").onclick=closeSheets;
 
+let _rtCheck=0;
 function navTick(){
   if(!S.navigating||!S.pos||!S.route)return;
+  if(Date.now()-_rtCheck>3000){ _rtCheck=Date.now(); ensureRouteLayers(); }   // route line can't stay missing
   while(S.stepIdx<S.steps.length-1){
     const [lng,lat]=S.steps[S.stepIdx].maneuver.location;
     if(distM(S.pos,{lat,lng})<28)S.stepIdx++;else break;
