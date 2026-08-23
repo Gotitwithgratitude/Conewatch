@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v64";
+const APP_VERSION="v65";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2000,6 +2000,15 @@ async function geocodeCandidates(q){
     fetchT("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=12"+vb+"&q="+encodeURIComponent(q),8000).then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}),
     fetchT("https://photon.komoot.io/api/?limit=12&lang=en"+ll+"&q="+encodeURIComponent(q),8000).then(r=>r.json()).then(d=>{out=out.concat(photonToRows(d.features||[]));}).catch(()=>{})
   ];
+  // STRICTLY LOCAL pass: bounded=1 confines results to the box around the driver, so a nearby
+  // business (bar, shop, venue) surfaces even when global indexes rank far-away name matches higher.
+  if(b && !p.city && !p.state && !p.postalcode){
+    var d2=0.45, vb2="&viewbox="+(b.lng-d2)+","+(b.lat+d2)+","+(b.lng+d2)+","+(b.lat-d2)+"&bounded=1";
+    jobs.push(fetchT("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=12"+vb2+"&q="+encodeURIComponent(q),8000)
+      .then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}));
+    jobs.push(fetchT("https://photon.komoot.io/api/?limit=12&lang=en&zoom=12"+ll+"&q="+encodeURIComponent(q),8000)
+      .then(r=>r.json()).then(d=>{out=out.concat(photonToRows(d.features||[]));}).catch(()=>{}));
+  }
   await Promise.all(jobs);
   return scoreRows(out,q);
 }
@@ -2043,7 +2052,12 @@ async function forceGeocode(q){
   let cands=await geocodeCandidates(q);
   // if a house number was typed, prefer exact-house matches; keep the rest as fallback options
   const exact=want.housenumber ? cands.filter(c=>c.exactHouse) : [];
-  const pool=(exact.length?exact:cands).filter(c=>c.sc>-30);
+  let pool=(exact.length?exact:cands).filter(c=>c.sc>-30);
+  // local intent (no city/state/ZIP typed): don't show results in other states/countries
+  if(!want.city && !want.state && !want.postalcode && S.pos){
+    const near=pool.filter(c=>distM(S.pos,{lat:c.lat,lng:c.lng})/1609.34 <= 120);
+    if(near.length) pool=near;
+  }
   if(!pool.length){ toast("Couldn't locate that — add a city or ZIP and try again.",3600); return; }
   // confident: one clear exact-house winner well ahead of the next → go straight in
   const confident = pool[0].exactHouse && (pool.length===1 || pool[0].sc-pool[1].sc>40);
@@ -2133,11 +2147,19 @@ function scoreRows(rows,q){
     var label=String(r.display_name||r.name||"").toLowerCase();
     var toks=q.toLowerCase().replace(/[^a-z0-9 ]/g,"").split(/\s+/).filter(function(w){return w.length>1;});
     if(toks.length){ var matched=toks.filter(function(tk){return label.indexOf(tk)>-1;}).length; sc+=matched*14; if(matched===toks.length)sc+=42; }
-    // PROXIMITY: decisive for place/POI searches (no house number), gentle tiebreaker for addresses
+    // PROXIMITY: when the user didn't name a city/state/ZIP they mean somewhere NEAR them.
+    // The old capped penalty (-12) let a match 9,000 miles away out-score one down the street.
     if(S.pos){
       var d=distM(S.pos,{lat:+r.lat,lng:+r.lon})/1609.34;
+      var saidWhere = !!(want.city||want.state||want.postalcode);
       if(want.housenumber){ sc += d<60?Math.max(0,6-d/12):-8; }
-      else { sc += Math.max(-12, 40 - d*1.3); }     // nearest place the user is thinking of wins
+      else if(saidWhere){ sc += Math.max(-25, 40 - d*0.6); }      // they named a place → allow distance
+      else {
+        // local intent: strong reward up close, UNCAPPED penalty far away
+        if(d<=25) sc += 40 - d*0.8;
+        else if(d<=120) sc += 20 - (d-25)*0.55;
+        else sc -= 60 + (d-120)*0.25;
+      }
     }
     return {lat:+r.lat,lng:+r.lon,label:r.display_name||q,sc:sc,exactHouse:exactHouse,type:String(r.type||"")};
   }).filter(function(x){ if(!isFinite(x.lat)||!isFinite(x.lng))return false; var k=x.lat.toFixed(4)+","+x.lng.toFixed(4); if(seen[k])return false; seen[k]=1; return true; })
