@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v66";
+const APP_VERSION="v67";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -328,9 +328,20 @@ function onPos(p){
   $("speed").classList.toggle("over", S.limit ? vm>S.limit : vm>75);
   if(S.lastPos && mph>3 && moved<80){S.tripM+=moved;$("tripMi").textContent=S.units==="km"?(S.tripM/1000).toFixed(1):(S.tripM/1609.34).toFixed(1);}
 
-  // snap-to-road while navigating: pin the dot AND the heading to the route line so GPS scatter can't drift it off-road
+  // snap-to-road while navigating: pin the dot AND the heading to the route line so GPS scatter can't drift it off-road.
+  // BUT release the snap the moment you're clearly heading away — otherwise a wrong turn looks "on route" and never reroutes.
   let _dispLat=lat,_dispLng=lng;
-  if(S.navigating){ const _snap=snapToRoute(S.pos); if(_snap && _snap.dist<40){ _dispLat=_snap.lat; _dispLng=_snap.lng; S.course=_snap.bearing; } }
+  if(S.navigating){
+    const _snap=snapToRoute(S.pos);
+    if(_snap && _snap.dist<40){
+      let _off=false;
+      if(S.course!==null && !isNaN(S.course) && (S.speedMph||0)>4){
+        const _d=Math.abs(((S.course-_snap.bearing+540)%360)-180);
+        if(_d>55) _off=true;                    // pointing away from the route → don't fake being on it
+      }
+      if(!_off){ _dispLat=_snap.lat; _dispLng=_snap.lng; S.course=_snap.bearing; }
+    }
+  }
   S.dispPos={lat:_dispLat,lng:_dispLng};
   if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[_dispLng,_dispLat],zoom:16,duration:800}); toast("GPS locked ✓"); }
   if(meMarker && !S.navigating){ meMarker.setLngLat([_dispLng,_dispLat]); if(S.course!==null) meMarker.setRotation(S.course); }
@@ -904,10 +915,20 @@ function navTick(){
 
   const acc=S.accuracy||20;
   if(acc<90 && navigator.onLine){
-    const thresh=Math.max(70,acc*2.5);
+    const thresh=Math.max(45,acc*2);
     const dR=minDistToRoute();
-    if(dR>thresh){
-      if(++S.offRouteCount>=3 && Date.now()-(S.lastReroute||0)>15000){
+    // A WRONG TURN shows up as heading divergence long before distance does — catch it immediately.
+    let turnedOff=false;
+    try{
+      const sn=snapToRoute(S.pos);
+      if(sn && S.course!==null && (S.speedMph||0)>4){
+        let diff=Math.abs(((S.course-sn.bearing+540)%360)-180);
+        if(diff>55 && dR>20) turnedOff=true;      // pointing well away from the route = you left it
+      }
+    }catch(e){}
+    if(dR>thresh || turnedOff){
+      const need=(dR>130||turnedOff)?1:2;          // far off, or clearly turned away → reroute now
+      if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>7000){
         S.offRouteCount=0;S.lastReroute=Date.now();
         toast("Off route — rerouting…",1400);speak("Rerouting.");fetchRoute(true);
       }
