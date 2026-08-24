@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v65";
+const APP_VERSION="v66";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -641,6 +641,9 @@ function valhallaToOSRM(vt){
         name:(mn.street_names&&mn.street_names[0])||(mn.begin_street_names&&mn.begin_street_names[0])||"",
         distance:(mn.length||0)*1000,
         duration:(mn.time||0),
+        ref:(mn.branch_sign_ref&&mn.branch_sign_ref[0])||"",
+        exits:(mn.sign&&mn.sign.exit_number_elements&&mn.sign.exit_number_elements[0]&&mn.sign.exit_number_elements[0].text)||"",
+        destinations:(mn.sign&&mn.sign.exit_toward_elements&&mn.sign.exit_toward_elements.map(x=>x.text).join(", "))||"",
         maneuver:{ type:man.type, modifier:man.modifier, exit:man.exit, location:[loc[0],loc[1]] }
       };
     });
@@ -807,7 +810,7 @@ async function startNavigation(){
   document.body.classList.add("driving"); layout();
   try{if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}catch{}
   requestWakeLock(); requestMotion();
-  pollLimit(); clearInterval(limitTimer); limitTimer=setInterval(pollLimit,45000);
+  pollLimit(); clearInterval(limitTimer); limitTimer=setInterval(pollLimit,18000);
   speak("Starting navigation to "+S.destName+".");
   toast("Navigation started — drive safe. Screen will stay awake.");
 }
@@ -858,9 +861,23 @@ function navTick(){
   $("hudSpeed").textContent=Math.round(S.speedMph);
 
   // spoken guidance
+  // Speed-aware guidance: at highway speed you need MILES of warning, not 380 metres.
+  // Stages fire on time-to-maneuver so they scale from city streets to 70mph freeway.
   if(S.stepIdx!==S.annStep){S.annStep=S.stepIdx;S.annStage=0;}
-  if(S.annStage<2&&dNext<75){S.annStage=2;turnCue(2);speak(stepText(cur));}
-  else if(S.annStage<1&&dNext<380){S.annStage=1;turnCue(1);speak("In "+spokenDist(dNext)+", "+stepText(cur));}
+  const _mps=Math.max(4,(S.speedMph||0)*0.44704);
+  const _secs=dNext/_mps;                                  // seconds until the maneuver
+  const _fast=(S.speedMph||0)>45;
+  const _isExit=/ramp|exit|fork|merge/.test((cur.maneuver&&cur.maneuver.type)||"");
+  const _lbl=(cur.exits?("exit "+String(cur.exits).split(";")[0]+", "):"")+stepText(cur);
+  if(S.annStage<3 && dNext<75){                            // final: act now
+    S.annStage=3; turnCue(2); speak(stepText(cur));
+  } else if(S.annStage<2 && (_secs<22 || dNext<380)){      // ~quarter mile at speed
+    S.annStage=2; turnCue(2); speak("In "+spokenDist(dNext)+", "+_lbl);
+  } else if(S.annStage<1 && _fast && (_secs<60 || dNext<1600) && (_isExit||dNext<1600)){
+    S.annStage=1; turnCue(1); speak("In "+spokenDist(dNext)+", "+_lbl);   // ~1 mile heads-up
+  } else if(S.annStage<0.5 && _fast && _isExit && _secs<130){
+    S.annStage=0.5; speak("In "+spokenDist(dNext)+", "+_lbl);             // ~2 mile early warning
+  }
 
   let rem=dNext;for(let i=S.stepIdx;i<S.steps.length;i++)rem+=S.steps[i].distance;
   const frac=S.route.distance?Math.min(1,rem/S.route.distance):0;
@@ -1784,14 +1801,40 @@ $("satDest").onclick=()=>{if(S.dest)openSat(S.dest.lat,S.dest.lng,S.destName);el
 /* live speed limits from OpenStreetMap while navigating */
 S.limit=null;let limitTimer=null,lastLimitQ=0;
 async function pollLimit(){
-  if(!S.pos||Date.now()-lastLimitQ<30000)return;lastLimitQ=Date.now();
+  if(!S.pos||Date.now()-lastLimitQ<15000)return;lastLimitQ=Date.now();
   try{
-    const q=`[out:json][timeout:8];way(around:25,${S.pos.lat},${S.pos.lng})["maxspeed"];out tags 1;`;
+    // Pull several nearby roads with their class + name, then pick the one we're ACTUALLY on.
+    // (Old version grabbed the closest way within 25m — on a freeway that's often the service drive.)
+    const q=`[out:json][timeout:8];way(around:40,${S.pos.lat},${S.pos.lng})["maxspeed"]["highway"];out tags 8;`;
     const d=await (await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(q),headers:{"Content-Type":"application/x-www-form-urlencoded"}})).json();
-    const ms=d.elements?.[0]?.tags?.maxspeed;
-    if(ms){const n=parseInt(ms);
-      if(!isNaN(n)){S.limit=/mph/i.test(ms)?n:Math.round(n*0.621371);
-        $("limitNum").textContent=S.limit;$("limitBadge").style.display="block";}}
+    const els=(d.elements||[]).filter(e=>e&&e.tags&&e.tags.maxspeed);
+    if(!els.length) return;
+    // what road does the route say we're on?
+    let curName="", curRef="";
+    try{ const st=S.steps[S.stepIdx]||{}; curName=String(st.name||"").toLowerCase(); curRef=String(st.ref||"").toLowerCase(); }catch(e){}
+    const CLASS={motorway:6,trunk:5,primary:4,secondary:3,tertiary:2,residential:1,service:0,unclassified:1};
+    const fast=(S.speedMph||0)>45;
+    let best=null,bestScore=-1e9;
+    els.forEach(e=>{
+      const t=e.tags, hw=String(t.highway||"").replace("_link","");
+      let sc=0;
+      const nm=String(t.name||"").toLowerCase(), rf=String(t.ref||"").toLowerCase();
+      if(curName&&nm&&(nm===curName||nm.indexOf(curName)>-1||curName.indexOf(nm)>-1)) sc+=60;   // same street name
+      if(curRef&&rf&&rf.indexOf(curRef.replace(/\s/g,""))>-1) sc+=60;                            // same route number
+      sc+=(CLASS[hw]!==undefined?CLASS[hw]:1)*4;
+      if(fast&&(hw==="motorway"||hw==="trunk")) sc+=40;      // doing 60+? you're on the freeway, not the service drive
+      if(fast&&(hw==="service"||hw==="residential")) sc-=50;
+      const n=parseInt(t.maxspeed,10);
+      if(!isNaN(n)){ const mph=/mph/i.test(t.maxspeed)?n:Math.round(n*0.621371);
+        if(fast&&mph<40) sc-=25;                              // a 25mph limit while doing 65 is the wrong road
+        if(!fast&&mph>60) sc-=20; }
+      if(sc>bestScore){bestScore=sc;best=t;}
+    });
+    if(best&&best.maxspeed){
+      const n=parseInt(best.maxspeed,10);
+      if(!isNaN(n)){ S.limit=/mph/i.test(best.maxspeed)?n:Math.round(n*0.621371);
+        $("limitNum").textContent=S.limit;$("limitBadge").style.display="block"; }
+    }
   }catch{}
 }
 
