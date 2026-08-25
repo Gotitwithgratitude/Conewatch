@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v67";
+const APP_VERSION="v68";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -706,6 +706,7 @@ async function fetchRoute(silent){
     if(data.code!=="Ok"||!data.routes?.length){toast("No route found for this mode.");S.rerouting=false;return;}
     const r=data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
+    S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     if(!silent){
       const b=r.geometry.coordinates.reduce((bb,c)=>bb.extend(c),new maplibregl.LngLatBounds(r.geometry.coordinates[0],r.geometry.coordinates[0]));
@@ -845,9 +846,34 @@ let _rtCheck=0;
 function navTick(){
   if(!S.navigating||!S.pos||!S.route)return;
   if(Date.now()-_rtCheck>3000){ _rtCheck=Date.now(); ensureRouteLayers(); }   // route line can't stay missing
+  // Advance by PROGRESS ALONG THE ROUTE, not a 28m circle. At 60mph you travel ~27m between GPS
+  // fixes, so a small radius gets skipped entirely and the app stays stuck on step 1 forever
+  // (which also made the remaining distance/ETA wildly wrong).
+  const _sp=Math.max(28, (S.speedMph||0)*0.44704*2.2);   // speed-scaled catch radius
   while(S.stepIdx<S.steps.length-1){
-    const [lng,lat]=S.steps[S.stepIdx].maneuver.location;
-    if(distM(S.pos,{lat,lng})<28)S.stepIdx++;else break;
+    const st=S.steps[S.stepIdx];
+    const [mlng,mlat]=st.maneuver.location;
+    const dMan=distM(S.pos,{lat:mlat,lng:mlng});
+    if(dMan<_sp){ S.stepIdx++; continue; }
+    // passed it? compare our position along the route with the maneuver's position along the route
+    let passed=false;
+    try{
+      const co=S.route.geometry.coordinates;
+      if(co&&co.length>1){
+        if(st._ri===undefined){                       // cache each maneuver's index on the line
+          let bi=0,bd=Infinity;
+          for(let i=0;i<co.length;i++){ const dd=distM({lat:mlat,lng:mlng},{lat:co[i][1],lng:co[i][0]}); if(dd<bd){bd=dd;bi=i;} }
+          st._ri=bi;
+        }
+        if(S._ri===undefined||Date.now()-(S._riT||0)>500){
+          let bi=0,bd=Infinity;
+          for(let i=0;i<co.length;i++){ const dd=distM(S.pos,{lat:co[i][1],lng:co[i][0]}); if(dd<bd){bd=dd;bi=i;} }
+          S._ri=bi; S._riT=Date.now(); S._riD=bd;
+        }
+        if(S._riD<60 && S._ri>st._ri) passed=true;     // we're on the route, beyond this maneuver
+      }
+    }catch(e){}
+    if(passed) S.stepIdx++; else break;
   }
   const cur=S.steps[S.stepIdx];
   const [lng,lat]=cur.maneuver.location;
@@ -890,7 +916,9 @@ function navTick(){
     S.annStage=0.5; speak("In "+spokenDist(dNext)+", "+_lbl);             // ~2 mile early warning
   }
 
-  let rem=dNext;for(let i=S.stepIdx;i<S.steps.length;i++)rem+=S.steps[i].distance;
+  // remaining = distance to the next maneuver + every step AFTER it (the current step was being
+  // double-counted, inflating distance and ETA)
+  let rem=dNext;for(let i=S.stepIdx+1;i<S.steps.length;i++)rem+=S.steps[i].distance;
   const frac=S.route.distance?Math.min(1,rem/S.route.distance):0;
   const secsLeft=S.route.duration*frac*rushFactor();
   const arr=new Date(Date.now()+secsLeft*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
