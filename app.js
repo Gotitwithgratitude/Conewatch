@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v68";
+const APP_VERSION="v69";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -25,7 +25,8 @@ const APP_VERSION="v68";
    Leave blank = app still works (keyless Esri map, reports stay local).
    ══════════════════════════════════════════════════════════════════ */
 const CW_CONFIG = {
-  maptilerKey: "",   // ← (optional) free MapTiler key → sharp HD satellite for ALL users
+  maptilerKey: "",
+  cartoKey: "",   // optional free key from carto.com/basemaps/apikey (else keyless Esri tiles are used)   // ← (optional) free MapTiler key → sharp HD satellite for ALL users
   supabaseUrl: "https://fcywpeulilndeinzckdl.supabase.co",   // shared network — LIVE
   supabaseKey: "sb_publishable_ToEAvzA2sQN269M3Lv8LOg_2wK55NWC"
 };
@@ -92,17 +93,30 @@ try{
 
 /* ═══════════ map boot (MapLibre v5) with per-theme styles ═══════════ */
 function rasterStyle(dark){
-  const flavor=dark?"dark_all":"light_all";
+  const url=dark
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
   return { version:8,
-    sources:{ carto:{ type:"raster", tiles:["a","b","c"].map(s=>`https://${s}.basemaps.cartocdn.com/${flavor}/{z}/{x}/{y}.png`), tileSize:256, attribution:"© OpenStreetMap © CARTO" }},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#101215":"#E9ECEF"}},{id:"carto",type:"raster",source:"carto"}] };
+    sources:{ basemap:{ type:"raster", tiles:[url], tileSize:256, attribution:"© Esri, © OpenStreetMap contributors" }},
+    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#101215":"#E9ECEF"}},{id:"basemap",type:"raster",source:"basemap"}] };
 }
 function rasterStyleObj(dark){
-  const base=dark?"dark_all":"voyager"; // voyager = colorful light (roads, POIs)
+  // CARTO began requiring an API key (unauthenticated tiles get an "API KEY REQUIRED" watermark)
+  // and is retiring its raster basemaps, so we use Esri's keyless tiles instead.
+  // Optional: put a free CARTO key in CW_CONFIG.cartoKey to use CARTO styling instead.
+  const ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim();
+  if(ck){
+    const base=dark?"dark_all":"voyager";
+    return {version:8,
+      sources:{carto:{type:"raster",tiles:["a","b","c","d"].map(s=>`https://${s}.basemaps.cartocdn.com/rastertiles/${base}/{z}/{x}/{y}.png?key=${ck}`),tileSize:256,maxzoom:20,attribution:"© OpenStreetMap © CARTO"}},
+      layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},{id:"carto",type:"raster",source:"carto"}]};
+  }
+  const url=dark
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
   return {version:8,
-    glyphs:"https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
-    sources:{carto:{type:"raster",tiles:["a","b","c","d"].map(s=>`https://${s}.basemaps.cartocdn.com/rastertiles/${base}/{z}/{x}/{y}{ratio}.png`.replace("{ratio}","")),tileSize:256,maxzoom:19,attribution:"© OpenStreetMap © CARTO"}},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},{id:"carto",type:"raster",source:"carto"}]};
+    sources:{basemap:{type:"raster",tiles:[url],tileSize:256,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
+    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},{id:"basemap",type:"raster",source:"basemap"}]};
 }
 async function styleFor(theme){
   return rasterStyleObj(theme!=="light");   // raster PNG = reliably cacheable offline
@@ -2361,7 +2375,7 @@ async function downloadOfflineArea(){
   if(!("caches" in window)){toast("Offline caching not supported in this browser.");return;}
   if(!S.pos){toast("Need GPS lock first.");return;}
   const dark=S.themeNow!=="light";
-  const base=dark?"dark_all":"voyager";
+  const ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim();
   const subs=["a","b","c","d"];
   const lat=S.pos.lat,lon=S.pos.lng;
   const cache=await caches.open("cw-tiles-v2");
@@ -2371,7 +2385,11 @@ async function downloadOfflineArea(){
     const r=z<=12?2:z<=14?3:z<=15?4:5;
     for(let x=cx-r;x<=cx+r;x++)for(let y=cy-r;y<=cy+r;y++){
       const n=Math.pow(2,z); if(x<0||y<0||x>=n||y>=n)continue;
-      const url=`https://${subs[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/${base}/${z}/${x}/${y}.png`;
+      const url= ck
+        ? `https://${subs[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/${dark?"dark_all":"voyager"}/${z}/${x}/${y}.png?key=${ck}`
+        : (dark
+            ? `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${z}/${y}/${x}`
+            : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`);
       total++;
       jobs.push(fetch(url,{mode:"cors"}).then(res=>{if(res.ok){okc++;return cache.put(url,res.clone());}}).catch(()=>{}));
       if(jobs.length>=60){await Promise.all(jobs);jobs.length=0;$("dlOffline").querySelector("small").textContent=`Downloading… ${okc} tiles`;}
