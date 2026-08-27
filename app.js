@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v70";
+const APP_VERSION="v72";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -523,7 +523,7 @@ function renderResults(list){
     const near=r._d!==undefined?fmtDist(r._d)+" away":"";
     const ic=poiIcon(r);
     div.innerHTML=`<span class="pin" style="background:${ic[1]}">${ic[0]}</span>
-      <span class="rtext"><b>${r.name}</b><small>${[near,r.label].filter(Boolean).join(" · ")}</small></span>
+      <span class="rtext"><b>${r.name}</b><small class="rmeta" data-lat="${r.lat}" data-lng="${r.lng}">${[near,r.label].filter(Boolean).join(" · ")}</small></span>
       <button class="addstop">+Stop</button>`;
     div.onclick=(e)=>{if(e.target.classList.contains("addstop"))return;box.style.display="none";$("search").value=r.name;
       confirmDestination({lat:r.lat,lng:r.lng,label:[r.name,r.label].filter(Boolean).join(", ")},r.name);};
@@ -538,7 +538,127 @@ function renderResults(list){
     box.appendChild(ap);
   }
   box.style.display="block";
+  try{ upgradeResultDistances(list); }catch(e){}
 }
+
+/* ═══════════ road distance with layered fallback ═══════════
+   Detroit signal gets ugly on game/concert nights, so this degrades instead of failing:
+     1. race TWO routing servers, take whichever answers first
+     2. if both are slow/busy → fall back to a calibrated estimate (marked with ~)
+     3. cache every answer so repeat searches are instant and offline-friendly
+*/
+let _roadCache={}; try{ _roadCache=JSON.parse(localStorage.getItem("cw_roadcache")||"{}")||{}; }catch(e){ _roadCache={}; }
+function _rcKey(a,b){ return a.lat.toFixed(4)+","+a.lng.toFixed(4)+">"+(+b.lat).toFixed(4)+","+(+b.lng).toFixed(4); }
+function _rcSave(){ try{
+  const k=Object.keys(_roadCache);
+  if(k.length>400){ k.slice(0,k.length-400).forEach(x=>delete _roadCache[x]); }
+  localStorage.setItem("cw_roadcache",JSON.stringify(_roadCache));
+}catch(e){} }
+// urban roads are rarely straight: this factor turns crow-flies into a realistic drive estimate
+function estimateDrive(meters){
+  const m=meters*1.32;                                  // typical street-grid detour
+  const mph = m<1600?22 : m<8000?31 : 45;               // slower in town, faster on longer hauls
+  return { m:m, sec:(m/1609.34)/mph*3600, est:true };
+}
+async function roadTable(origin,pts,signal){
+  if(!origin||!pts||!pts.length) return null;
+  const coords=[`${origin.lng},${origin.lat}`].concat(pts.map(p=>`${p.lng},${p.lat}`)).join(";");
+  const q=`table/v1/driving/${coords}?sources=0&annotations=duration,distance`;
+  const urls=[`https://router.project-osrm.org/${q}`,`https://routing.openstreetmap.de/routed-car/${q}`];
+  const one=(u)=>{
+    const ac=new AbortController();
+    const timer=setTimeout(()=>{try{ac.abort();}catch(e){}},4500);       // don't hang on bad signal
+    if(signal){ try{ signal.addEventListener("abort",()=>{try{ac.abort();}catch(e){}}); }catch(e){} }
+    return fetch(u,{signal:ac.signal}).then(r=>{clearTimeout(timer); if(!r.ok) throw 0; return r.json();})
+      .then(d=>{ if(d&&d.code==="Ok"&&d.distances&&d.distances[0]) return d; throw 0; });
+  };
+  try{
+    const tasks=urls.map(one);
+    return Promise.any ? await Promise.any(tasks)
+      : await new Promise((res,rej)=>{let n=tasks.length;tasks.forEach(p=>p.then(res).catch(()=>{if(--n===0)rej(0);}));});
+  }catch(e){ return null; }
+}
+// returns [{m,sec,est}] for each point — always returns something usable
+async function roadDistances(origin,pts,signal){
+  const out=new Array(pts.length).fill(null);
+  const need=[], needIdx=[];
+  pts.forEach((p,i)=>{
+    const c=_roadCache[_rcKey(origin,p)];
+    if(c && Date.now()-c.t < 7*86400000){ out[i]={m:c.m,sec:c.sec,est:!!c.est}; }
+    else { need.push(p); needIdx.push(i); }
+  });
+  if(need.length && navigator.onLine){
+    const d=await roadTable(origin,need,signal);
+    if(d){
+      const dist=d.distances[0], dur=(d.durations&&d.durations[0])||[];
+      need.forEach((p,j)=>{
+        const m=dist[j+1], sec=dur[j+1];
+        if(m!=null&&isFinite(m)){
+          out[needIdx[j]]={m:m,sec:(isFinite(sec)?sec:null),est:false};
+          _roadCache[_rcKey(origin,p)]={m:m,sec:(isFinite(sec)?sec:null),est:false,t:Date.now()};
+        }
+      });
+      _rcSave();
+    }
+  }
+  // anything still missing → calibrated estimate so the user always sees a number
+  pts.forEach((p,i)=>{ if(!out[i]){ const e=estimateDrive(distM(origin,{lat:+p.lat,lng:+p.lng})); out[i]={m:e.m,sec:e.sec,est:true}; } });
+  return out;
+}
+function fmtDrive(r){
+  if(!r) return "";
+  const d=fmtDist(r.m), t=(r.sec!=null&&isFinite(r.sec))?fmtDur(r.sec*rushFactor())+" drive":"";
+  const s=[d,t].filter(Boolean).join(" · ");
+  return r.est ? "~ "+s : s;
+}
+
+/* ═══════════ real driving distance + time for search results ═══════════
+   Straight-line distance misleads (a place "0.5 mi away" can be a 2 mi drive around a river or
+   freeway). OSRM's table service measures road distance from you to EVERY result in ONE request,
+   so the list shows what the drive actually costs without hammering the routing server. */
+let _distAbort=null;
+async function upgradeResultDistances(list){
+  if(!S.pos||!list||!list.length) return;
+  const pts=list.slice(0,8).filter(r=>isFinite(r.lat)&&isFinite(r.lng));
+  if(!pts.length) return;
+  if(_distAbort){ try{_distAbort.abort();}catch(e){} }
+  _distAbort=new AbortController();
+  const res=await roadDistances(S.pos,pts,_distAbort.signal);
+  const box=$("results"); if(!box||box.style.display==="none") return;
+  const metas=box.querySelectorAll(".rmeta");
+  pts.forEach((r,i)=>{
+    const info=res[i]; if(!info) return;
+    for(const el of metas){
+      if(Math.abs(parseFloat(el.dataset.lat)-r.lat)<1e-6 && Math.abs(parseFloat(el.dataset.lng)-r.lng)<1e-6){
+        el.textContent=[fmtDrive(info), r.label].filter(Boolean).join(" · ");
+        break;
+      }
+    }
+  });
+}
+
+// same road-distance upgrade for the Discover list (Gas / Food / Coffee ...)
+let _poiDistAbort=null;
+async function upgradePoiDistances(els){
+  if(!S.pos||!els||!els.length) return;
+  const pts=els.slice(0,10).filter(e=>isFinite(e.lat)&&isFinite(e.lng));
+  if(!pts.length) return;
+  if(_poiDistAbort){ try{_poiDistAbort.abort();}catch(e){} }
+  _poiDistAbort=new AbortController();
+  const res=await roadDistances(S.pos,pts,_poiDistAbort.signal);
+  const list=$("poiList"); if(!list) return;
+  const metas=list.querySelectorAll(".rmeta");
+  pts.forEach((e,i)=>{
+    const info=res[i]; if(!info) return;
+    for(const el of metas){
+      if(Math.abs(parseFloat(el.dataset.lat)-e.lat)<1e-6 && Math.abs(parseFloat(el.dataset.lng)-e.lng)<1e-6){
+        el.textContent=[fmtDrive(info), e.hours?e.hours.slice(0,22):""].filter(Boolean).join(" · ");
+        break;
+      }
+    }
+  });
+}
+
 function doSearch(){const q=$("search").value.trim();if(!q)return;$("results").style.display="none";const cat=poiCategory(q);if(cat){$("search").blur();openCategorySearch(cat);return;}forceGeocode(q);}
 $("searchbtn").onclick=doSearch;
 $("search").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doSearch();}});
@@ -1196,13 +1316,14 @@ async function runCategory(){
     els.forEach(e=>{
       const mk=placeLabelMarker(e.lat,e.lng,e.name,cat.color,cat.emoji); if(mk)poiMarkers.push(mk);
       const div=document.createElement("div");div.className="poi-item";
-      div.innerHTML='<span><b>'+e.name+'</b><small>'+fmtDist(e.dist)+' away'+(e.hours?" · "+e.hours.slice(0,22):"")+'</small></span>'+
+      div.innerHTML='<span><b>'+e.name+'</b><small class="rmeta" data-lat="'+e.lat+'" data-lng="'+e.lng+'">'+fmtDist(e.dist)+' away'+(e.hours?" · "+e.hours.slice(0,22):"")+'</small></span>'+
         '<span class="poi-acts"><button class="pgo" style="background:'+cat.color+';color:#fff">Go</button><button class="pstop" style="background:rgba(127,127,127,.2);color:inherit;border:1px solid rgba(127,127,127,.3)">+Stop</button></span>';
       div.querySelector(".pgo").onclick=()=>{closeSheets();setDestination({lat:e.lat,lng:e.lng},e.name);};
       div.querySelector(".pstop").onclick=()=>addStop({lat:e.lat,lng:e.lng},e.name);
       $("poiList").appendChild(div);
     });
     $("poiList").insertAdjacentHTML("beforeend",expandHTML()); wireExpand();
+    try{ upgradePoiDistances(els); }catch(e){}
   }catch{ $("poiList").innerHTML='<p class="sub">Discovery service busy — try again in a moment.</p>'; }
 }
 function expandHTML(){ return curRadius<32000
