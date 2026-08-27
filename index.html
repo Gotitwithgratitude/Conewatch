@@ -154,6 +154,9 @@
   .fab.active{border-color:var(--nav-accent);color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 14px var(--glow)}
   .fab.lit{border-color:var(--yellow);color:var(--yellow);box-shadow:var(--btn-shadow),0 0 16px rgba(255,199,44,.55)}
   .fab:focus-visible{outline:2px solid var(--yellow)}
+  /* the few controls that stay on screen get bigger, easier targets */
+  .fab.key,.fab.sos{width:58px;height:58px;font-size:22px}
+  .fab.sos{font-size:14px}
   #moreFabs{display:none;flex-direction:column;gap:9px;align-items:flex-end}
   #moreFabs.open{display:flex}
 
@@ -359,12 +362,12 @@
     <button class="fab" id="fab3d" aria-label="3D view">🏙</button>
     <button class="fab" id="fabSat" aria-label="Satellite imagery">🛰</button>
     <button class="fab" id="fabFlash" aria-label="Flashlight">🔦</button>
+    <button class="fab" id="fabVoice" aria-label="Voice command">🎤</button>
+    <button class="fab" id="fabSettings" aria-label="Settings">⚙️</button>
   </div>
-  <button class="fab" id="fabSettings" aria-label="Settings">⚙️</button>
   <button class="fab" id="fabMore" aria-label="More tools">⋯</button>
-  <button class="fab" id="fabVoice" aria-label="Voice command">🎤</button>
-  <button class="fab primary" id="fabReport" aria-label="Report hazard">⚠️</button>
-  <button class="fab" id="fabLocate" aria-label="My location">◎</button>
+  <button class="fab primary key" id="fabReport" aria-label="Report hazard">⚠️</button>
+  <button class="fab key" id="fabLocate" aria-label="My location">◎</button>
 </div>
 
 <div class="sheet" id="routeSheet">

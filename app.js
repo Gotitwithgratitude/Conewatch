@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v72";
+const APP_VERSION="v74";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -958,7 +958,7 @@ async function startNavigation(){
   $("navbanner").style.display="block";
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
-  cameraFollow();navTick();loadWeather();startSmooth();
+  cameraFollow();navTick();loadWeather();startSmooth();try{setDrivingChrome(true);}catch(e){}
   document.body.classList.add("driving"); layout();
   try{if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}catch{}
   requestWakeLock(); requestMotion();
@@ -967,7 +967,7 @@ async function startNavigation(){
   toast("Navigation started — drive safe. Screen will stay awake.");
 }
 function endNavigation(){
-  S.navigating=false;S.headingUp=false;stopSmooth();
+  S.navigating=false;S.headingUp=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
   try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
   try{speechSynthesis.cancel();}catch{}
   document.body.classList.remove("driving"); layout();
@@ -1689,11 +1689,39 @@ $("welcomeGo").onclick=async()=>{
 $("welcomeSkip").onclick=()=>{try{localStorage.setItem("cw_welcome","1");}catch{};$("welcome").style.display="none";startGPS();};
 
 /* free roam as long as you like + one-tap GPS re-lock */
-function hideRelock(){$("relock").style.display="none";}
+function hideRelock(){ clearTimeout(_relockT); $("relock").style.display="none"; }
+/* ═══════════ driving-mode declutter ═══════════
+   Six-plus thumb targets is a lot at speed. While navigating, keep only what a driver could
+   genuinely need — emergency, report a hazard, recenter, mute — and restore the rest on exit. */
+const _drivingHide=["fabMore"];   // everything non-essential now lives behind ⋯, so hiding it declutters the whole stack
+function setDrivingChrome(on){
+  _drivingHide.forEach(id=>{
+    const el=$(id); if(!el) return;
+    if(on){ if(el.style.display!=="none"){ el.dataset._prevDisp=el.style.display||""; el.style.display="none"; } }
+    else  { el.style.display=el.dataset._prevDisp!==undefined?el.dataset._prevDisp:""; }
+  });
+  try{ if(on) $("moreFabs")&&$("moreFabs").classList.remove("open"); }catch(e){}
+}
+
+let _relockT=null;
 function startRelock(){
   if(S.follow)return;
+  // Only nag when it's actually useful: while navigating, or once you've panned far enough
+  // that your own position is off-screen. Browsing the map nearby shouldn't trigger it.
+  if(!S.navigating){
+    if(!S.pos) return;
+    let visible=false;
+    try{
+      const p=map.project([S.pos.lng,S.pos.lat]);
+      const c=map.getContainer();
+      visible = p.x>-40 && p.y>-40 && p.x<c.clientWidth+40 && p.y<c.clientHeight+40;
+    }catch(e){}
+    if(visible) return;                       // you can still see yourself — no prompt needed
+  }
   $("relock").textContent=S.navigating?"🧭 Free roam — tap to resume navigation":"🧲 Free roam — tap to lock onto GPS";
   $("relock").style.display="block";
+  clearTimeout(_relockT);
+  if(!S.navigating) _relockT=setTimeout(hideRelock,6000);   // fades on its own when just browsing
 }
 $("relock").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();cameraFollow();toast(S.navigating?"Resuming navigation view":"🧲 Locked onto GPS");};
 // tapping the top instruction card while navigating recenters on the route (ignore its buttons)
