@@ -157,6 +157,23 @@
   /* the few controls that stay on screen get bigger, easier targets */
   .fab.key,.fab.sos{width:58px;height:58px;font-size:22px}
   .fab.sos{font-size:14px}
+  #searchPanel{position:fixed;inset:0;z-index:1400;background:var(--panel-solid);display:none;flex-direction:column;padding-top:env(safe-area-inset-top)}
+  #searchPanel.open{display:flex}
+  .sp-bar{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .sp-x{border:none;background:transparent;color:var(--text);font-size:18px;padding:8px;cursor:pointer;flex:0 0 auto}
+  .sp-field{flex:1;display:flex;align-items:center;gap:8px;background:rgba(127,127,127,.14);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+  .sp-mag{opacity:.6;flex:0 0 auto}
+  #spInput{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:17px;font-family:inherit;padding:0}
+  #spInput:focus{outline:none}
+  .sp-clr{border:none;background:transparent;color:var(--muted,#8a8d96);font-size:15px;cursor:pointer;flex:0 0 auto}
+  .sp-which{padding:8px 16px 0;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted,#8a8d96)}
+  .sp-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 10px calc(24px + env(safe-area-inset-bottom))}
+  .sp-row{display:flex;align-items:center;gap:12px;padding:13px 10px;border-bottom:1px solid rgba(127,127,127,.14);cursor:pointer}
+  .sp-row:active{background:rgba(127,127,127,.12)}
+  .sp-ic{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto}
+  .sp-tx{flex:1;min-width:0}
+  .sp-tx b{display:block;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sp-tx small{display:block;font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
   #fromRow{display:flex;align-items:center;gap:9px;margin:6px 0 4px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)}
   .fr-dot{width:9px;height:9px;border-radius:50%;background:var(--nav-accent);flex:0 0 auto}
   .fr-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;padding:0}
@@ -380,6 +397,20 @@
   <button class="fab" id="fabMore" aria-label="More tools">⋯</button>
   <button class="fab primary key" id="fabReport" aria-label="Report hazard">⚠️</button>
   <button class="fab key" id="fabLocate" aria-label="My location">◎</button>
+</div>
+
+<!-- full-screen search panel (Apple-style: opens from the search bar, live suggestions) -->
+<div id="searchPanel" aria-hidden="true">
+  <div class="sp-bar">
+    <button id="spBack" class="sp-x" aria-label="Close search">✕</button>
+    <div class="sp-field">
+      <span class="sp-mag">🔍</span>
+      <input id="spInput" placeholder="Search a place or address" autocomplete="off" autocorrect="off" spellcheck="false">
+      <button id="spClear" class="sp-clr" aria-label="Clear">✕</button>
+    </div>
+  </div>
+  <div id="spWhich" class="sp-which"></div>
+  <div id="spList" class="sp-list"></div>
 </div>
 
 <div class="sheet" id="routeSheet">

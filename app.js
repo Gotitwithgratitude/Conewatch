@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v77";
+const APP_VERSION="v78";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2741,3 +2741,124 @@ $("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
   _setFromUI();
   if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
 }));
+
+/* ═══════════ full-screen search panel (Apple-style) ═══════════
+   One entry point: tap the search bar (or the From row) and a real page opens with live
+   suggestions, recents, saved places and an approximate-match option. */
+let _spMode="dest", _spTimer=null, _spAbort=null;
+function openSearchPanel(mode,seed){
+  _spMode=mode||"dest";
+  const p=$("searchPanel"); if(!p) return;
+  p.classList.add("open"); p.setAttribute("aria-hidden","false");
+  $("spWhich").textContent = _spMode==="from" ? "Starting point" : "Destination";
+  $("spInput").placeholder = _spMode==="from" ? "Start — or leave blank for my location" : "Search a place or address";
+  $("spInput").value = seed||"";
+  spRender([]);
+  setTimeout(()=>{ try{$("spInput").focus();}catch(e){} },60);
+}
+function closeSearchPanel(){
+  const p=$("searchPanel"); if(!p) return;
+  p.classList.remove("open"); p.setAttribute("aria-hidden","true");
+  try{$("spInput").blur();}catch(e){}
+}
+function spIcon(r){
+  const ic=poiIcon(r); return '<span class="sp-ic" style="background:'+ic[1]+'">'+ic[0]+'</span>';
+}
+function spRender(items,note){
+  const list=$("spList"); if(!list) return;
+  const q=($("spInput").value||"").trim();
+  list.innerHTML="";
+  if(!q){
+    // empty state → saved + recents, same data the quick chips use
+    const rows=[];
+    if(_spMode==="from" ) rows.push({name:"My location",label:"Use where I am now",icon:"◎",bg:"#34C98A",_me:true});
+    if(QK.home) rows.push({name:"Home",label:"Saved place",icon:"🏠",bg:"#34C98A",lat:QK.home.lat,lng:QK.home.lng});
+    if(QK.work) rows.push({name:"Work",label:"Saved place",icon:"💼",bg:"#5B9CF6",lat:QK.work.lat,lng:QK.work.lng});
+    (QK.favorites||[]).slice(0,5).forEach(f=>rows.push({name:f.name,label:"Favorite",icon:"⭐",bg:"#FF9F0A",lat:f.lat,lng:f.lng}));
+    (QK.recents||[]).slice(0,8).forEach(r=>rows.push({name:r.name,label:"Recent",icon:"🕘",bg:"#6B7280",lat:r.lat,lng:r.lng}));
+    if(!rows.length){ list.innerHTML='<p class="sub" style="padding:18px 12px">Start typing a place or address.</p>'; return; }
+    rows.forEach(r=>{
+      const d=document.createElement("div"); d.className="sp-row";
+      d.innerHTML='<span class="sp-ic" style="background:'+r.bg+'">'+r.icon+'</span><span class="sp-tx"><b>'+r.name+'</b><small>'+r.label+'</small></span>';
+      d.onclick=()=>spPick(r);
+      list.appendChild(d);
+    });
+    return;
+  }
+  if(note){ const n=document.createElement("p"); n.className="sub"; n.style.padding="14px 12px"; n.textContent=note; list.appendChild(n); }
+  (items||[]).forEach(r=>{
+    const d=document.createElement("div"); d.className="sp-row";
+    const near=(r._d!==undefined&&isFinite(r._d))?fmtDist(r._d)+" away":"";
+    d.innerHTML=spIcon(r)+'<span class="sp-tx"><b>'+(r.name||q)+'</b><small class="rmeta" data-lat="'+r.lat+'" data-lng="'+r.lng+'">'+[near,r.label].filter(Boolean).join(" · ")+'</small></span>';
+    d.onclick=()=>spPick(r);
+    list.appendChild(d);
+  });
+  // always offer the approximate/as-typed match, like the old picker did
+  const ap=document.createElement("div"); ap.className="sp-row";
+  ap.innerHTML='<span class="sp-ic" style="background:#2B6FE0">✎</span><span class="sp-tx"><b>Use "'+q.slice(0,28)+'" as typed</b><small>Approximate match — best guess near you</small></span>';
+  ap.onclick=()=>{ closeSearchPanel(); if(_spMode==="from"){ $("tripFrom").value=q; $("tripFrom").dispatchEvent(new Event("change")); } else { $("search").value=q; forceGeocode(q); } };
+  list.appendChild(ap);
+  try{ upgradeResultDistances(items||[]); }catch(e){}
+}
+function spPick(r){
+  closeSearchPanel();
+  if(r._me){ S.origin=null; S.originName=""; try{_setFromUI();}catch(e){} if(S.dest)fetchRoute(); return; }
+  if(_spMode==="from"){
+    S.origin={lat:r.lat,lng:r.lng}; S.originName=(r.name||r.label||"Start").slice(0,40);
+    try{_setFromUI();}catch(e){}
+    if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
+    return;
+  }
+  $("search").value=r.name||"";
+  confirmDestination({lat:r.lat,lng:r.lng,label:[r.name,r.label].filter(Boolean).join(", ")}, r.name||"Destination");
+}
+async function spSearch(q){
+  if(_spAbort){ try{_spAbort.abort();}catch(e){} }
+  _spAbort=new AbortController();
+  if(!navigator.onLine){ spRender(offlineMatches(q)); return; }
+  if(acCache.has(q)){ spRender(acCache.get(q)); return; }
+  spRender([], "Searching…");
+  let items=[];
+  try{
+    let u="https://photon.komoot.io/api/?q="+encodeURIComponent(q)+"&limit=10&lang=en";
+    if(S.pos) u+="&lat="+S.pos.lat+"&lon="+S.pos.lng;
+    const d=await (await fetch(u,{signal:_spAbort.signal})).json();
+    items=(d.features||[]).map(f=>{
+      const p=f.properties,co=f.geometry.coordinates;
+      const name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
+      const label=[p.street&&p.name&&p.name!==p.street?p.street:null,p.city||p.town||p.village,p.state].filter(Boolean).join(", ");
+      return {name,label,lat:co[1],lng:co[0]};
+    });
+  }catch(e){ if(e.name==="AbortError")return; }
+  if(!items.length){
+    try{
+      let url="https://nominatim.openstreetmap.org/search?format=json&limit=10&q="+encodeURIComponent(q);
+      if(S.pos){const dd=0.15;url+="&viewbox="+(S.pos.lng-dd)+","+(S.pos.lat+dd)+","+(S.pos.lng+dd)+","+(S.pos.lat-dd)+"&bounded=0";}
+      const list=await (await fetch(url,{signal:_spAbort.signal,headers:{Accept:"application/json"}})).json();
+      items=(list||[]).map(r=>({name:r.display_name.split(",")[0],label:r.display_name.split(",").slice(1,4).join(",").trim(),lat:+r.lat,lng:+r.lon}));
+    }catch(e){ if(e.name==="AbortError")return; }
+  }
+  const toks=q.toLowerCase().split(/\s+/).filter(w=>w.length>1);
+  items=items.map(r=>{ const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase(); const nm=toks.filter(t=>lbl.indexOf(t)>-1).length;
+    return {...r,_d:S.pos?distM(S.pos,r):undefined,_n:nm}; })
+    .sort((a,b)=>(b._n-a._n)||((a._d||0)-(b._d||0)));
+  acCache.set(q,items);
+  spRender(items, items.length?null:"No matches — try adding a city or ZIP.");
+}
+$("spInput")&&($("spInput").addEventListener("input",()=>{
+  const q=$("spInput").value.trim();
+  clearTimeout(_spTimer);
+  if(q.length<2){ spRender([]); return; }
+  _spTimer=setTimeout(()=>spSearch(q),200);
+}));
+$("spInput")&&($("spInput").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); const q=$("spInput").value.trim(); if(!q) return;
+    closeSearchPanel();
+    if(_spMode==="from"){ $("tripFrom").value=q; $("tripFrom").dispatchEvent(new Event("change")); }
+    else { $("search").value=q; doSearch(); } }
+}));
+$("spClear")&&($("spClear").onclick=()=>{ $("spInput").value=""; spRender([]); $("spInput").focus(); });
+$("spBack")&&($("spBack").onclick=closeSearchPanel);
+// the main search bar and the From row both open the panel instead of typing inline
+$("search")&&($("search").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("dest",$("search").value.trim()); }));
+$("tripFrom")&&($("tripFrom").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("from",S.originName||""); }));
