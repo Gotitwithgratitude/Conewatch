@@ -174,6 +174,24 @@
   .sp-tx{flex:1;min-width:0}
   .sp-tx b{display:block;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sp-tx small{display:block;font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  #rsStats{display:flex;align-items:center;justify-content:space-around;gap:6px;margin:4px 0 12px;padding:12px 6px;border-radius:14px;background:rgba(127,127,127,.10)}
+  .rs-stat{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0;flex:1}
+  .rs-stat b{font-family:var(--display,inherit);font-size:26px;line-height:1;font-weight:700;color:var(--text);white-space:nowrap}
+  .rs-stat small{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted,#8a8d96)}
+  #rsTime{color:var(--nav-accent,#22d3aa)}
+  .rs-sep{width:1px;align-self:stretch;background:rgba(127,127,127,.22);flex:0 0 auto}
+  #routeEnds{position:relative;border:1px solid var(--line);border-radius:14px;padding:4px 12px;margin-bottom:10px;background:var(--panel-solid)}
+  .re-row{display:flex;align-items:center;gap:11px;min-height:50px;padding:5px 0}
+  .re-ic{width:14px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .re-start{width:11px;height:11px;border-radius:50%;background:#2B6FE0;box-shadow:0 0 0 3px rgba(43,111,224,.22)}
+  .re-line{position:absolute;left:19px;top:34px;bottom:34px;width:2px;background:repeating-linear-gradient(to bottom,rgba(127,127,127,.45) 0 3px,transparent 3px 7px)}
+  .re-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:16px;font-family:inherit;padding:0}
+  .re-input:focus{outline:none}
+  .re-tx{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px}
+  .re-tx b{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .re-tx small{font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .re-tx small:empty{display:none}
+  .re-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
   #fromRow{display:flex;align-items:center;gap:9px;margin:6px 0 4px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)}
   .fr-dot{width:9px;height:9px;border-radius:50%;background:var(--nav-accent);flex:0 0 auto}
   .fr-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;padding:0}
@@ -415,11 +433,31 @@
 
 <div class="sheet" id="routeSheet">
   <div class="grabber"></div>
-  <h3 id="rsTitle">Route</h3>
-  <div id="fromRow">
-    <span class="fr-dot"></span>
-    <input id="tripFrom" class="fr-input" placeholder="My location" autocomplete="off" aria-label="Starting point">
-    <button id="fromClear" class="fr-x" aria-label="Use my location" title="Use my location">◎</button>
+  <!-- Apple-style: big glanceable numbers first, then the two endpoints -->
+  <div id="rsStats">
+    <div class="rs-stat"><b id="rsTime">—</b><small>min</small></div>
+    <div class="rs-sep"></div>
+    <div class="rs-stat"><b id="rsArrive">—</b><small>arrival</small></div>
+    <div class="rs-sep"></div>
+    <div class="rs-stat"><b id="rsDist">—</b><small id="rsDistU">mi</small></div>
+  </div>
+  <div id="routeEnds">
+    <div class="re-row" id="reFrom">
+      <span class="re-ic re-start"></span>
+      <span class="re-tx">
+        <input id="tripFrom" class="re-input" placeholder="My location" autocomplete="off" aria-label="Starting point">
+        <small id="rsFromAddr"></small>
+      </span>
+      <button id="fromClear" class="re-x" aria-label="Use my location" title="Use my location">◎</button>
+    </div>
+    <div class="re-line"></div>
+    <div class="re-row" id="reTo">
+      <span class="re-ic re-end">📍</span>
+      <span class="re-tx">
+        <b id="rsTitle">Route</b>
+        <small id="rsDestAddr"></small>
+      </span>
+    </div>
   </div>
   <p class="sub" id="rsMeta"></p>
   <div id="stopsList"></div>

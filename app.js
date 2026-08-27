@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v78";
+const APP_VERSION="v80";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -42,7 +42,7 @@ const S = {
   speedMph:0, tripM:0, is3d:false, mapReady:false,
   themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
-  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0, origin:null, originName:"", remoteStart:false,
+  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0, origin:null, originName:"", originAddr:"", destLabel:"", remoteStart:false,
 };
 try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
@@ -680,6 +680,7 @@ function setDestination(latlng,name){
   S.route=null; S.steps=[]; S.stepIdx=0;                         // forget the old route entirely
   try{map.getSource("route").setData({type:"FeatureCollection",features:[]});}catch(e){}  // wipe the old line immediately
   S.dest=latlng;S.destName=name||"Destination";
+  if(!latlng||!latlng._keepLabel) S.destLabel=S.destLabel||"";
   if(name&&!["Home","Work","My parked car"].includes(name)){
     QK.recents=[{lat:latlng.lat,lng:latlng.lng,name},...(QK.recents||[]).filter(r=>r.name!==name)].slice(0,6);
     saveQK();renderQuick();
@@ -861,9 +862,31 @@ async function fetchRoute(silent){
 function renderRouteSheet(r){
   $("rsTitle").textContent=S.destName;
   const rush=rushFactor()>1?" · rush-hour adjusted":"";
-  const arrClock=new Date(Date.now()+r.duration*rushFactor()*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
-  const fromTxt=S.origin?("from "+(S.originName||"chosen start")+" · "):"";
-  $("rsMeta").textContent=`${fromTxt}${fmtDist(r.distance)} · ${fmtDur(r.duration*rushFactor())} · arrive ${arrClock} (${S.mode})${rush}`;
+  const secs=r.duration*rushFactor();
+  const arrClock=new Date(Date.now()+secs*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  // big glanceable numbers, Apple-style: time / arrival / distance
+  const mins=Math.max(1,Math.round(secs/60));
+  const timeTxt = mins<60 ? String(mins) : (Math.floor(mins/60)+"h "+(mins%60||"")).trim();
+  const timeUnit= mins<60 ? "min" : "";
+  try{
+    $("rsTime").textContent=timeTxt;
+    const tu=$("rsTime").parentNode.querySelector("small"); if(tu) tu.textContent=timeUnit||"total";
+    $("rsArrive").textContent=arrClock;
+    const km=S.units==="km";
+    const dv=km?(r.distance/1000):(r.distance/1609.34);
+    $("rsDist").textContent=dv>=100?Math.round(dv):dv.toFixed(1);
+    $("rsDistU").textContent=km?"km":"mi";
+  }catch(e){}
+  $("rsMeta").textContent=`${S.mode}${rush}${S.origin?" · custom start":""}`;
+  try{
+    // second line = full address, the way a maps app shows it
+    const da=$("rsDestAddr");
+    if(da){ let addr=(S.destLabel||"").replace(/^\s*/,""); 
+      if(addr && S.destName && addr.toLowerCase().indexOf(S.destName.toLowerCase())===0) addr=addr.slice(S.destName.length).replace(/^[,\s]+/,"");
+      da.textContent=addr.split(",").slice(0,3).join(",").trim(); }
+    const fa=$("rsFromAddr");
+    if(fa) fa.textContent = S.origin ? (S.originAddr||"") : (S.pos?"Current location":"");
+  }catch(e){}
   try{ _setFromUI(); }catch(e){}
   try{ renderRouteOpts(); }catch(e){}
   const sl=$("stopsList");sl.innerHTML="";
@@ -1091,7 +1114,7 @@ function navTick(){
 
   // planned-from-elsewhere route: hold off on rerouting until the driver actually joins it
   if(S.remoteStart){
-    if(minDistToRoute()<160){ S.remoteStart=false; S.origin=null; S.originName=""; try{_setFromUI();}catch(e){} toast("On the route — guidance live",2200); }
+    if(minDistToRoute()<160){ S.remoteStart=false; S.origin=null; S.originName=""; S.originAddr=""; try{_setFromUI();}catch(e){} toast("On the route — guidance live",2200); }
     else { S.offRouteCount=0; }
   }
   const acc=S.accuracy||20;
@@ -2527,7 +2550,8 @@ function showGeoPicker(cands,typed){
   $("geoPicker").style.display="block";
 }
 async function confirmDestination(res,typed){
-  setDestination({lat:res.lat,lng:res.lng},typed);
+  S.destLabel=res.label||"";
+  setDestination({lat:res.lat,lng:res.lng,_keepLabel:true},typed);
   cacheGeocode(typed,res);
   crowdSave(typed,res);   // teach the network this match for the next driver
   $("confAddr").textContent=res.label||typed;  // res.label is the ACTUAL matched address
@@ -2737,7 +2761,7 @@ $("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
     }catch(e){}
   }
   if(!pt){ toast("Couldn't find that start — add a city or ZIP.",3400); return; }
-  S.origin={lat:pt.lat,lng:pt.lng}; S.originName=(pt.label||q).split(",").slice(0,2).join(",");
+  S.origin={lat:pt.lat,lng:pt.lng}; S.originName=(pt.label||q).split(",")[0]; S.originAddr=(pt.label||"").split(",").slice(1,4).join(",").trim();
   _setFromUI();
   if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
 }));
@@ -2802,9 +2826,9 @@ function spRender(items,note){
 }
 function spPick(r){
   closeSearchPanel();
-  if(r._me){ S.origin=null; S.originName=""; try{_setFromUI();}catch(e){} if(S.dest)fetchRoute(); return; }
+  if(r._me){ S.origin=null; S.originName=""; S.originAddr=""; try{_setFromUI();}catch(e){} if(S.dest)fetchRoute(); return; }
   if(_spMode==="from"){
-    S.origin={lat:r.lat,lng:r.lng}; S.originName=(r.name||r.label||"Start").slice(0,40);
+    S.origin={lat:r.lat,lng:r.lng}; S.originName=(r.name||r.label||"Start").slice(0,40); S.originAddr=(r.label||"").split(",").slice(0,3).join(",").trim();
     try{_setFromUI();}catch(e){}
     if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
     return;
