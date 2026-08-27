@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v74";
+const APP_VERSION="v75";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -1532,33 +1532,54 @@ $("hudBigger")&&($("hudBigger").onclick=(e)=>{e.stopPropagation();hudScale=Math.
 $("hudSmaller")&&($("hudSmaller").onclick=(e)=>{e.stopPropagation();hudScale=Math.max(0.9,hudScale-0.3);applyHudScale();});
 
 /* ═══════════ voice ═══════════ */
+let _rec=null,_recBusy=false;
 $("fabVoice").onclick=()=>{
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast("Voice not supported in this browser.");return;}
+  if(!SR){ toast("Voice isn't supported here — type your destination instead.",3200); try{$("search").focus();}catch(e){} return; }
+  if(_recBusy){ try{_rec&&_rec.stop();}catch(e){} _recBusy=false; toast("Stopped listening"); return; }
   try{
-    const rec=new SR();rec.lang="en-US";
-    rec.onresult=(e)=>{
-      const t=e.results[0][0].transcript.toLowerCase();
-      if(/^(navigate to|take me to|go to|drive to|directions to)/.test(t)){const dest=t.replace(/^(navigate to|take me to|go to|drive to|directions to)\s*/,"");$("search").value=dest;forceGeocode(dest);toast("🎤 Finding "+dest);}
+    // NOTE: this must live outside the handler. A local `const rec` gets garbage-collected
+    // while the mic is still open, which is what made recognition cut out and "glitch".
+    _rec=new SR();
+    _rec.lang="en-US"; _rec.continuous=false; _rec.interimResults=false; _rec.maxAlternatives=1;
+    _recBusy=true;
+    const fab=$("fabVoice"); if(fab) fab.classList.add("lit");
+    const done=()=>{ _recBusy=false; const f=$("fabVoice"); if(f) f.classList.remove("lit"); };
+    const guard=setTimeout(()=>{ try{_rec&&_rec.stop();}catch(e){} },9000);   // never hang the mic open
+    _rec.onresult=(e)=>{
+      clearTimeout(guard);
+      const t=((e.results&&e.results[0]&&e.results[0][0]&&e.results[0][0].transcript)||"").toLowerCase().trim();
+      if(!t){ toast("Didn't catch that — try again."); return; }
+      if(/^(navigate to|take me to|go to|drive to|directions to)/.test(t)){
+        const dest=t.replace(/^(navigate to|take me to|go to|drive to|directions to)\s*/,"");
+        $("search").value=dest; forceGeocode(dest); toast("🎤 Finding "+dest);
+      }
       else if(t.includes("pothole"))reportHazard("pothole");
       else if(t.includes("cone")||t.includes("construction"))reportHazard("construction_cones");
       else if(t.includes("accident")||t.includes("crash"))reportHazard("accident");
       else if(t.includes("police"))reportHazard("police");
       else if(t.includes("camera"))reportHazard("camera");
       else if(t.includes("flashlight")||t.includes("light"))$("fabFlash").click();
-      else if(t.includes("gas"))discoverOpen("fuel");
-      else if(t.includes("coffee"))discoverOpen("cafe");
-      else if(t.includes("food")||t.includes("hungry"))discoverOpen("restaurant");
+      else if(t.includes("gas"))discoverByPoi("fuel");
+      else if(t.includes("coffee"))discoverByPoi("cafe");
+      else if(t.includes("food")||t.includes("hungry"))discoverByPoi("restaurant");
       else if(t.includes("roadside"))openSheet("roadsideSheet");
       else if(t.includes("emergency"))$("fab911").click();
       else if(t.includes("end")||t.includes("stop nav"))endNavigation();
-      else toast(`Heard "${t}" — try "navigate to…", "report pothole", "find gas".`);
+      else { $("search").value=t; toast('Heard "'+t+'" — tap → to search'); }
     };
-    rec.onerror=()=>toast("Mic unavailable — check permissions.");
-    rec.start();toast("Listening… 🎤");
-  }catch{toast("Voice unavailable here.");}
+    _rec.onerror=(e)=>{
+      clearTimeout(guard); done();
+      const err=(e&&e.error)||"";
+      if(err==="not-allowed"||err==="service-not-allowed") toast("Microphone blocked — allow mic access in Settings › Safari.",4200);
+      else if(err==="no-speech") toast("Didn't hear anything — tap 🎤 and speak.",2600);
+      else if(err!=="aborted") toast("Voice hiccuped — try once more.",2400);
+    };
+    _rec.onend=()=>{ clearTimeout(guard); done(); };
+    _rec.start();
+    toast("Listening… 🎤 tap again to stop");
+  }catch(e){ _recBusy=false; toast("Voice unavailable here — type instead."); }
 };
-function discoverOpen(kind){openSheet("discoverSheet");discover(kind);}
 
 /* ═══════════ roadside ═══════════ */
 $("shareLoc").onclick=()=>{
@@ -1618,6 +1639,9 @@ function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}")
   if(c.sb){S.sb=c.sb;$("sbUrl").value=c.sb.url||"";$("sbKey").value=c.sb.key||"";}
   if(c.mpg)$("mpg").value=c.mpg; if(c.gas)$("gasPrice").value=c.gas;
   if(c.theme)S.themeMode=c.theme;
+  // v75: auto (time-of-day, daylight by default) is the standard. Anyone carrying an old manual
+  // pick from testing gets moved back to auto once; a deliberate choice after this sticks.
+  try{ if(!localStorage.getItem("cw_themeReset")){ S.themeMode="auto"; localStorage.setItem("cw_themeReset","1"); } }catch(e){}
   if(c.saver!==undefined)S.saver=c.saver;
   if(c.alerts!==undefined)S.audioAlerts=c.alerts;
   if(c.bump!==undefined)S.bumpOn=c.bump;
@@ -2666,3 +2690,49 @@ if("serviceWorker" in navigator){
     });
   });
 }
+
+/* ═══════════ trip planner: distance + ETA between any two places ═══════════ */
+$("fabTrip")&&($("fabTrip").onclick=()=>{ closeSheets(); openSheet("tripSheet"); });
+$("tripSwap")&&($("tripSwap").onclick=()=>{ const a=$("tripFrom"),b=$("tripTo"); const t=a.value; a.value=b.value; b.value=t; });
+async function _tripPoint(txt){
+  const q=(txt||"").trim();
+  if(!q) return S.pos?{lat:S.pos.lat,lng:S.pos.lng,label:"My location"}:null;
+  const cached=lookupCachedGeocode(q);
+  if(cached) return {lat:cached.lat,lng:cached.lng,label:cached.label||q};
+  try{
+    const cands=await geocodeCandidates(q);
+    let pool=(cands||[]).filter(c=>c.sc>-30);
+    const want=parseAddr(q);
+    if(!want.city&&!want.state&&!want.postalcode&&S.pos){
+      const near=pool.filter(c=>distM(S.pos,{lat:c.lat,lng:c.lng})/1609.34<=120);
+      if(near.length) pool=near;
+    }
+    if(pool.length) return {lat:pool[0].lat,lng:pool[0].lng,label:pool[0].label||q};
+  }catch(e){}
+  return null;
+}
+$("tripGo")&&($("tripGo").onclick=async()=>{
+  const out=$("tripResult");
+  out.innerHTML='<p class="sub">Looking up both places…</p>';
+  const toTxt=$("tripTo").value.trim();
+  if(!toTxt){ out.innerHTML='<p class="sub">Enter a destination first.</p>'; return; }
+  const [A,B]=await Promise.all([_tripPoint($("tripFrom").value),_tripPoint(toTxt)]);
+  if(!A){ out.innerHTML='<p class="sub">Couldn\'t find the starting point — add a city or ZIP.</p>'; return; }
+  if(!B){ out.innerHTML='<p class="sub">Couldn\'t find that destination — add a city or ZIP.</p>'; return; }
+  out.innerHTML='<p class="sub">Measuring the drive…</p>';
+  const res=await roadDistances({lat:A.lat,lng:A.lng},[{lat:B.lat,lng:B.lng}]);
+  const info=res&&res[0];
+  if(!info){ out.innerHTML='<p class="sub">Couldn\'t measure that route right now.</p>'; return; }
+  const secs=(info.sec!=null&&isFinite(info.sec))?info.sec*rushFactor():null;
+  const arr=secs!=null?new Date(Date.now()+secs*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
+  out.innerHTML=
+    '<div class="kv"><span>From</span><span>'+(A.label||"My location").slice(0,40)+'</span></div>'+
+    '<div class="kv"><span>To</span><span>'+(B.label||toTxt).slice(0,40)+'</span></div>'+
+    '<div class="kv"><span>Distance</span><span>'+(info.est?"~ ":"")+fmtDist(info.m)+'</span></div>'+
+    (secs!=null?'<div class="kv"><span>Drive time</span><span>'+(info.est?"~ ":"")+fmtDur(secs)+'</span></div>':'')+
+    (arr?'<div class="kv"><span>Leaving now, arrive</span><span>'+arr+'</span></div>':'')+
+    (info.est?'<p class="sub" style="margin-top:8px">Estimated — routing servers were busy.</p>':'')+
+    '<button class="btn" id="tripNav" style="width:100%;margin-top:12px">Navigate there from here</button>';
+  const nb=$("tripNav");
+  if(nb) nb.onclick=()=>{ closeSheets(); $("search").value=B.label||toTxt; setDestination({lat:B.lat,lng:B.lng}, (B.label||toTxt).split(",")[0]); };
+});
