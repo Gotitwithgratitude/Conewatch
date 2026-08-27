@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v69";
+const APP_VERSION="v70";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -93,12 +93,13 @@ try{
 
 /* ═══════════ map boot (MapLibre v5) with per-theme styles ═══════════ */
 function rasterStyle(dark){
-  const url=dark
-    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  const paint = dark
+    ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
+    : {};
   return { version:8,
-    sources:{ basemap:{ type:"raster", tiles:[url], tileSize:256, attribution:"© Esri, © OpenStreetMap contributors" }},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#101215":"#E9ECEF"}},{id:"basemap",type:"raster",source:"basemap"}] };
+    sources:{ basemap:{ type:"raster", tiles:[url], tileSize:256, maxzoom:19, attribution:"© Esri, © OpenStreetMap contributors" }},
+    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#101215":"#E9ECEF"}},{id:"basemap",type:"raster",source:"basemap",paint:paint}] };
 }
 function rasterStyleObj(dark){
   // CARTO began requiring an API key (unauthenticated tiles get an "API KEY REQUIRED" watermark)
@@ -111,12 +112,17 @@ function rasterStyleObj(dark){
       sources:{carto:{type:"raster",tiles:["a","b","c","d"].map(s=>`https://${s}.basemaps.cartocdn.com/rastertiles/${base}/{z}/{x}/{y}.png?key=${ck}`),tileSize:256,maxzoom:20,attribution:"© OpenStreetMap © CARTO"}},
       layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},{id:"carto",type:"raster",source:"carto"}]};
   }
-  const url=dark
-    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  // ONE source for both themes: Esri's street map has tiles all the way to nav zoom (17-19).
+  // The dark canvas basemap tops out ~z16, which produced "Map data not yet available" while driving.
+  // Night mode is rendered by darkening these tiles instead of swapping to a shallower source.
+  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  const paint = dark
+    ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12,"raster-opacity":1}
+    : {"raster-opacity":1};
   return {version:8,
-    sources:{basemap:{type:"raster",tiles:[url],tileSize:256,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},{id:"basemap",type:"raster",source:"basemap"}]};
+    sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
+    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},
+            {id:"basemap",type:"raster",source:"basemap",paint:paint}]};
 }
 async function styleFor(theme){
   return rasterStyleObj(theme!=="light");   // raster PNG = reliably cacheable offline
@@ -2387,9 +2393,7 @@ async function downloadOfflineArea(){
       const n=Math.pow(2,z); if(x<0||y<0||x>=n||y>=n)continue;
       const url= ck
         ? `https://${subs[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/${dark?"dark_all":"voyager"}/${z}/${x}/${y}.png?key=${ck}`
-        : (dark
-            ? `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${z}/${y}/${x}`
-            : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`);
+        : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`;
       total++;
       jobs.push(fetch(url,{mode:"cors"}).then(res=>{if(res.ok){okc++;return cache.put(url,res.clone());}}).catch(()=>{}));
       if(jobs.length>=60){await Promise.all(jobs);jobs.length=0;$("dlOffline").querySelector("small").textContent=`Downloading… ${okc} tiles`;}
