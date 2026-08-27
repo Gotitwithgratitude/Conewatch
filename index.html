@@ -157,8 +157,11 @@
   /* the few controls that stay on screen get bigger, easier targets */
   .fab.key,.fab.sos{width:58px;height:58px;font-size:22px}
   .fab.sos{font-size:14px}
-  .tinput{width:100%;margin-top:8px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel-solid);color:var(--text);font-size:15px;font-family:inherit}
-  .tinput:focus{outline:none;border-color:var(--nav-accent)}
+  #fromRow{display:flex;align-items:center;gap:9px;margin:6px 0 4px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)}
+  .fr-dot{width:9px;height:9px;border-radius:50%;background:var(--nav-accent);flex:0 0 auto}
+  .fr-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;padding:0}
+  .fr-input:focus{outline:none}
+  .fr-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
   #moreFabs{display:none}
   /* opened tools lay out as a compact grid so a tall column can't run off the top of the screen */
   #moreFabs.open{display:grid;grid-template-columns:repeat(2,auto);gap:9px;justify-items:end}
@@ -365,7 +368,6 @@
 <div id="fabs">
   <button class="fab sos" id="fab911" aria-label="Emergency 911">911</button>
   <div id="moreFabs">
-    <button class="fab" id="fabTrip" aria-label="Plan a trip">🗺</button>
     <button class="fab" id="fabFeedback" aria-label="Send feedback">📣</button>
     <button class="fab" id="fabRoadside" aria-label="Roadside assistance">🛠</button>
     <button class="fab" id="fabDiscover" aria-label="Discover nearby">🧭</button>
@@ -383,6 +385,11 @@
 <div class="sheet" id="routeSheet">
   <div class="grabber"></div>
   <h3 id="rsTitle">Route</h3>
+  <div id="fromRow">
+    <span class="fr-dot"></span>
+    <input id="tripFrom" class="fr-input" placeholder="My location" autocomplete="off" aria-label="Starting point">
+    <button id="fromClear" class="fr-x" aria-label="Use my location" title="Use my location">◎</button>
+  </div>
   <p class="sub" id="rsMeta"></p>
   <div id="stopsList"></div>
   <div id="tripStats"></div>
@@ -437,19 +444,6 @@
     <button class="chip" data-poi="parking">🅿️ Parking</button>
   </div>
   <div id="poiList"><p class="sub">Pick a category to search around your position.</p></div>
-</div>
-
-<div class="sheet" id="tripSheet">
-  <div class="grabber"></div>
-  <h3>🗺 Plan a trip</h3>
-  <p class="sub">Check the drive between any two places — no navigation needed.</p>
-  <input id="tripFrom" class="tinput" placeholder="From — leave blank for my location" autocomplete="off">
-  <input id="tripTo" class="tinput" placeholder="To — address or place" autocomplete="off">
-  <div style="display:flex;gap:8px;margin-top:10px">
-    <button class="btn" id="tripGo" style="flex:1">Check distance &amp; time</button>
-    <button class="btn ghost" id="tripSwap" title="Swap" style="width:52px">⇅</button>
-  </div>
-  <div id="tripResult" style="margin-top:14px"></div>
 </div>
 
 <div class="sheet" id="roadsideSheet">

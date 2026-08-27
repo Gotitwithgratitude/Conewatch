@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v75";
+const APP_VERSION="v77";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -42,7 +42,7 @@ const S = {
   speedMph:0, tripM:0, is3d:false, mapReady:false,
   themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
-  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0,
+  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0, origin:null, originName:"", remoteStart:false,
 };
 try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
@@ -293,10 +293,11 @@ function initUserMarker(){
 
 /* ═══════════ GPS ═══════════ */
 function gpsOpts(){
-  // INTEGRITY FIRST: while navigating, ALWAYS full accuracy + fresh fixes — battery mode never degrades this.
-  // Savings come only from free-roam (coarser GPS) and from render/animation/2D cuts, never from nav precision.
-  if(S.navigating) return { enableHighAccuracy:true, maximumAge:800, timeout:15000 };
-  return { enableHighAccuracy:false, maximumAge:S.saver?6000:4000, timeout:15000 };
+  // ACCURACY FIRST. The old build asked for LOW accuracy whenever you weren't navigating, which
+  // falls back to wifi/cell positioning and can sit 100m+ off — that's what made the dot look wrong
+  // while just viewing the map. Real GPS now runs any time the app is open.
+  if(S.navigating) return { enableHighAccuracy:true, maximumAge:0, timeout:15000 };
+  return { enableHighAccuracy:true, maximumAge:S.saver?4000:1500, timeout:15000 };
 }
 function startGPS(){
   if(!("geolocation" in navigator)){ toast("No GPS available on this device."); return; }
@@ -842,7 +843,7 @@ async function fetchRoute(silent){
   if(!navigator.onLine){ if(!silent)toast("Offline — showing your saved route. It stays active.",3200); return; }
   S.rerouting=true;
   try{
-    const data=await routeFetch([S.pos,...S.stops,S.dest]);
+    const data=await routeFetch([(S.origin||S.pos),...S.stops,S.dest]);
     if(data.code!=="Ok"||!data.routes?.length){toast("No route found for this mode.");S.rerouting=false;return;}
     const r=data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
@@ -861,7 +862,9 @@ function renderRouteSheet(r){
   $("rsTitle").textContent=S.destName;
   const rush=rushFactor()>1?" · rush-hour adjusted":"";
   const arrClock=new Date(Date.now()+r.duration*rushFactor()*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
-  $("rsMeta").textContent=`${fmtDist(r.distance)} · ${fmtDur(r.duration*rushFactor())} · arrive ${arrClock} (${S.mode})${rush}`;
+  const fromTxt=S.origin?("from "+(S.originName||"chosen start")+" · "):"";
+  $("rsMeta").textContent=`${fromTxt}${fmtDist(r.distance)} · ${fmtDur(r.duration*rushFactor())} · arrive ${arrClock} (${S.mode})${rush}`;
+  try{ _setFromUI(); }catch(e){}
   try{ renderRouteOpts(); }catch(e){}
   const sl=$("stopsList");sl.innerHTML="";
   S.stops.forEach((s,i)=>{
@@ -952,6 +955,11 @@ function drawElev(ele){
 /* ═══════════ navigation ═══════════ */
 async function startNavigation(){
   if(!S.route)return;
+  // Routing from a place you aren't is a legitimate thing to want (planning ahead, checking a trip
+  // for someone else). Keep the route; just don't fight the driver with reroutes until they're
+  // actually on it.
+  S.remoteStart = !!S.origin;
+  if(S.remoteStart) toast("Following the planned route — guidance starts when you reach it.",4200);
   S.navigating=true;S.follow=true;S.headingUp=true;updateFollowUI();updateCompassUI();
   try{$("confirmBar").style.display="none";}catch(e){}   // clean hand-off — no overlapping cards
   closeSheets();
@@ -967,7 +975,7 @@ async function startNavigation(){
   toast("Navigation started — drive safe. Screen will stay awake.");
 }
 function endNavigation(){
-  S.navigating=false;S.headingUp=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
+  S.navigating=false;S.headingUp=false;S.remoteStart=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
   try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
   try{speechSynthesis.cancel();}catch{}
   document.body.classList.remove("driving"); layout();
@@ -1081,8 +1089,13 @@ function navTick(){
     toast("🏁 Arrived — "+S.destName+(S.mode==="car"?" · parking spot saved":""));
     clearStops();endNavigation();return;}
 
+  // planned-from-elsewhere route: hold off on rerouting until the driver actually joins it
+  if(S.remoteStart){
+    if(minDistToRoute()<160){ S.remoteStart=false; S.origin=null; S.originName=""; try{_setFromUI();}catch(e){} toast("On the route — guidance live",2200); }
+    else { S.offRouteCount=0; }
+  }
   const acc=S.accuracy||20;
-  if(acc<90 && navigator.onLine){
+  if(!S.remoteStart && acc<90 && navigator.onLine){
     const thresh=Math.max(45,acc*2);
     const dR=minDistToRoute();
     // A WRONG TURN shows up as heading divergence long before distance does — catch it immediately.
@@ -2691,48 +2704,40 @@ if("serviceWorker" in navigator){
   });
 }
 
-/* ═══════════ trip planner: distance + ETA between any two places ═══════════ */
-$("fabTrip")&&($("fabTrip").onclick=()=>{ closeSheets(); openSheet("tripSheet"); });
-$("tripSwap")&&($("tripSwap").onclick=()=>{ const a=$("tripFrom"),b=$("tripTo"); const t=a.value; a.value=b.value; b.value=t; });
-async function _tripPoint(txt){
-  const q=(txt||"").trim();
-  if(!q) return S.pos?{lat:S.pos.lat,lng:S.pos.lng,label:"My location"}:null;
-  const cached=lookupCachedGeocode(q);
-  if(cached) return {lat:cached.lat,lng:cached.lng,label:cached.label||q};
-  try{
-    const cands=await geocodeCandidates(q);
-    let pool=(cands||[]).filter(c=>c.sc>-30);
-    const want=parseAddr(q);
-    if(!want.city&&!want.state&&!want.postalcode&&S.pos){
-      const near=pool.filter(c=>distM(S.pos,{lat:c.lat,lng:c.lng})/1609.34<=120);
-      if(near.length) pool=near;
-    }
-    if(pool.length) return {lat:pool[0].lat,lng:pool[0].lng,label:pool[0].label||q};
-  }catch(e){}
-  return null;
+/* ═══════════ plan A→B from the same search flow (Apple-style) ═══════════
+   Pick a destination as usual, then edit the "From" row in the route card to check the drive
+   between any two places. Blank = your current location. Starting navigation always routes live
+   from where you actually are. */
+function _setFromUI(){
+  const el=$("tripFrom"); if(!el) return;
+  el.value = S.origin ? (S.originName||"") : "";
+  el.placeholder = "My location";
 }
-$("tripGo")&&($("tripGo").onclick=async()=>{
-  const out=$("tripResult");
-  out.innerHTML='<p class="sub">Looking up both places…</p>';
-  const toTxt=$("tripTo").value.trim();
-  if(!toTxt){ out.innerHTML='<p class="sub">Enter a destination first.</p>'; return; }
-  const [A,B]=await Promise.all([_tripPoint($("tripFrom").value),_tripPoint(toTxt)]);
-  if(!A){ out.innerHTML='<p class="sub">Couldn\'t find the starting point — add a city or ZIP.</p>'; return; }
-  if(!B){ out.innerHTML='<p class="sub">Couldn\'t find that destination — add a city or ZIP.</p>'; return; }
-  out.innerHTML='<p class="sub">Measuring the drive…</p>';
-  const res=await roadDistances({lat:A.lat,lng:A.lng},[{lat:B.lat,lng:B.lng}]);
-  const info=res&&res[0];
-  if(!info){ out.innerHTML='<p class="sub">Couldn\'t measure that route right now.</p>'; return; }
-  const secs=(info.sec!=null&&isFinite(info.sec))?info.sec*rushFactor():null;
-  const arr=secs!=null?new Date(Date.now()+secs*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}):null;
-  out.innerHTML=
-    '<div class="kv"><span>From</span><span>'+(A.label||"My location").slice(0,40)+'</span></div>'+
-    '<div class="kv"><span>To</span><span>'+(B.label||toTxt).slice(0,40)+'</span></div>'+
-    '<div class="kv"><span>Distance</span><span>'+(info.est?"~ ":"")+fmtDist(info.m)+'</span></div>'+
-    (secs!=null?'<div class="kv"><span>Drive time</span><span>'+(info.est?"~ ":"")+fmtDur(secs)+'</span></div>':'')+
-    (arr?'<div class="kv"><span>Leaving now, arrive</span><span>'+arr+'</span></div>':'')+
-    (info.est?'<p class="sub" style="margin-top:8px">Estimated — routing servers were busy.</p>':'')+
-    '<button class="btn" id="tripNav" style="width:100%;margin-top:12px">Navigate there from here</button>';
-  const nb=$("tripNav");
-  if(nb) nb.onclick=()=>{ closeSheets(); $("search").value=B.label||toTxt; setDestination({lat:B.lat,lng:B.lng}, (B.label||toTxt).split(",")[0]); };
+$("fromClear")&&($("fromClear").onclick=()=>{
+  S.origin=null; S.originName=""; _setFromUI();
+  if(S.dest){ toast("Routing from your location…",1400); fetchRoute(); }
 });
+$("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
+  const q=($("tripFrom").value||"").trim();
+  if(!q){ S.origin=null; S.originName=""; if(S.dest)fetchRoute(); return; }
+  toast("Finding that starting point…",1600);
+  let pt=null;
+  const cached=lookupCachedGeocode(q);
+  if(cached) pt={lat:cached.lat,lng:cached.lng,label:cached.label||q};
+  else{
+    try{
+      const cands=await geocodeCandidates(q);
+      let pool=(cands||[]).filter(c=>c.sc>-30);
+      const want=parseAddr(q);
+      if(!want.city&&!want.state&&!want.postalcode&&S.pos){
+        const near=pool.filter(c=>distM(S.pos,{lat:c.lat,lng:c.lng})/1609.34<=120);
+        if(near.length) pool=near;
+      }
+      if(pool.length) pt={lat:pool[0].lat,lng:pool[0].lng,label:pool[0].label||q};
+    }catch(e){}
+  }
+  if(!pt){ toast("Couldn't find that start — add a city or ZIP.",3400); return; }
+  S.origin={lat:pt.lat,lng:pt.lng}; S.originName=(pt.label||q).split(",").slice(0,2).join(",");
+  _setFromUI();
+  if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
+}));
