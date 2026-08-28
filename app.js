@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v86";
+const APP_VERSION="v87";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -846,33 +846,30 @@ function valhallaToOSRM(vt){
   const time=(vt.trip.summary&&vt.trip.summary.time)||0;
   return { code:"Ok", routes:[ { geometry:{type:"LineString",coordinates:allCoords}, legs:legs, distance:dist, duration:time } ] };
 }
+let _vhDownUntil=0;      // remember when the avoidance router is unreachable
 async function valhallaFetch(ptsArr){
+  if(Date.now()<_vhDownUntil) throw new Error("valhalla cooling down");
   const body={ locations:ptsArr.map(function(p){return {lat:p.lat,lon:p.lng};}),
     costing:"auto",
-    // 0 = avoid strongly, 1 = no preference. Valhalla treats these as costing preferences.
     costing_options:{auto:{ use_tolls:S.avoidTolls?0:1, use_highways:S.avoidHwy?0:1, use_ferry:0 }},
     directions_options:{units:"kilometers"} };
   const json=encodeURIComponent(JSON.stringify(body));
-  // GET first — the public FOSSGIS instance accepts ?json= and is far friendlier to browsers
-  // than a cross-origin POST (which was silently failing and dropping us back to the plain router).
-  const urls=["https://valhalla1.openstreetmap.de/route?json="+json];
-  for(const u of urls){
-    try{
-      const ac=new AbortController(); const timer=setTimeout(()=>{try{ac.abort();}catch(e){}},9000);
-      const res=await fetch(u,{signal:ac.signal}).finally(()=>clearTimeout(timer));
-      if(!res.ok) continue;
-      const out=valhallaToOSRM(await res.json());
-      if(out&&out.code==="Ok") return out;
-    }catch(e){}
+  // ONE attempt with a short leash. Chained 9-second retries used to exceed the overall routing
+  // budget, so every request timed out before any fallback could run.
+  const ac=new AbortController(); const timer=setTimeout(()=>{try{ac.abort();}catch(e){}},4500);
+  try{
+    const res=await fetch("https://valhalla1.openstreetmap.de/route?json="+json,{signal:ac.signal});
+    clearTimeout(timer);
+    if(!res.ok) throw new Error("valhalla http "+res.status);
+    const out=valhallaToOSRM(await res.json());
+    if(out&&out.code==="Ok") return out;
+    throw new Error("valhalla bad payload");
+  }catch(e){
+    clearTimeout(timer);
+    _vhDownUntil=Date.now()+10*60*1000;    // stop hammering it for 10 minutes
+    throw e;
   }
-  // last resort: the original POST, in case GET is ever rejected
-  const ac2=new AbortController(); const t2=setTimeout(()=>{try{ac2.abort();}catch(e){}},9000);
-  const res2=await fetch("https://valhalla1.openstreetmap.de/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ac2.signal}).finally(()=>clearTimeout(t2));
-  if(!res2.ok) throw new Error("valhalla http "+res2.status);
-  return valhallaToOSRM(await res2.json());
 }
-// choose the router: Valhalla only when the user opted into avoidance (car mode); otherwise proven OSRM. Always OSRM-fallback.
-
 /* ═══════════ highway-avoidance fallback that doesn't need Valhalla ═══════════
    If the avoidance router is unreachable, ask OSRM for several alternative routes and pick the
    one that spends the least distance on freeways. Not as surgical as true avoidance costing,
@@ -895,7 +892,8 @@ function _highwayRatio(rt){
 }
 // pick whichever alternative uses the least freeway
 async function avoidViaAlternatives(coordsStr){
-  const data=await osrmFetch(coordsStr,true);
+  const data=await Promise.race([ osrmFetch(coordsStr,true),
+    new Promise(res=>setTimeout(()=>res(null),6000)) ]);
   if(!data||data.code!=="Ok"||!data.routes||!data.routes.length) return null;
   const scored=data.routes.map(rt=>({rt,hw:_highwayRatio(rt)})).sort((a,b)=>a.hw-b.hw);
   const best=scored[0], worst=scored[scored.length-1];
@@ -925,7 +923,7 @@ async function routeFetch(ptsArr){
         }
       }catch(e){}
     }
-    toast("Couldn't apply avoidance right now — showing the normal route.",3600);
+    toast("Couldn't apply avoidance — showing the normal route.",3000);
   }
   return await osrmFetch(coordsStr);
 }
@@ -960,7 +958,7 @@ async function fetchRoute(silent){
   try{
     const data=await Promise.race([
       routeFetch([(S.origin||S.pos),...S.stops,S.dest]),
-      new Promise(res=>setTimeout(()=>res({code:"Timeout"}),15000))     // never wait forever
+      new Promise(res=>setTimeout(()=>res({code:"Timeout"}),18000))     // never wait forever
     ]);
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
     if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
