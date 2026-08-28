@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v81";
+const APP_VERSION="v82";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -35,7 +35,7 @@ const ACCENT = { dark:{route:"#35E0C8",casing:"#0A3B33"}, light:{route:"#1D6EF2"
 
 const S = {
   pos:null, lastPos:null, accuracy:null, course:null, compass:null,
-  follow:true, headingUp:false, watchId:null, saver:false, audioAlerts:true, bumpOn:true, heatOn:false,
+  follow:true, headingUp:false, watchId:null, saver:false, audioAlerts:true, bumpOn:true, heatOn:true,
   mode:"car", dest:null, destName:"", stops:[],
   route:null, steps:[], stepIdx:0, navigating:false, offRouteCount:0, rerouting:false, avoidHandled:new Set(),
   hazards:[], alerted:new Set(), sb:{url:"",key:""},
@@ -229,6 +229,8 @@ function addMapLayers(){
       : {"sky-color":"#070B14","horizon-color":"#12203A","fog-color":"#0B1120","sky-horizon-blend":.65,"horizon-fog-blend":.5});
   }catch{}
   if(S.route){ try{ map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch{} }
+  // road-quality heatmap is on by default now — this is a pothole app first
+  try{ if(S.heatOn){ ensureHeatLayer(); refreshHeat(); map.setLayoutProperty("rough-heat","visibility","visible"); } }catch(e){}
   ensureSat();
 }
 let styleSwapping=false;
@@ -245,12 +247,50 @@ function swapMapStyle(theme){
     map.setStyle(st);
   }).catch(()=>{ styleSwapping=false; });
 }
+
+/* ═══════════ route line coloured by road condition (from our own reports) ═══════════
+   Not live traffic — we don't have that. This is better for a pothole app: the line turns
+   yellow where the road is rough and red where potholes cluster, so you can SEE the bad
+   stretches before you drive them. */
+function _routeConditionData(){
+  const co=(S.route&&S.route.geometry&&S.route.geometry.coordinates)||[];
+  if(co.length<2) return {type:"FeatureCollection",features:[]};
+  const pots=(S.hazards||[]).filter(h=>h.type==="pothole"||h.type==="debris");
+  const rough=(typeof roughPts!=="undefined"&&roughPts)||[];
+  const feats=[];
+  for(let i=0;i<co.length-1;i++){
+    const a={lat:co[i][1],lng:co[i][0]}, b={lat:co[i+1][1],lng:co[i+1][0]};
+    const mid={lat:(a.lat+b.lat)/2,lng:(a.lng+b.lng)/2};
+    let score=0;
+    for(const p of pots){ const d=distM(mid,p); if(d<70){ const w=(p.psev||1); score+=w*(1-d/70)*1.6; } }
+    for(const r of rough){ const d=distM(mid,r); if(d<70) score+=(r.s||0.4)*(1-d/70); }
+    const lvl = score>=2.2 ? 2 : score>=0.7 ? 1 : 0;   // 0 good · 1 rough · 2 bad
+    feats.push({type:"Feature",properties:{lvl},geometry:{type:"LineString",coordinates:[co[i],co[i+1]]}});
+  }
+  return {type:"FeatureCollection",features:feats};
+}
+function refreshRouteCondition(){
+  try{
+    if(!S.mapReady||!map) return;
+    const data=_routeConditionData();
+    if(!map.getSource("routeCond")) map.addSource("routeCond",{type:"geojson",data:data});
+    else map.getSource("routeCond").setData(data);
+    if(!map.getLayer("route-cond")){
+      map.addLayer({id:"route-cond",type:"line",source:"routeCond",
+        layout:{"line-cap":"round","line-join":"round"},
+        paint:{"line-color":["match",["get","lvl"],1,"#FFC72C",2,"#E5484D","rgba(0,0,0,0)"],
+               "line-width":["interpolate",["linear"],["zoom"],10,5,14,10,18,17],
+               "line-opacity":0.95}});
+    }
+  }catch(e){}
+}
 // safety net: if the route line ever goes missing (style swap, GL context loss), put it back
 function ensureRouteLayers(){
   try{
     if(!S.mapReady||!map) return;
     if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
+    refreshRouteCondition();
   }catch(e){}
 }
 /* ═══════════ smooth motion: glide between GPS fixes instead of teleporting ═══════════
@@ -850,6 +890,7 @@ async function fetchRoute(silent){
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
+    try{refreshRouteCondition();}catch(e){}
     if(!silent){
       const b=r.geometry.coordinates.reduce((bb,c)=>bb.extend(c),new maplibregl.LngLatBounds(r.geometry.coordinates[0],r.geometry.coordinates[0]));
       map.fitBounds(b,{padding:{top:160,bottom:90,left:50,right:50}});
@@ -989,7 +1030,8 @@ async function startNavigation(){
   $("navbanner").style.display="block";
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
-  cameraFollow();navTick();loadWeather();startSmooth();try{setDrivingChrome(true);}catch(e){}
+  try{cameraFollow();}catch(e){} try{navTick();}catch(e){} try{loadWeather();}catch(e){}
+  try{startSmooth();}catch(e){} try{setDrivingChrome(true);}catch(e){}
   document.body.classList.add("driving"); layout();
   try{if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}catch{}
   requestWakeLock(); requestMotion();
@@ -1097,11 +1139,30 @@ function navTick(){
   $("pillMin").textContent=fmtDur(secsLeft);
   $("pillSub").textContent=fmtDist(rem)+" • "+arr;
 
+  // Two-stage pothole warning, deliberately restrained: one soft cue far out, a sharper one when
+  // you're nearly on it. Only for hazards actually ON your path — no alarms for the next street over.
   let near=0;
   S.hazards.forEach((h,i)=>{
     const d=distM(S.pos,h);
     if(d<450)near++;
-    if(d<300&&!S.alerted.has(i)){S.alerted.add(i);hazardAlert(h);}
+    let onPath=true;
+    try{
+      if(S.route&&S.route.geometry){
+        const co=S.route.geometry.coordinates;
+        let best=Infinity;
+        for(let k=0;k<co.length;k+=2){ const dd=distM({lat:co[k][1],lng:co[k][0]},h); if(dd<best)best=dd; if(best<25)break; }
+        onPath = best<45;
+      }
+    }catch(e){}
+    if(!onPath) return;
+    const k1="w1_"+i, k2="w2_"+i;
+    if(d<160 && !S.alerted.has(k2)){
+      S.alerted.add(k2); S.alerted.add(k1);
+      hazardAlert(h,2);
+    } else if(d<520 && !S.alerted.has(k1)){
+      S.alerted.add(k1);
+      hazardAlert(h,1);
+    }
   });
   $("nbHz").textContent=near?`⚠ ${near} hazard${near>1?"s":""} ahead`:"";
 
@@ -1232,13 +1293,34 @@ function beep(freq=880,dur=.35,gain=.25){
     o.start();o.stop(audioCtx.currentTime+dur);
   }catch{}
 }
-function hazardAlert(h){
+function hazardAlert(h,stage){
   const m=HZ_META[h.type]||HZ_META.debris;
-  // driving → a brief spoken/visual heads-up only. NO tap-decision prompt at speed (safety).
-  toast(`${m.emoji} ${m.label} ahead — ${h.note||"driver report"}`,3200);
-  try{ if(S.voiceOn)speak(`${m.label} ahead`); }catch(e){}
-  beep();
-  if(navigator.vibrate)navigator.vibrate([80,60,80]);
+  const sizeTxt = (h.type==="pothole"&&h.psev) ? (POT_SEV[h.psev].label.toLowerCase()+" ") : "";
+  if(stage===1){
+    // early heads-up: one soft tone, quiet toast, no speech — don't crowd the driver
+    toast(`${m.emoji} ${sizeTxt}${m.label} ahead`,2400);
+    try{ beep(560,.10,.14); }catch(e){}
+    if(navigator.vibrate)navigator.vibrate(45);
+    try{ pulseHazard(h); }catch(e){}
+    return;
+  }
+  // close now: sharper double tone + short spoken cue
+  toast(`${m.emoji} ${sizeTxt}${m.label} — right ahead`,3000);
+  try{ beep(760,.11,.22); setTimeout(()=>beep(980,.14,.24),150); }catch(e){}
+  try{ if(S.voiceOn)speak((sizeTxt?sizeTxt:"")+m.label+" ahead"); }catch(e){}
+  if(navigator.vibrate)navigator.vibrate([70,50,70]);
+  try{ pulseHazard(h); }catch(e){}
+}
+// visual cue on the map so the driver can glance instead of listen
+function pulseHazard(h){
+  try{
+    if(!h._marker) return;
+    const el=h._marker.getElement(); if(!el) return;
+    el.style.transition="transform .18s ease";
+    const base=(h.type==="pothole")?potScale(h):1;
+    let n=0;
+    const iv=setInterval(()=>{ n++; el.style.transform="scale("+(base*(n%2?1.5:1)).toFixed(2)+")"; if(n>5){clearInterval(iv); el.style.transform="scale("+base+")";} },190);
+  }catch(e){}
 }
 
 /* ═══════════ hazards ═══════════ */
@@ -1247,7 +1329,15 @@ function addHazardMarker(h){
   if(!h.ts)h.ts=h.created_at?Date.parse(h.created_at)||Date.now():Date.now();
   const m=HZ_META[h.type]||HZ_META.debris;
   const el=document.createElement("div");el.className="hz";
-  el.style.background=(h.type==="pothole")?(((h.reports||1)>=5)?"#E5484D":(((h.reports||1)>=2)?"#FF8A1E":"#FFC72C")):m.color;
+  if(h.type==="pothole"){
+    if(!h.psev && /size:\s*Large/i.test(h.note||"")) h.psev=3;
+    else if(!h.psev && /size:\s*Medium/i.test(h.note||"")) h.psev=2;
+    else if(!h.psev && /size:\s*Small/i.test(h.note||"")) h.psev=1;
+    el.style.background=potColor(h);
+    const sc=potScale(h);
+    el.style.transform="scale("+sc+")";
+    el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
+  } else el.style.background=m.color;
   el.textContent=m.emoji;
   const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
     .setPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h)))
@@ -1262,8 +1352,37 @@ function sbH(extra){
   if(/^eyJ/.test(S.sb.key)) H.Authorization="Bearer "+S.sb.key;
   return Object.assign(H, extra||{});
 }
-async function reportHazard(type,note){
+const POT_SEV={1:{label:"Small",color:"#FFC72C",scale:0.82},2:{label:"Medium",color:"#FF8A1E",scale:1.0},3:{label:"Large",color:"#E5484D",scale:1.22}};
+function potColor(h){
+  const s=Math.max(1,Math.min(3,h.psev||(h.reports>=5?3:h.reports>=2?2:1)));
+  return POT_SEV[s].color;
+}
+function potScale(h){
+  const s=Math.max(1,Math.min(3,h.psev||(h.reports>=5?3:h.reports>=2?2:1)));
+  return POT_SEV[s].scale;
+}
+// ask how bad it is — one tap, three choices, then it's on the map
+function askPotholeSize(note){
   if(!S.pos){toast("Need a GPS lock to report.");return;}
+  const wrap=document.createElement("div");
+  wrap.id="potSize";
+  wrap.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom));z-index:1600;display:flex;gap:10px;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:12px;box-shadow:0 12px 40px rgba(0,0,0,.45)";
+  wrap.innerHTML=
+    '<button data-s="1" style="border:none;border-radius:13px;padding:12px 15px;background:#FFC72C;color:#141619;font-weight:800;font-size:14px">Small</button>'+
+    '<button data-s="2" style="border:none;border-radius:13px;padding:12px 15px;background:#FF8A1E;color:#141619;font-weight:800;font-size:14px">Medium</button>'+
+    '<button data-s="3" style="border:none;border-radius:13px;padding:12px 15px;background:#E5484D;color:#fff;font-weight:800;font-size:14px">Large</button>'+
+    '<button data-s="0" style="border:1px solid var(--line);border-radius:13px;padding:12px 13px;background:transparent;color:inherit;font-size:14px">✕</button>';
+  document.body.appendChild(wrap);
+  const kill=()=>{ try{wrap.remove();}catch(e){} clearTimeout(t); };
+  const t=setTimeout(()=>{ kill(); },9000);
+  wrap.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    const sv=+b.dataset.s; kill();
+    if(sv>0) reportHazard("pothole", note||"", sv);
+  });
+}
+async function reportHazard(type,note,psev){
+  if(!S.pos){toast("Need a GPS lock to report.");return;}
+  if(type==="pothole" && !psev){ askPotholeSize(note); return; }
   closeSheets(); if(navigator.vibrate)navigator.vibrate(40);
   // MERGE: an existing report of the SAME type within ~35m gets confirmed (count++), not duplicated.
   // Different hazard types at the same spot each keep their own pin.
@@ -1276,12 +1395,12 @@ async function reportHazard(type,note){
     return;
   }
   const _p=((type==="pothole"||type==="debris")&&S.course!=null&&!isNaN(S.course))?(function(){const rad=(S.course+90)*Math.PI/180,dM=4;return{lat:S.pos.lat+(dM*Math.cos(rad))/111111,lng:S.pos.lng+(dM*Math.sin(rad))/(111111*Math.cos(S.pos.lat*Math.PI/180))};})():{lat:S.pos.lat,lng:S.pos.lng};
-  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:_p.lat,lng:_p.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1};
+  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:_p.lat,lng:_p.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1,psev:psev||undefined};
   S.hazards.push(h);addHazardMarker(h);
   toast(`${HZ_META[type].label} reported ✓`);
   if(S.sb.url&&S.sb.key){
     try{
-      const payload={type:h.type,lat:h.lat,lng:h.lng,note:h.note||"",sev:h.sev||2,reports:h.reports||1};
+      const payload={type:h.type,lat:h.lat,lng:h.lng,note:(h.psev?("size:"+POT_SEV[h.psev].label+(h.note?" · "+h.note:"")):(h.note||"")),sev:h.psev||h.sev||2,reports:h.reports||1};
       const r=await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json",Prefer:"return=minimal"}),body:JSON.stringify(payload)});
       if(!r.ok)toast("Saved on your map — cloud sync failed ("+r.status+")");
     }catch(e){ toast("Saved on your map — offline, will show for you"); }
@@ -1631,7 +1750,13 @@ $("copyLoc").onclick=async()=>{
 };
 
 /* ═══════════ sheets & settings ═══════════ */
-function openSheet(id){closeSheets();$(id).classList.add("open");pushUI();}
+function openSheet(id){
+  closeSheets();
+  // the "destination set" confirm card floats over the sheet and was eating taps on
+  // Start navigation — get it out of the way as soon as a sheet opens
+  try{ if(id==="routeSheet"){ $("confirmBar").style.display="none"; clearTimeout(window.__confT); } }catch(e){}
+  $(id).classList.add("open");pushUI();
+}
 document.querySelectorAll(".sheet").forEach(s=>{
   const x=document.createElement("button");
   x.className="sheetX"; x.setAttribute("aria-label","Close"); x.textContent="✕";
