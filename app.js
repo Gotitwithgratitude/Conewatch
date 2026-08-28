@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v84";
+const APP_VERSION="v85";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -962,14 +962,17 @@ async function fetchRoute(silent){
     if(!silent){
       const b=r.geometry.coordinates.reduce((bb,c)=>bb.extend(c),new maplibregl.LngLatBounds(r.geometry.coordinates[0],r.geometry.coordinates[0]));
       map.fitBounds(b,{padding:{top:160,bottom:90,left:50,right:50}});
-      renderRouteSheet(r); openSheet("routeSheet");
+      openSheet("routeSheet");                  // open first — a render hiccup can never block Start again
+      try{ renderRouteSheet(r); }catch(e){ try{console.warn("route card render",e);}catch(_){} }
       loadWeather(); loadElevation(r);
     }
   }catch{toast("Routing failed — check connection.");}
   S.rerouting=false;
 }
 function renderRouteSheet(r){
-  $("rsTitle").textContent=S.destName;
+  const el=(id)=>{ try{ return $(id); }catch(e){ return null; } };
+  const setTxt=(id,v)=>{ const e=el(id); if(e) e.textContent=v; };
+  setTxt("rsTitle",S.destName);
   const rush=rushFactor()>1?" · rush-hour adjusted":"";
   const secs=r.duration*rushFactor();
   const arrClock=new Date(Date.now()+secs*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
@@ -978,14 +981,16 @@ function renderRouteSheet(r){
   const timeTxt = mins<60 ? String(mins) : (Math.floor(mins/60)+"h "+(mins%60||"")).trim();
   const timeUnit= mins<60 ? "min" : "";
   try{
-    $("rsTime").textContent=timeTxt;
-    const tu=$("rsTime").parentNode.querySelector("small"); if(tu) tu.textContent=timeUnit||"total";
-    $("rsArrive").textContent=arrClock;
+    setTxt("rsTime",timeTxt);
+    const t0=el("rsTime"); if(t0&&t0.parentNode&&t0.parentNode.querySelector){ const tu=t0.parentNode.querySelector("small"); if(tu) tu.textContent=timeUnit||"total"; }
+    setTxt("rsArrive",arrClock);
     const km=S.units==="km";
     const dv=km?(r.distance/1000):(r.distance/1609.34);
-    $("rsDist").textContent=dv>=100?Math.round(dv):dv.toFixed(1);
-    $("rsDistU").textContent=km?"km":"mi";
+    setTxt("rsDist",dv>=100?Math.round(dv):dv.toFixed(1));
+    setTxt("rsDistU",km?"km":"mi");
   }catch(e){}
+  // legacy layout (older index.html): keep the summary line useful so nothing looks broken
+  try{ if(!el("rsStats")) setTxt("rsMeta",`${fmtDist(r.distance)} · ${fmtDur(secs)} · arrive ${arrClock}`); }catch(e){}
   let avoidTxt="";
   if(S.mode==="car"&&(S.avoidTolls||S.avoidHwy)){
     const wants=[S.avoidHwy?"highways":null,S.avoidTolls?"tolls":null].filter(Boolean).join(" & ");
@@ -994,38 +999,38 @@ function renderRouteSheet(r){
     else if(S.avoidMode==="best") avoidTxt=` · least-freeway route`;
     else avoidTxt=` · freeway unavoidable here`;
   }
-  $("rsMeta").textContent=`${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`;
+  if(el("rsStats")) setTxt("rsMeta",`${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`);
   try{
     // second line = full address, the way a maps app shows it
-    const da=$("rsDestAddr");
+    const da=el("rsDestAddr");
     if(da){ let addr=(S.destLabel||"").replace(/^\s*/,""); 
       if(addr && S.destName && addr.toLowerCase().indexOf(S.destName.toLowerCase())===0) addr=addr.slice(S.destName.length).replace(/^[,\s]+/,"");
       da.textContent=addr.split(",").slice(0,3).join(",").trim(); }
-    const fa=$("rsFromAddr");
+    const fa=el("rsFromAddr");
     if(fa) fa.textContent = S.origin ? (S.originAddr||"") : (S.pos?"Current location":"");
   }catch(e){}
   try{ _setFromUI(); }catch(e){}
   try{ renderRouteOpts(); }catch(e){}
-  const sl=$("stopsList");sl.innerHTML="";
+  const sl=el("stopsList"); if(sl) sl.innerHTML="";
   S.stops.forEach((s,i)=>{
     const b=document.createElement("button");b.className="row-btn";
     b.innerHTML=`<span class="ic">📍</span><span>Stop ${i+1}: ${s.name}<small>Tap to remove</small></span>`;
     b.onclick=()=>{S.stops.splice(i,1);stopMarkers.splice(i,1)[0].remove();stopMarkers.forEach((m,j)=>m.getElement().textContent=j+1);fetchRoute();};
-    sl.appendChild(b);
+    if(sl) sl.appendChild(b);
   });
-  const mpg=parseFloat($("mpg").value)||22,gas=parseFloat($("gasPrice").value)||2.89;
+  const mpg=parseFloat((el("mpg")||{}).value)||22,gas=parseFloat((el("gasPrice")||{}).value)||2.89;
   const gal=(r.distance/1609.34)/mpg,fuel=(gal*gas).toFixed(2);
   const curve=curveScore(r.geometry.coordinates);
-  $("tripStats").innerHTML=`
+  if(el("tripStats")) $("tripStats").innerHTML=`
     <div class="kv"><span>Est. fuel cost</span><span>$${fuel} (${gal.toFixed(1)} gal @ ${mpg} mpg)</span></div>
     <div class="kv"><span>Road character</span><span>${curve.label} · ${curve.turns} sharp turns</span></div>
     <div class="kv"><span>Weather at destination</span><span id="wxDest">loading…</span></div>
     <div class="kv"><span>Elevation</span><span id="elevStat">loading…</span></div>`;
-  const ol=$("steps");ol.innerHTML="";
+  const ol=el("steps"); if(ol) ol.innerHTML="";
   S.steps.forEach((st,i)=>{
     const li=document.createElement("li");
     li.innerHTML=`<span class="n">${i+1}</span><span>${stepText(st)}</span><span class="d">${fmtDist(st.distance)}</span>`;
-    ol.appendChild(li);
+    if(ol) ol.appendChild(li);
   });
 }
 function curveScore(coords){
