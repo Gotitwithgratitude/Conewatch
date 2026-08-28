@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v80";
+const APP_VERSION="v81";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2886,3 +2886,24 @@ $("spBack")&&($("spBack").onclick=closeSearchPanel);
 // the main search bar and the From row both open the panel instead of typing inline
 $("search")&&($("search").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("dest",$("search").value.trim()); }));
 $("tripFrom")&&($("tripFrom").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("from",S.originName||""); }));
+
+/* ═══════════ both endpoints editable, plus swap ═══════════
+   People change their minds. Either end of the trip can be retapped and replaced, and the whole
+   trip can be reversed in one tap — no re-entering anything. */
+$("reTo")&&($("reTo").addEventListener("click",()=>{ openSearchPanel("dest", S.destName||""); }));
+$("reTo")&&($("reTo").addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" ") { e.preventDefault(); openSearchPanel("dest", S.destName||""); } }));
+$("reSwap")&&($("reSwap").onclick=async()=>{
+  if(!S.dest){ toast("Pick a destination first.",2200); return; }
+  const oldDest={lat:S.dest.lat,lng:S.dest.lng}, oldDestName=S.destName, oldDestLabel=S.destLabel;
+  if(S.origin){
+    const o={lat:S.origin.lat,lng:S.origin.lng}, oName=S.originName, oAddr=S.originAddr;
+    S.origin=oldDest; S.originName=oldDestName; S.originAddr=oldDestLabel||"";
+    S.destLabel=oAddr||""; setDestination({lat:o.lat,lng:o.lng,_keepLabel:true}, oName||"Destination");
+  } else {
+    if(!S.pos){ toast("Waiting for GPS — can't swap yet.",2600); return; }
+    // reverse a trip that started from your live location
+    S.origin=oldDest; S.originName=oldDestName; S.originAddr=oldDestLabel||"";
+    S.destLabel="Current location"; setDestination({lat:S.pos.lat,lng:S.pos.lng,_keepLabel:true},"My location");
+  }
+  toast("↕ Trip reversed",1800);
+});

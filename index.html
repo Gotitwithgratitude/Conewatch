@@ -180,7 +180,7 @@
   .rs-stat small{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted,#8a8d96)}
   #rsTime{color:var(--nav-accent,#22d3aa)}
   .rs-sep{width:1px;align-self:stretch;background:rgba(127,127,127,.22);flex:0 0 auto}
-  #routeEnds{position:relative;border:1px solid var(--line);border-radius:14px;padding:4px 12px;margin-bottom:10px;background:var(--panel-solid)}
+  #routeEnds{position:relative;border:1px solid var(--line);border-radius:14px;padding:4px 54px 4px 12px;margin-bottom:10px;background:var(--panel-solid)}
   .re-row{display:flex;align-items:center;gap:11px;min-height:50px;padding:5px 0}
   .re-ic{width:14px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:14px}
   .re-start{width:11px;height:11px;border-radius:50%;background:#2B6FE0;box-shadow:0 0 0 3px rgba(43,111,224,.22)}
@@ -192,6 +192,11 @@
   .re-tx small{font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .re-tx small:empty{display:none}
   .re-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
+  .re-edit{flex:0 0 auto;font-size:12px;font-weight:600;color:var(--nav-accent,#22d3aa);opacity:.85;padding:4px 8px;border-radius:8px;background:rgba(127,127,127,.12)}
+  #reTo{cursor:pointer}
+  #reTo:active{background:rgba(127,127,127,.10)}
+  .re-swap{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--panel-solid);color:var(--text);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2}
+  .re-swap:active{background:rgba(127,127,127,.18)}
   #fromRow{display:flex;align-items:center;gap:9px;margin:6px 0 4px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)}
   .fr-dot{width:9px;height:9px;border-radius:50%;background:var(--nav-accent);flex:0 0 auto}
   .fr-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;padding:0}
@@ -448,16 +453,19 @@
         <input id="tripFrom" class="re-input" placeholder="My location" autocomplete="off" aria-label="Starting point">
         <small id="rsFromAddr"></small>
       </span>
+      <span class="re-edit">Change</span>
       <button id="fromClear" class="re-x" aria-label="Use my location" title="Use my location">◎</button>
     </div>
     <div class="re-line"></div>
-    <div class="re-row" id="reTo">
+    <div class="re-row" id="reTo" role="button" tabindex="0" aria-label="Change destination">
       <span class="re-ic re-end">📍</span>
       <span class="re-tx">
         <b id="rsTitle">Route</b>
         <small id="rsDestAddr"></small>
       </span>
+      <span class="re-edit">Change</span>
     </div>
+    <button id="reSwap" class="re-swap" aria-label="Swap start and destination" title="Swap">⇅</button>
   </div>
   <p class="sub" id="rsMeta"></p>
   <div id="stopsList"></div>
