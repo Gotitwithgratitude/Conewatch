@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v87";
+const APP_VERSION="v88";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -881,6 +881,24 @@ function _isHighwayStep(st){
   if(/^(motorway|trunk)/i.test(String(st.class||""))) return true;
   return false;
 }
+// Detroit's only real tolls are the international crossings, plus turnpikes/tollways elsewhere.
+// Name matching catches them without needing a paid or unreachable routing service.
+function _isTollStep(st){
+  const nm=String(st.name||"")+" "+String(st.ref||"")+" "+String(st.destinations||"");
+  if(/toll\s*(road|way|plaza|booth)|tollway|turnpike/i.test(nm)) return true;
+  if(/ambassador\s+bridge|detroit[-\s]?windsor\s+tunnel|blue\s+water\s+bridge/i.test(nm)) return true;
+  if(/\btoll\b/i.test(nm)) return true;
+  return false;
+}
+function _tollRatio(rt){
+  try{
+    const steps=(rt.legs||[]).flatMap(l=>l.steps||[]);
+    if(!steps.length) return 0;
+    let tl=0,tot=0;
+    steps.forEach(st=>{ const d=st.distance||0; tot+=d; if(_isTollStep(st)) tl+=d; });
+    return tot? tl/tot : 0;
+  }catch(e){ return 0; }
+}
 function _highwayRatio(rt){
   try{
     const steps=(rt.legs||[]).flatMap(l=>l.steps||[]);
@@ -895,11 +913,20 @@ async function avoidViaAlternatives(coordsStr){
   const data=await Promise.race([ osrmFetch(coordsStr,true),
     new Promise(res=>setTimeout(()=>res(null),6000)) ]);
   if(!data||data.code!=="Ok"||!data.routes||!data.routes.length) return null;
-  const scored=data.routes.map(rt=>({rt,hw:_highwayRatio(rt)})).sort((a,b)=>a.hw-b.hw);
+  const wantHwy=!!S.avoidHwy, wantToll=!!S.avoidTolls;
+  const scored=data.routes.map(rt=>{
+    const hw=_highwayRatio(rt), tl=_tollRatio(rt);
+    // weight tolls heavily — a toll is a hard cost, freeway is a preference
+    const pen=(wantHwy?hw:0)+(wantToll?tl*3:0);
+    return {rt,hw,tl,pen};
+  }).sort((a,b)=>a.pen-b.pen);
   const best=scored[0], worst=scored[scored.length-1];
   if(!best) return null;
-  return { data:{code:"Ok",routes:[best.rt]}, ratio:best.hw, improved:(worst.hw-best.hw)>0.05 || best.hw<0.05 };
+  const clean = (!wantHwy||best.hw<0.05) && (!wantToll||best.tl<0.01);
+  return { data:{code:"Ok",routes:[best.rt]}, ratio:best.hw, toll:best.tl,
+           clean:clean, improved:(worst.pen-best.pen)>0.05 || clean };
 }
+
 async function routeFetch(ptsArr){
   const coordsStr=ptsArr.map(function(p){return p.lng+","+p.lat;}).join(";");
   S.avoidApplied=false; S.avoidMode="";
@@ -909,16 +936,18 @@ async function routeFetch(ptsArr){
       const v=await valhallaFetch(ptsArr);
       if(v&&v.code==="Ok"&&v.routes&&v.routes.length){ S.avoidApplied=true; S.avoidMode="exact"; return v; }
     }catch(e){}
-    // 2nd choice: pick the least-freeway option out of OSRM's alternatives
-    if(S.avoidHwy){
+    // 2nd choice: pick the best of OSRM's alternatives for whatever they asked to avoid
+    if(S.avoidHwy||S.avoidTolls){
       try{
         const alt=await avoidViaAlternatives(coordsStr);
         if(alt&&alt.data){
-          S.avoidApplied=true; S.avoidMode= alt.ratio<0.05 ? "clear" : (alt.improved?"best":"partial");
+          S.avoidApplied=true;
+          S.avoidMode= alt.clean ? "clear" : (alt.improved?"best":"partial");
           S.avoidRatio=alt.ratio;
-          toast(alt.ratio<0.05 ? "Found a route off the freeway ✓"
-               : alt.improved ? "Using the least-freeway route available"
-               : "Freeway is hard to avoid on this trip — showing the closest option",3400);
+          const what=[S.avoidHwy?"freeway":null,S.avoidTolls?"tolls":null].filter(Boolean).join(" & ");
+          toast(alt.clean ? ("Found a route avoiding "+what+" ✓")
+               : alt.improved ? ("Using the best available route around "+what)
+               : (what.charAt(0).toUpperCase()+what.slice(1)+" is hard to avoid here — showing the closest option"),3400);
           return alt.data;
         }
       }catch(e){}
