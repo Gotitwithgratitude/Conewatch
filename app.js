@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v82";
+const APP_VERSION="v84";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -42,7 +42,7 @@ const S = {
   speedMph:0, tripM:0, is3d:false, mapReady:false,
   themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
-  avoidTolls:false, avoidHwy:false, dispPos:null, goodFixes:0, origin:null, originName:"", originAddr:"", destLabel:"", remoteStart:false,
+  avoidTolls:false, avoidHwy:false, avoidApplied:false, avoidMode:"", avoidRatio:0, dispPos:null, goodFixes:0, origin:null, originName:"", originAddr:"", destLabel:"", remoteStart:false,
 };
 try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
@@ -849,19 +849,83 @@ function valhallaToOSRM(vt){
 async function valhallaFetch(ptsArr){
   const body={ locations:ptsArr.map(function(p){return {lat:p.lat,lon:p.lng};}),
     costing:"auto",
-    costing_options:{auto:{ use_tolls:S.avoidTolls?0:1, use_highways:S.avoidHwy?0:1 }},
+    // 0 = avoid strongly, 1 = no preference. Valhalla treats these as costing preferences.
+    costing_options:{auto:{ use_tolls:S.avoidTolls?0:1, use_highways:S.avoidHwy?0:1, use_ferry:0 }},
     directions_options:{units:"kilometers"} };
-  const ac=new AbortController(); const timer=setTimeout(function(){try{ac.abort();}catch(e){}},9000);
-  const res=await fetch("https://valhalla1.openstreetmap.de/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ac.signal}).finally(function(){clearTimeout(timer);});
-  if(!res.ok) throw new Error("valhalla http "+res.status);
-  return valhallaToOSRM(await res.json());
+  const json=encodeURIComponent(JSON.stringify(body));
+  // GET first — the public FOSSGIS instance accepts ?json= and is far friendlier to browsers
+  // than a cross-origin POST (which was silently failing and dropping us back to the plain router).
+  const urls=["https://valhalla1.openstreetmap.de/route?json="+json];
+  for(const u of urls){
+    try{
+      const ac=new AbortController(); const timer=setTimeout(()=>{try{ac.abort();}catch(e){}},9000);
+      const res=await fetch(u,{signal:ac.signal}).finally(()=>clearTimeout(timer));
+      if(!res.ok) continue;
+      const out=valhallaToOSRM(await res.json());
+      if(out&&out.code==="Ok") return out;
+    }catch(e){}
+  }
+  // last resort: the original POST, in case GET is ever rejected
+  const ac2=new AbortController(); const t2=setTimeout(()=>{try{ac2.abort();}catch(e){}},9000);
+  const res2=await fetch("https://valhalla1.openstreetmap.de/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal:ac2.signal}).finally(()=>clearTimeout(t2));
+  if(!res2.ok) throw new Error("valhalla http "+res2.status);
+  return valhallaToOSRM(await res2.json());
 }
 // choose the router: Valhalla only when the user opted into avoidance (car mode); otherwise proven OSRM. Always OSRM-fallback.
+
+/* ═══════════ highway-avoidance fallback that doesn't need Valhalla ═══════════
+   If the avoidance router is unreachable, ask OSRM for several alternative routes and pick the
+   one that spends the least distance on freeways. Not as surgical as true avoidance costing,
+   but it genuinely gets you off the interstate instead of shrugging. */
+function _isHighwayStep(st){
+  const ref=String(st.ref||""), nm=String(st.name||"");
+  if(/(^|[;,\s])(I|US)[\s-]?\d+/i.test(ref)) return true;
+  if(/freeway|expressway|interstate|motorway|turnpike|tollway/i.test(nm)) return true;
+  if(/^(motorway|trunk)/i.test(String(st.class||""))) return true;
+  return false;
+}
+function _highwayRatio(rt){
+  try{
+    const steps=(rt.legs||[]).flatMap(l=>l.steps||[]);
+    if(!steps.length) return 0;
+    let hw=0,tot=0;
+    steps.forEach(st=>{ const d=st.distance||0; tot+=d; if(_isHighwayStep(st)) hw+=d; });
+    return tot? hw/tot : 0;
+  }catch(e){ return 0; }
+}
+// pick whichever alternative uses the least freeway
+async function avoidViaAlternatives(coordsStr){
+  const data=await osrmFetch(coordsStr,true);
+  if(!data||data.code!=="Ok"||!data.routes||!data.routes.length) return null;
+  const scored=data.routes.map(rt=>({rt,hw:_highwayRatio(rt)})).sort((a,b)=>a.hw-b.hw);
+  const best=scored[0], worst=scored[scored.length-1];
+  if(!best) return null;
+  return { data:{code:"Ok",routes:[best.rt]}, ratio:best.hw, improved:(worst.hw-best.hw)>0.05 || best.hw<0.05 };
+}
 async function routeFetch(ptsArr){
   const coordsStr=ptsArr.map(function(p){return p.lng+","+p.lat;}).join(";");
+  S.avoidApplied=false; S.avoidMode="";
   if(S.mode==="car" && (S.avoidTolls||S.avoidHwy)){
-    try{ const v=await valhallaFetch(ptsArr); if(v&&v.code==="Ok"&&v.routes&&v.routes.length) return v; }catch(e){}
-    toast("Toll/highway routing busy — using fastest route.",2600);
+    // 1st choice: the router that can truly avoid tolls/highways
+    try{
+      const v=await valhallaFetch(ptsArr);
+      if(v&&v.code==="Ok"&&v.routes&&v.routes.length){ S.avoidApplied=true; S.avoidMode="exact"; return v; }
+    }catch(e){}
+    // 2nd choice: pick the least-freeway option out of OSRM's alternatives
+    if(S.avoidHwy){
+      try{
+        const alt=await avoidViaAlternatives(coordsStr);
+        if(alt&&alt.data){
+          S.avoidApplied=true; S.avoidMode= alt.ratio<0.05 ? "clear" : (alt.improved?"best":"partial");
+          S.avoidRatio=alt.ratio;
+          toast(alt.ratio<0.05 ? "Found a route off the freeway ✓"
+               : alt.improved ? "Using the least-freeway route available"
+               : "Freeway is hard to avoid on this trip — showing the closest option",3400);
+          return alt.data;
+        }
+      }catch(e){}
+    }
+    toast("Couldn't apply avoidance right now — showing the normal route.",3600);
   }
   return await osrmFetch(coordsStr);
 }
@@ -873,7 +937,11 @@ function renderRouteOpts(){
   if(!box){ box=document.createElement("div"); box.id="routeOpts"; box.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin:2px 0 12px"; sl.parentNode.insertBefore(box,sl); }
   box.innerHTML="";
   [["🛣️ Avoid tolls","avoidTolls"],["🚗 Avoid highways","avoidHwy"]].forEach(function(o){
-    const b=document.createElement("button"); b.className="chip"+(S[o[1]]?" on":""); b.textContent=o[0];
+    const b=document.createElement("button");
+    const wanted=S[o[1]];
+    b.className="chip"+(wanted?" on":"");
+    b.textContent=o[0]+((wanted&&!S.avoidApplied)?" (unavailable)":"");
+    if(wanted&&!S.avoidApplied) b.style.opacity="0.62";
     b.onclick=function(){ S[o[1]]=!S[o[1]]; try{localStorage.setItem("cw_"+o[1],S[o[1]]?"1":"0");}catch(e){} renderRouteOpts(); toast("Recalculating route…",1500); fetchRoute(); };
     box.appendChild(b);
   });
@@ -918,7 +986,15 @@ function renderRouteSheet(r){
     $("rsDist").textContent=dv>=100?Math.round(dv):dv.toFixed(1);
     $("rsDistU").textContent=km?"km":"mi";
   }catch(e){}
-  $("rsMeta").textContent=`${S.mode}${rush}${S.origin?" · custom start":""}`;
+  let avoidTxt="";
+  if(S.mode==="car"&&(S.avoidTolls||S.avoidHwy)){
+    const wants=[S.avoidHwy?"highways":null,S.avoidTolls?"tolls":null].filter(Boolean).join(" & ");
+    if(!S.avoidApplied) avoidTxt=` · couldn't avoid ${wants}`;
+    else if(S.avoidMode==="exact"||S.avoidMode==="clear") avoidTxt=` · avoiding ${wants}`;
+    else if(S.avoidMode==="best") avoidTxt=` · least-freeway route`;
+    else avoidTxt=` · freeway unavoidable here`;
+  }
+  $("rsMeta").textContent=`${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`;
   try{
     // second line = full address, the way a maps app shows it
     const da=$("rsDestAddr");
