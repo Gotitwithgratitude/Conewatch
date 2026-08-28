@@ -17,7 +17,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v85";
+const APP_VERSION="v86";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -948,12 +948,22 @@ function renderRouteOpts(){
 }
 
 async function fetchRoute(silent){
-  if(!S.pos||!S.dest||S.rerouting) return;
+  if(!S.pos||!S.dest) return;
+  // A stuck "in flight" flag used to wedge routing permanently: if any routing request hung,
+  // every later request returned instantly and the route card never opened. Now it expires.
+  if(S.rerouting){
+    if(Date.now()-(S._reroutingAt||0) < 20000) return;
+    S.rerouting=false;                                   // previous attempt clearly died — move on
+  }
   if(!navigator.onLine){ if(!silent)toast("Offline — showing your saved route. It stays active.",3200); return; }
-  S.rerouting=true;
+  S.rerouting=true; S._reroutingAt=Date.now();
   try{
-    const data=await routeFetch([(S.origin||S.pos),...S.stops,S.dest]);
-    if(data.code!=="Ok"||!data.routes?.length){toast("No route found for this mode.");S.rerouting=false;return;}
+    const data=await Promise.race([
+      routeFetch([(S.origin||S.pos),...S.stops,S.dest]),
+      new Promise(res=>setTimeout(()=>res({code:"Timeout"}),15000))     // never wait forever
+    ]);
+    if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
+    if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
     const r=data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
@@ -966,8 +976,8 @@ async function fetchRoute(silent){
       try{ renderRouteSheet(r); }catch(e){ try{console.warn("route card render",e);}catch(_){} }
       loadWeather(); loadElevation(r);
     }
-  }catch{toast("Routing failed — check connection.");}
-  S.rerouting=false;
+  }catch(e){ toast("Routing failed — check connection.",2600); }
+  finally{ S.rerouting=false; }
 }
 function renderRouteSheet(r){
   const el=(id)=>{ try{ return $(id); }catch(e){ return null; } };
@@ -2767,6 +2777,21 @@ async function confirmDestination(res,typed){
   var d=S.pos?distM(S.pos,{lat:res.lat,lng:res.lng}):null;
   $("confMeta").textContent=d!==null?fmtDist(d)+" away — calculating drive time…":"Location found";
   $("confirmBar").style.display="flex";
+  // always-available way into navigation, even if the route card has trouble rendering
+  try{
+    const cb=$("confirmBar");
+    if(cb && !cb.querySelector(".cbGo")){
+      const go=document.createElement("button");
+      go.className="cbGo";
+      go.textContent="Start navigation";
+      go.style.cssText="margin-top:10px;width:100%;border:none;border-radius:12px;padding:13px;background:var(--orange,#FF6B1A);color:#141619;font-weight:800;font-size:15px;cursor:pointer";
+      go.onclick=(ev)=>{ ev.stopPropagation();
+        if(S.route){ cb.style.display="none"; startNavigation(); }
+        else { toast("Building the route…",1800); fetchRoute(); }
+      };
+      cb.appendChild(go);
+    }
+  }catch(e){}
   clearTimeout(window.__confT); window.__confT=setTimeout(function(){$("confirmBar").style.display="none";},20000);
   // real driving time from the actual route (fixes straight-line under-estimate)
   if(S.pos&&navigator.onLine){
