@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v92";
+const APP_VERSION="v93";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -149,7 +149,27 @@ function hazPopupHTML(h){
 }
 function refreshHazPopup(h){ try{ if(h._marker&&h._marker.getPopup())h._marker.getPopup().setHTML(hazPopupHTML(h)); }catch(e){} }
 // confirm = "still here": bumps count AND freshens the timer (crowd feedback keeps live reports alive, lets stale ones expire)
-window.cwConfirm=function(id){ const h=S.hazards.find(x=>x.id===id); if(!h)return; h.reports=(h.reports||1)+1; h.ts=Date.now(); refreshHazPopup(h); if(h.type==="pothole"&&h._marker){try{h._marker.getElement().style.background=(h.reports>=5?"#E5484D":(h.reports>=2?"#FF8A1E":"#FFC72C"));}catch(e){}} toast(`Confirmed ✓ · ${h.reports} reports`); if(navigator.vibrate)navigator.vibrate(30); };
+window.cwConfirm=function(id){
+  const h=S.hazards.find(x=>x.id===id); if(!h)return;
+  h.reports=(h.reports||1)+1; h.ts=Date.now(); refreshHazPopup(h);
+  try{ restyleHazMarker(h); }catch(e){}
+  toast(`Confirmed ✓ · ${h.reports} reports`); if(navigator.vibrate)navigator.vibrate(30);
+};
+// keep a marker's colour, size and ring in sync after its report count changes
+function restyleHazMarker(h){
+  if(!h||!h._marker) return;
+  const el=h._marker.getElement(); if(!el) return;
+  const m=HZ_META[h.type]||HZ_META.debris;
+  const isPot=h.type==="pothole";
+  const col=isPot?potColor(h):m.color;
+  const sc=isPot?potScale(h):hazScale(h);
+  const px=Math.round(30*sc);
+  el.style.background=col;
+  el.style.width=px+"px"; el.style.height=px+"px";
+  el.style.fontSize=Math.round(15*sc)+"px";
+  el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+col+"33";
+  el.dataset.basePx=px;
+}
 // gone/fixed: temporary needs 1 vote, permanent needs 2 (avoids accidental removal of a real pothole)
 window.cwGone=function(id){ const i=S.hazards.findIndex(x=>x.id===id); if(i<0)return; const h=S.hazards[i]; h.gone=(h.gone||0)+1; const need=HAZ_TTL[h.type]===0?2:1;
   if(h.gone>=need){ try{if(h._marker)h._marker.remove();}catch(e){} S.hazards.splice(i,1); toast("Cleared — thanks for the update"); }
@@ -1488,7 +1508,17 @@ function addHazardMarker(h){
     el.style.fontSize=Math.round(15*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
     el.dataset.basePx=px;
-  } else el.style.background=m.color;
+  } else {
+    // Every hazard type gets the same treatment potholes got: sized by how much it matters,
+    // with a matching glow ring. Sizing via width/height keeps MapLibre's positioning intact.
+    el.style.background=m.color;
+    const sc=hazScale(h);
+    const px=Math.round(30*sc);
+    el.style.width=px+"px"; el.style.height=px+"px";
+    el.style.fontSize=Math.round(15*sc)+"px";
+    el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+m.color+"33";
+    el.dataset.basePx=px;
+  }
   el.textContent=m.emoji;
   const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
     .setPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h)))
@@ -1502,6 +1532,20 @@ function sbH(extra){
   const H={apikey:S.sb.key};
   if(/^eyJ/.test(S.sb.key)) H.Authorization="Bearer "+S.sb.key;
   return Object.assign(H, extra||{});
+}
+// How prominent each hazard should look. Things that can hurt you or stop you get bigger;
+// informational markers stay smaller so they don't shout over the dangerous ones.
+const HZ_SCALE={
+  accident:1.22, road_closure:1.22, flooding:1.18, ice:1.18, emergency:1.15,
+  construction_cones:1.05, debris:1.02, stalled:1.02, animal:1.02, traffic:1.05,
+  speed_bump:0.95, police:0.95, camera:0.92, camera_flock:0.92, alert:1.05
+};
+function hazScale(h){
+  let sc=HZ_SCALE[h.type]!==undefined?HZ_SCALE[h.type]:1.0;
+  // heavily-confirmed reports read as more certain, so nudge them up a little
+  const r=h.reports||1;
+  if(r>=5) sc*=1.12; else if(r>=2) sc*=1.06;
+  return Math.max(0.85,Math.min(1.45,sc));
 }
 const POT_SEV={1:{label:"Small",color:"#FFC72C",scale:0.82},2:{label:"Medium",color:"#FF8A1E",scale:1.0},3:{label:"Large",color:"#E5484D",scale:1.22}};
 function potColor(h){
