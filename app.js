@@ -7,6 +7,8 @@ const HZ_META = {
   accident:{emoji:"🚨",color:"#FF4D6D",label:"Accident"},
   police:{emoji:"👮",color:"#5B9CF6",label:"Police"},
   camera:{emoji:"📸",color:"#A78BFA",label:"Speed camera"},
+  camera_flock:{emoji:"🦅",color:"#7C6BF5",label:"Flock camera"},
+  speed_bump:{emoji:"🛑",color:"#F5A623",label:"Speed bump"},
   debris:{emoji:"🪵",color:"#FFC72C",label:"Debris"},
   road_closure:{emoji:"⛔",color:"#FF3B30",label:"Road closed"},
   emergency:{emoji:"🚑",color:"#FF4D6D",label:"Emergency vehicle"},
@@ -17,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v88";
+const APP_VERSION="v89";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -1274,6 +1276,7 @@ function navTick(){
     }catch(e){}
     if(!onPath) return;
     const k1="w1_"+i, k2="w2_"+i;
+    if(d<70) notePassed(h);
     if(d<160 && !S.alerted.has(k2)){
       S.alerted.add(k2); S.alerted.add(k1);
       hazardAlert(h,2);
@@ -1479,6 +1482,24 @@ function potScale(h){
   const s=Math.max(1,Math.min(3,h.psev||(h.reports>=5?3:h.reports>=2?2:1)));
   return POT_SEV[s].scale;
 }
+// which kind of camera did they spot?
+function askCameraType(note){
+  if(!S.pos){toast("Need a GPS lock to report.");return;}
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom));z-index:1600;display:flex;gap:10px;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:12px;box-shadow:0 12px 40px rgba(0,0,0,.45)";
+  wrap.innerHTML=
+    '<button data-t="camera" style="border:none;border-radius:13px;padding:12px 16px;background:#A78BFA;color:#141619;font-weight:800;font-size:14px">📸 Speed</button>'+
+    '<button data-t="camera_flock" style="border:none;border-radius:13px;padding:12px 16px;background:#7C6BF5;color:#fff;font-weight:800;font-size:14px">🦅 Flock</button>'+
+    '<button data-t="" style="border:1px solid var(--line);border-radius:13px;padding:12px 13px;background:transparent;color:inherit;font-size:14px">✕</button>';
+  document.body.appendChild(wrap);
+  const kill=()=>{ try{wrap.remove();}catch(e){} clearTimeout(t); };
+  const t=setTimeout(kill,9000);
+  wrap.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    const ty=b.dataset.t; kill();
+    if(ty) reportHazard(ty,note,null,true);
+  });
+}
+
 // ask how bad it is — one tap, three choices, then it's on the map
 function askPotholeSize(note){
   if(!S.pos){toast("Need a GPS lock to report.");return;}
@@ -1498,9 +1519,10 @@ function askPotholeSize(note){
     if(sv>0) reportHazard("pothole", note||"", sv);
   });
 }
-async function reportHazard(type,note,psev){
+async function reportHazard(type,note,psev,skipPick){
   if(!S.pos){toast("Need a GPS lock to report.");return;}
   if(type==="pothole" && !psev){ askPotholeSize(note); return; }
+  if(type==="camera" && !skipPick){ askCameraType(note); return; }
   closeSheets(); if(navigator.vibrate)navigator.vibrate(40);
   // MERGE: an existing report of the SAME type within ~35m gets confirmed (count++), not duplicated.
   // Different hazard types at the same spot each keep their own pin.
@@ -1524,7 +1546,11 @@ async function reportHazard(type,note,psev){
     }catch(e){ toast("Saved on your map — offline, will show for you"); }
   }
 }
-document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{ try{if(navigator.vibrate)navigator.vibrate(40);}catch(e){} reportHazard(b.dataset.type); });
+document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
+  try{if(navigator.vibrate)navigator.vibrate(40);}catch(e){}
+  if(b.dataset.closure){ closeSheets(); try{reportClosure();}catch(e){ reportHazard("road_closure"); } return; }
+  reportHazard(b.dataset.type);
+});
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
@@ -3165,3 +3191,110 @@ $("reSwap")&&($("reSwap").onclick=async()=>{
   }
   toast("↕ Trip reversed",1800);
 });
+
+/* ═══════════ "is it still there?" — asked only when it's safe ═══════════
+   Confirmations keep the map honest, but a tap-decision at speed is dangerous. This waits until
+   the driver is stopped (or the trip ends), then asks about ONE hazard they just passed. */
+S.passedQueue = S.passedQueue || [];
+function notePassed(h){
+  if(!h||!h.id) return;
+  if(S.passedQueue.some(x=>x.id===h.id)) return;
+  // only things that genuinely come and go — a pothole doesn't vanish on its own
+  if(!/^(traffic|construction_cones|road_closure|accident|police|stalled|emergency|debris|flooding|camera|camera_flock)$/.test(h.type)) return;
+  S.passedQueue.push({id:h.id,type:h.type,t:Date.now()});
+  if(S.passedQueue.length>6) S.passedQueue.shift();
+}
+let _askedAt=0;
+function maybeAskStillThere(){
+  if(!S.passedQueue.length) return;
+  if(Date.now()-_askedAt < 60000) return;             // at most once a minute
+  const mph=(S.speed||0)*2.23694;
+  if(mph>3) return;                                    // never while moving
+  if(document.querySelector(".sheet.open")) return;     // don't interrupt something else
+  const item=S.passedQueue.shift();
+  if(!item || Date.now()-item.t > 15*60000) return;     // too stale to be useful
+  const h=S.hazards.find(x=>x.id===item.id); if(!h) return;
+  const m=HZ_META[h.type]||HZ_META.debris;
+  _askedAt=Date.now();
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(112px + env(safe-area-inset-bottom));z-index:1500;background:var(--panel-solid);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.45)";
+  wrap.innerHTML='<div style="font-size:14px;font-weight:700;margin-bottom:4px">'+m.emoji+' Still there?</div>'+
+    '<div style="font-size:12.5px;color:var(--mute);margin-bottom:10px">You just passed a reported '+m.label.toLowerCase()+'.</div>'+
+    '<div style="display:flex;gap:8px">'+
+    '<button data-a="yes" style="flex:1;border:none;border-radius:12px;padding:12px;background:var(--ok,#34C98A);color:#07231A;font-weight:800;font-size:14px">Still there</button>'+
+    '<button data-a="no" style="flex:1;border:1px solid var(--line);border-radius:12px;padding:12px;background:transparent;color:inherit;font-weight:700;font-size:14px">All clear</button>'+
+    '<button data-a="skip" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:transparent;color:var(--mute);font-size:14px">✕</button></div>';
+  document.body.appendChild(wrap);
+  const kill=()=>{ try{wrap.remove();}catch(e){} clearTimeout(tm); };
+  const tm=setTimeout(kill,14000);
+  wrap.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+    const a=b.dataset.a; kill();
+    if(a==="yes"){ try{window.cwConfirm(h.id);}catch(e){} }
+    else if(a==="no"){ try{window.cwGone(h.id);}catch(e){} }
+  });
+}
+
+/* ═══════════ report a freeway closure, with the nearest exits offered ═══════════
+   Typing an exit while parked on a closed freeway is the last thing anyone wants to do, so this
+   pulls the actual nearby ramps/exits from the map data using your GPS and offers them as taps. */
+async function nearbyExits(){
+  if(!S.pos) return [];
+  const R=4000;
+  const q='[out:json][timeout:12];(way(around:'+R+','+S.pos.lat+','+S.pos.lng+')["highway"~"motorway_link|trunk_link"];);out tags center 40;';
+  try{
+    const res=await Promise.race([
+      fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:q}),
+      new Promise((_,rj)=>setTimeout(()=>rj(new Error("slow")),8000))
+    ]);
+    const d=await res.json();
+    const seen=new Set(), out=[];
+    (d.elements||[]).forEach(e=>{
+      const t=e.tags||{}; const c=e.center||e;
+      if(!c||!isFinite(c.lat)) return;
+      const name=[t["destination:ref"]||t.ref,t.destination||t.name].filter(Boolean).join(" → ")||t.name||t.ref;
+      if(!name) return;
+      const key=name.toLowerCase(); if(seen.has(key)) return; seen.add(key);
+      out.push({name:name,lat:c.lat,lng:c.lon||c.lng,d:distM(S.pos,{lat:c.lat,lng:c.lon||c.lng})});
+    });
+    return out.sort((a,b)=>a.d-b.d).slice(0,8);
+  }catch(e){ return []; }
+}
+async function reportClosure(){
+  if(!S.pos){ toast("Need a GPS lock to report a closure."); return; }
+  const wrap=document.createElement("div");
+  wrap.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:1600;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 14px 44px rgba(0,0,0,.5);max-height:66vh;overflow-y:auto";
+  wrap.innerHTML='<div style="font-size:15px;font-weight:800;margin-bottom:3px">⛔ Report a closure</div>'+
+    '<div style="font-size:12.5px;color:var(--mute);margin-bottom:10px">Pick the closest exit or type where it is.</div>'+
+    '<input id="clsInput" placeholder="e.g. I-94 at Livernois" autocomplete="off" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:inherit;font-size:15px;font-family:inherit">'+
+    '<div id="clsList" style="margin-top:10px"><p class="sub">Finding exits near you…</p></div>'+
+    '<div style="display:flex;gap:8px;margin-top:12px">'+
+    '<button id="clsGo" style="flex:1;border:none;border-radius:12px;padding:13px;background:#FF3B30;color:#fff;font-weight:800;font-size:15px">Report closed</button>'+
+    '<button id="clsX" style="border:1px solid var(--line);border-radius:12px;padding:13px 16px;background:transparent;color:inherit;font-size:15px">Cancel</button></div>';
+  document.body.appendChild(wrap);
+  const kill=()=>{ try{wrap.remove();}catch(e){} };
+  wrap.querySelector("#clsX").onclick=kill;
+  let picked=null;
+  wrap.querySelector("#clsGo").onclick=()=>{
+    const typed=(wrap.querySelector("#clsInput").value||"").trim();
+    const where=picked?picked.name:typed;
+    if(!where){ toast("Add an exit or description first.",2400); return; }
+    kill();
+    reportHazard("road_closure","Closed at "+where);
+  };
+  const exits=await nearbyExits();
+  const list=wrap.querySelector("#clsList"); if(!list) return;
+  if(!exits.length){ list.innerHTML='<p class="sub">No exits found nearby — type the location instead.</p>'; return; }
+  list.innerHTML="";
+  exits.forEach(x=>{
+    const row=document.createElement("div");
+    row.style.cssText="display:flex;align-items:center;gap:10px;padding:11px 8px;border-bottom:1px solid rgba(127,127,127,.14);cursor:pointer";
+    row.innerHTML='<span style="font-size:15px">🛣</span><span style="flex:1;min-width:0"><b style="display:block;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+x.name+'</b><small style="color:var(--mute);font-size:12px">'+fmtDist(x.d)+' away</small></span>';
+    row.onclick=()=>{
+      picked=x;
+      wrap.querySelector("#clsInput").value=x.name;
+      list.querySelectorAll("div").forEach(r=>r.style.background="");
+      row.style.background="rgba(127,127,127,.14)";
+    };
+    list.appendChild(row);
+  });
+}
