@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v94";
+const APP_VERSION="v95";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -3149,6 +3149,34 @@ $("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
   if(S.dest) fetchRoute(); else toast("Now pick a destination.",2200);
 }));
 
+
+/* ═══════════ ranking: a perfect name match 1,500 miles away is not the answer ═══════════
+   The old sort put word-match first and used distance only to break ties, so "Hamiltons"
+   returned Salt Lake City above the Dearborn one 12 miles away. Distance is now part of the
+   score itself — unless the person actually typed a city or state. */
+const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
+function _placeScore(r,toks,typedPlace){
+  const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase();
+  let nm=0, strong=0;
+  toks.forEach(t=>{
+    if(lbl.indexOf(t)<0) return;
+    nm++;
+    if(!GENERIC_WORDS.test(t)) strong++;      // "godfrey" counts for more than "rooftop"
+  });
+  let sc = strong*26 + nm*8;
+  if((r.name||"").toLowerCase().startsWith(toks[0]||"")) sc+=14;
+  const mi = (r._d!==undefined && isFinite(r._d)) ? r._d/1609.34 : null;
+  if(mi!==null && !typedPlace){
+    // near things win. far things need to be a much better match to compete.
+    if(mi<=15) sc+=30-mi;
+    else if(mi<=60) sc+=12-(mi-15)*0.25;
+    else sc-=Math.min(90,(mi-60)*0.35);
+  } else if(mi!==null){
+    sc+= mi<=40?8:0;
+  }
+  return sc;
+}
+
 /* ═══════════ full-screen search panel (Apple-style) ═══════════
    One entry point: tap the search bar (or the From row) and a real page opens with live
    suggestions, recents, saved places and an approximate-match option. */
@@ -3237,6 +3265,24 @@ async function spSearch(q){
       return {name,label,lat:co[1],lng:co[0]};
     });
   }catch(e){ if(e.name==="AbortError")return; }
+  // Still nothing? Retry with just the distinctive words. "Godfrey rooftop" misses because the
+  // place is indexed as "I|O Godfrey Rooftop Lounge"; searching "godfrey" alone finds it.
+  if(!items.length){
+    const strongToks=q.split(/\s+/).filter(w=>w.length>2 && !GENERIC_WORDS.test(w));
+    if(strongToks.length && strongToks.join(" ")!==q.trim()){
+      try{
+        let u2="https://photon.komoot.io/api/?q="+encodeURIComponent(strongToks.join(" "))+"&limit=10&lang=en";
+        if(S.pos) u2+="&lat="+S.pos.lat+"&lon="+S.pos.lng;
+        const d2=await (await fetch(u2,{signal:_spAbort.signal})).json();
+        items=(d2.features||[]).map(f=>{
+          const p=f.properties,co=f.geometry.coordinates;
+          const name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
+          const label=[p.street&&p.name&&p.name!==p.street?p.street:null,p.city||p.town||p.village,p.state].filter(Boolean).join(", ");
+          return {name,label,lat:co[1],lng:co[0]};
+        });
+      }catch(e){ if(e.name==="AbortError")return; }
+    }
+  }
   if(!items.length){
     try{
       let url="https://nominatim.openstreetmap.org/search?format=json&limit=10&q="+encodeURIComponent(q);
@@ -3246,9 +3292,10 @@ async function spSearch(q){
     }catch(e){ if(e.name==="AbortError")return; }
   }
   const toks=q.toLowerCase().split(/\s+/).filter(w=>w.length>1);
-  items=items.map(r=>{ const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase(); const nm=toks.filter(t=>lbl.indexOf(t)>-1).length;
-    return {...r,_d:S.pos?distM(S.pos,r):undefined,_n:nm}; })
-    .sort((a,b)=>(b._n-a._n)||((a._d||0)-(b._d||0)));
+  const typedPlace=(()=>{ try{ const p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
+  items=items.map(r=>{ const withD={...r,_d:S.pos?distM(S.pos,r):undefined};
+    return {...withD,_sc:_placeScore(withD,toks,typedPlace)}; })
+    .sort((a,b)=>b._sc-a._sc);
   acCache.set(q,items);
   spRender(items, items.length?null:"No matches — try adding a city or ZIP.");
 }
