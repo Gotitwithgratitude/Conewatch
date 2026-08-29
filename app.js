@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v93";
+const APP_VERSION="v94";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2092,7 +2092,11 @@ $("welcomeGo").onclick=async()=>{
 $("welcomeSkip").onclick=()=>{try{localStorage.setItem("cw_welcome","1");}catch{};$("welcome").style.display="none";startGPS();};
 
 /* free roam as long as you like + one-tap GPS re-lock */
-function hideRelock(){ clearTimeout(_relockT); $("relock").style.display="none"; }
+function hideRelock(){
+  clearTimeout(_relockT);
+  $("relock").style.display="none";
+  try{ const fb=$("fabLocate"); if(fb) fb.classList.remove("pointing"); }catch(e){}
+}
 /* ═══════════ driving-mode declutter ═══════════
    Six-plus thumb targets is a lot at speed. While navigating, keep only what a driver could
    genuinely need — emergency, report a hazard, recenter, mute — and restore the rest on exit. */
@@ -2122,8 +2126,14 @@ function startRelock(){
     if(visible) return;                       // you can still see yourself — no prompt needed
   }
   const rl=$("relock");
-  rl.textContent=S.navigating?"🧭 Free roam — tap to resume navigation":"🧲 Free roam — tap to lock onto GPS";
+  // Show the ACTUAL button glyph inline so there's no guessing which control to press —
+  // and pulse the real button on the right so the eye connects the two.
+  const chip='<span class="rl-key">◎</span>';
+  rl.innerHTML = S.navigating
+    ? ('🧭 Free roam — tap '+chip+' to resume')
+    : ('🧲 Free roam — tap '+chip+' to re-center');
   rl.style.display="block";
+  try{ const fb=$("fabLocate"); if(fb) fb.classList.add("pointing"); }catch(e){}
   // Sit under whatever is actually on screen (nav card while driving, header otherwise) so the
   // Dynamic Island / notch can never clip it.
   try{

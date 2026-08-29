@@ -284,6 +284,12 @@
   body.driving #hdr{display:none}
   body.driving #navbanner{top:calc(env(safe-area-inset-top) + 10px)}
   body.driving #relock{top:calc(env(safe-area-inset-top) + 128px)}
+  /* the glyph shown inside the free-roam prompt, matching the real button */
+  .rl-key{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--nav-accent,#22d3aa);color:#08221b;font-weight:800;font-size:13px;margin:0 3px;vertical-align:-5px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  /* pulse the real recenter button while the prompt is up */
+  @keyframes cwPoint{0%,100%{box-shadow:0 0 0 0 rgba(34,211,170,.55)}50%{box-shadow:0 0 0 12px rgba(34,211,170,0)}}
+  .fab.pointing{animation:cwPoint 1.6s ease-out infinite;border:2px solid var(--nav-accent,#22d3aa)}
+  @media (prefers-reduced-motion:reduce){.fab.pointing{animation:none;border:2px solid var(--nav-accent,#22d3aa)}}
   #relock{top:max(calc(env(safe-area-inset-top) + 58px), var(--hdrH,190px))}
   body.driving #bumpBar{top:calc(env(safe-area-inset-top) + 128px)}
   body.driving #fabVoice,body.driving #fabFlash,body.driving #fabMore,body.driving #moreFabs{display:none}
