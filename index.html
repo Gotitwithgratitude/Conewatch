@@ -21,7 +21,7 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=Chakra+Petch:wght@500;600&display=swap');
 
-  :root{
+  :root{--safeTop:env(safe-area-inset-top,0px);
     --bg:#08090B; --panel:rgba(30,32,37,.55); --panel-solid:rgba(22,24,28,.82); --panel-hi:rgba(255,255,255,.055);
     --line:rgba(255,255,255,.11); --edge:rgba(255,255,255,.07);
     --cone:#FF6A1F; --yellow:#FFC72C; --text:#F2F3F5; --red:#FF453A;
@@ -284,6 +284,7 @@
   body.driving #hdr{display:none}
   body.driving #navbanner{top:calc(env(safe-area-inset-top) + 10px)}
   body.driving #relock{top:calc(env(safe-area-inset-top) + 128px)}
+  #relock{top:max(calc(env(safe-area-inset-top) + 58px), var(--hdrH,190px))}
   body.driving #bumpBar{top:calc(env(safe-area-inset-top) + 128px)}
   body.driving #fabVoice,body.driving #fabFlash,body.driving #fabMore,body.driving #moreFabs{display:none}
   body.driving #compass,body.driving #trip{display:none}

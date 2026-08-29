@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v89";
+const APP_VERSION="v90";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2047,8 +2047,23 @@ function startRelock(){
     }catch(e){}
     if(visible) return;                       // you can still see yourself — no prompt needed
   }
-  $("relock").textContent=S.navigating?"🧭 Free roam — tap to resume navigation":"🧲 Free roam — tap to lock onto GPS";
-  $("relock").style.display="block";
+  const rl=$("relock");
+  rl.textContent=S.navigating?"🧭 Free roam — tap to resume navigation":"🧲 Free roam — tap to lock onto GPS";
+  rl.style.display="block";
+  // Sit under whatever is actually on screen (nav card while driving, header otherwise) so the
+  // Dynamic Island / notch can never clip it.
+  try{
+    const safeTop=parseInt(getComputedStyle(document.documentElement).getPropertyValue("--safeTop"))||0;
+    const anchor=document.body.classList.contains("driving")?$("navbanner"):$("hdr");
+    let top=null;
+    if(anchor&&anchor.getBoundingClientRect){
+      const r=anchor.getBoundingClientRect();
+      if(r.height>0) top=r.bottom+8;
+    }
+    if(top==null) top=(safeTop||60)+150;
+    top=Math.max(top,(safeTop||0)+58);          // never under the status bar / island
+    rl.style.top=Math.round(top)+"px";
+  }catch(e){}
   clearTimeout(_relockT);
   if(!S.navigating) _relockT=setTimeout(hideRelock,6000);   // fades on its own when just browsing
 }
