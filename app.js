@@ -19,7 +19,8 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v95";
+const APP_VERSION="v96";
+const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -2739,6 +2740,21 @@ async function forceGeocode(q){
   if(crowd){ confirmDestination({lat:crowd.lat,lng:crowd.lng,label:crowd.label||q},q); toast("📍 Matched to where most drivers go",2600); return; }
   const want=parseAddr(q);
   let cands=await geocodeCandidates(q);
+  // Places often carry a longer official name than what people type ("Godfrey rooftop" vs
+  // "I|O Godfrey Rooftop Lounge"). If the full phrase finds nothing, retry on the distinctive
+  // words only — the same retry the search panel does.
+  if(!cands || !cands.filter(c=>c.sc>-30).length){
+    const strongToks=q.split(/\s+/).filter(w=>w.length>2 && !GENERIC_WORDS.test(w));
+    if(strongToks.length && strongToks.join(" ").toLowerCase()!==q.trim().toLowerCase()){
+      try{
+        const retry=await geocodeCandidates(strongToks.join(" "));
+        if(retry && retry.filter(c=>c.sc>-30).length){
+          cands=retry;
+          toast('Searching "'+strongToks.join(" ")+'"…',2000);
+        }
+      }catch(e){}
+    }
+  }
   // if a house number was typed, prefer exact-house matches; keep the rest as fallback options
   const exact=want.housenumber ? cands.filter(c=>c.exactHouse) : [];
   let pool=(exact.length?exact:cands).filter(c=>c.sc>-30);
@@ -3154,7 +3170,6 @@ $("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
    The old sort put word-match first and used distance only to break ties, so "Hamiltons"
    returned Salt Lake City above the Dearborn one 12 miles away. Distance is now part of the
    score itself — unless the person actually typed a city or state. */
-const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 function _placeScore(r,toks,typedPlace){
   const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase();
   let nm=0, strong=0;
