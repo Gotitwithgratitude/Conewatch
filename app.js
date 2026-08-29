@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v90";
+const APP_VERSION="v91";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -1169,6 +1169,24 @@ function endNavigation(){
   $("navbanner").style.display="none";$("navPill").style.display="none";$("roadPill").style.display="none";$("hud").style.display="none";
   releaseWakeLock();
   clearInterval(limitTimer); $("limitBadge").style.display="none"; S.limit=null;
+  // Clear the trip itself — the line, destination pin and route state used to stay on the map
+  // after exiting, so the app still looked like it was navigating.
+  try{
+    S.route=null; S.steps=[]; S.stepIdx=0; S.offRouteCount=0;
+    if(S.alerted&&S.alerted.clear) S.alerted.clear();
+    S.passedQueue=[];
+    S.dest=null; S.destName=""; S.destLabel="";
+    S.origin=null; S.originName=""; S.originAddr="";
+    const empty={type:"FeatureCollection",features:[]};
+    ["route","routeCond","routeArrows","routeCasing"].forEach(id=>{
+      try{ if(map.getSource(id)) map.getSource(id).setData(empty); }catch(e){}
+    });
+    try{ if(destMarker){ destMarker.remove(); destMarker=null; } }catch(e){}
+    try{ clearStops(); }catch(e){}
+    try{ $("search").value=""; }catch(e){}
+    try{ $("confirmBar").style.display="none"; }catch(e){}
+    try{ _setFromUI(); }catch(e){}
+  }catch(e){}
   map.easeTo({pitch:S.is3d?55:0,bearing:0});
 }
 $("endnav").onclick=endNavigation;
