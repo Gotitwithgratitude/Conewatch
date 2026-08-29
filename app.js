@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v91";
+const APP_VERSION="v92";
 
 /* ══════════════════════════════════════════════════════════════════
    ONE-TIME OWNER SETUP — paste your codes here once, they apply to
@@ -1455,10 +1455,17 @@ function pulseHazard(h){
   try{
     if(!h._marker) return;
     const el=h._marker.getElement(); if(!el) return;
-    el.style.transition="transform .18s ease";
-    const base=(h.type==="pothole")?potScale(h):1;
+    // animate the ring, not the transform — transform belongs to MapLibre's positioning
+    const col=(h.type==="pothole")?potColor(h):((HZ_META[h.type]||HZ_META.debris).color);
+    const px=parseInt(el.dataset.basePx)||30;
+    el.style.transition="box-shadow .18s ease, outline-color .18s ease";
     let n=0;
-    const iv=setInterval(()=>{ n++; el.style.transform="scale("+(base*(n%2?1.5:1)).toFixed(2)+")"; if(n>5){clearInterval(iv); el.style.transform="scale("+base+")";} },190);
+    const iv=setInterval(()=>{
+      n++;
+      const grow=(n%2)?Math.round(px*0.45):Math.round(px*0.12);
+      el.style.boxShadow="0 0 0 "+grow+"px "+col+"55";
+      if(n>5){ clearInterval(iv); el.style.boxShadow="0 0 0 "+Math.round(px*0.12)+"px "+col+"33"; }
+    },190);
   }catch(e){}
 }
 
@@ -1474,8 +1481,13 @@ function addHazardMarker(h){
     else if(!h.psev && /size:\s*Small/i.test(h.note||"")) h.psev=1;
     el.style.background=potColor(h);
     const sc=potScale(h);
-    el.style.transform="scale("+sc+")";
+    // Size via width/height — MapLibre writes `transform` on this element to position it,
+    // so scaling with transform detached the marker and made it drift on zoom.
+    const base=30, px=Math.round(base*sc);
+    el.style.width=px+"px"; el.style.height=px+"px";
+    el.style.fontSize=Math.round(15*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
+    el.dataset.basePx=px;
   } else el.style.background=m.color;
   el.textContent=m.emoji;
   const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
