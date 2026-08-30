@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v100";
+const APP_VERSION="v101";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -400,6 +400,7 @@ function onPos(p){
     if((_accBad || _teleport) && (S.goodFixes||0)>0){ S.accuracy=accuracy; return; }
   }
   if(!_accBad) S.goodFixes=(S.goodFixes||0)+1;
+  if(!S.pos && typeof acCache!=="undefined" && acCache.clear) acCache.clear(); // first fix: drop any pre-lock typeahead entries
   S.lastPos=S.pos; S.pos=_new; S.accuracy=accuracy;
   if(heading!==null && !isNaN(heading)) S.course=heading;
   else if(S.lastPos && distM(S.lastPos,S.pos)>3) S.course=bearing(S.lastPos,S.pos);
@@ -603,7 +604,10 @@ async function suggest(q){
   const toks=strip(q).split(/\s+/).filter(w=>w.length>1);
   all=all.map(r=>{ const lbl=strip((r.name||"")+" "+(r.label||"")); const nm=toks.filter(t=>lbl.indexOf(t)>-1).length; return {...r,_d:S.pos?distM(S.pos,r):0,_n:nm}; })
     .sort((a,b)=>(b._n-a._n)||(a._d-b._d));
-  acCache.set(q,all); if(acCache.size>60) acCache.delete(acCache.keys().next().value);
+  // Only cache when position was available (so an Overture-capable, distance-ranked
+  // result is what gets stored). Caching a pre-GPS-lock result would poison this query
+  // for the whole session — every retype would serve the OSM-only list.
+  if(S.pos){ acCache.set(q,all); if(acCache.size>60) acCache.delete(acCache.keys().next().value); }
   renderResults(all);
 }
 function poiIcon(r){
