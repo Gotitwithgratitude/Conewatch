@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v97";
+const APP_VERSION="v98";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -31,7 +31,12 @@ const CW_CONFIG = {
   maptilerKey: "",
   cartoKey: "",   // optional free key from carto.com/basemaps/apikey (else keyless Esri tiles are used)   // ← (optional) free MapTiler key → sharp HD satellite for ALL users
   supabaseUrl: "https://fcywpeulilndeinzckdl.supabase.co",   // shared network — LIVE
-  supabaseKey: "sb_publishable_ToEAvzA2sQN269M3Lv8LOg_2wK55NWC"
+  supabaseKey: "sb_publishable_ToEAvzA2sQN269M3Lv8LOg_2wK55NWC",
+  // Overture-backed POI coverage (finds local businesses OSM doesn't have). Same-origin
+  // serverless proxy holds the secret key server-side — the browser never sees it.
+  // Setup: (1) deploy /api/places.js with the repo, (2) set OPA_KEY env var in Vercel.
+  // Until then this silently 404s → no-op, search falls back to OSM exactly as before.
+  placesProxy: "/api/places"
 };
 const PROFILES = { car:"routed-car/route/v1/driving", bike:"routed-bike/route/v1/driving", foot:"routed-foot/route/v1/driving", hike:"routed-foot/route/v1/driving" };
 const ACCENT = { dark:{route:"#35E0C8",casing:"#0A3B33"}, light:{route:"#1D6EF2",casing:"#0A2E66"} };
@@ -2674,6 +2679,23 @@ async function getLocality(){
   }catch{}
   return localityCache;
 }
+// OVERTURE POI FALLBACK — calls the same-origin serverless proxy (key stays server-side),
+// normalizes Overture places into the row shape scoreRows() expects. Silent [] if the proxy
+// isn't deployed yet, the key/quota is unavailable, or there's no fix — search just uses OSM.
+async function overturePOIs(q){
+  if(!CW_CONFIG.placesProxy || !S.pos) return [];
+  try{
+    var u=CW_CONFIG.placesProxy+"?q="+encodeURIComponent(q)
+      +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=45&mode=name&limit=15";
+    var d=await (await fetchT(u,8000)).json();
+    var arr=(d&&d.results)||[];
+    return arr.map(function(p){
+      return { lat:p.lat, lon:p.lon, type:p.category||"poi",
+        address:{ name:p.name, city:(p.address&&p.address.locality)||undefined },
+        display_name:[p.name,(p.address&&p.address.locality)].filter(Boolean).join(", ") };
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lon)&&r.address.name; });
+  }catch(e){ return []; }
+}
 // gather candidates from 3 free geocoders (structured + free-text Nominatim + Photon), scored & merged
 async function geocodeCandidates(q){
   var p=parseAddr(q), out=[];
@@ -2698,6 +2720,9 @@ async function geocodeCandidates(q){
       .then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}));
     jobs.push(fetchT("https://photon.komoot.io/api/?limit=12&lang=en&zoom=12"+ll+"&q="+encodeURIComponent(q),8000)
       .then(r=>r.json()).then(d=>{out=out.concat(photonToRows(d.features||[]));}).catch(()=>{}));
+    // OVERTURE POI LAYER: Overture (OSM + Meta + Microsoft + …) carries local businesses
+    // raw OSM lacks. Proximity-only, so it runs exactly here — a name search near the driver.
+    jobs.push(overturePOIs(q).then(rows=>{out=out.concat(rows);}).catch(()=>{}));
   }
   await Promise.all(jobs);
   return scoreRows(out,q);
