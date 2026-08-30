@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v99";
+const APP_VERSION="v100";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -532,16 +532,54 @@ function offlineMatches(q){
   if(QK.work&&"work".includes(ql))out.push({name:"Work",label:"Saved",lat:QK.work.lat,lng:QK.work.lng});
   return out.slice(0,8);
 }
+// Overture POI layer for the typeahead — same proxy as full search (apostrophe retry
+// happens server-side). Quota guards: needs a fix, needs 4+ chars, aborts on new keystroke.
+async function overtureSuggest(q, signal){
+  if(!CW_CONFIG.placesProxy || !S.pos || q.trim().length<4) return [];
+  try{
+    var u=CW_CONFIG.placesProxy+"?q="+encodeURIComponent(q)
+      +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=45&mode=name&limit=10";
+    var d=await (await fetch(u,{signal})).json();
+    return ((d&&d.results)||[]).map(function(p){
+      var a=p.address||{};
+      return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon };
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name; });
+  }catch(e){ if(e.name==="AbortError") throw e; return []; }
+}
+// Collapse the same place arriving from Overture + OSM (within ~150m, name-similar).
+// Keep the first (Overture is concatenated first = preferred name), upgrade to the longer label.
+function dedupeSuggest(list){
+  var out=[];
+  var nm=function(s){ return String(s||"").toLowerCase().replace(/['\u2019]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); };
+  list.forEach(function(r){
+    var rn=nm(r.name);
+    for(var i=0;i<out.length;i++){
+      var k=out[i];
+      if(isFinite(r.lat)&&isFinite(k.lat)&&distM({lat:r.lat,lng:r.lng},{lat:k.lat,lng:k.lng})<=150){
+        var kn=nm(k.name);
+        if(rn&&kn&&(rn===kn||rn.indexOf(kn)>-1||kn.indexOf(rn)>-1)){
+          if(String(r.label||"").length>String(k.label||"").length) k.label=r.label;
+          return;
+        }
+      }
+    }
+    out.push(r);
+  });
+  return out;
+}
 async function suggest(q){
   if(!navigator.onLine){ renderResults(offlineMatches(q)); return; }
   if(acCache.has(q)){renderResults(acCache.get(q));return;}
   if(acAbort) acAbort.abort();
   acAbort=new AbortController();
+  const sig=acAbort.signal;
+  // Overture POI search runs alongside OSM (kicked off now, awaited below).
+  const ovP=overtureSuggest(q,sig);
   let items=[];
   try{
     let u=`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en`;
     if(S.pos)u+=`&lat=${S.pos.lat}&lon=${S.pos.lng}`;
-    const d=await (await fetch(u,{signal:acAbort.signal})).json();
+    const d=await (await fetch(u,{signal:sig})).json();
     items=(d.features||[]).map(f=>{
       const p=f.properties,co=f.geometry.coordinates;
       const name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
@@ -553,15 +591,20 @@ async function suggest(q){
     try{
       let url=`https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(q)}`;
       if(S.pos){const d2=0.15;url+=`&viewbox=${S.pos.lng-d2},${S.pos.lat+d2},${S.pos.lng+d2},${S.pos.lat-d2}&bounded=0`;}
-      const list=await (await fetch(url,{signal:acAbort.signal,headers:{Accept:"application/json"}})).json();
+      const list=await (await fetch(url,{signal:sig,headers:{Accept:"application/json"}})).json();
       items=(list||[]).map(r=>({name:r.display_name.split(",")[0],label:r.display_name.split(",").slice(1,4).join(",").trim(),lat:+r.lat,lng:+r.lon}));
     }catch(e){ if(e.name==="AbortError")return; }
   }
-  const toks=q.toLowerCase().split(/\s+/).filter(w=>w.length>1);
-  items=items.map(r=>{ const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase(); const nm=toks.filter(t=>lbl.indexOf(t)>-1).length; return {...r,_d:S.pos?distM(S.pos,r):0,_n:nm}; })
+  // Merge Overture POIs ahead of OSM, then collapse cross-source duplicates.
+  let ov=[]; try{ ov=await ovP; }catch(e){ if(e.name==="AbortError")return; }
+  let all=dedupeSuggest(ov.concat(items));
+  // Rank apostrophe-insensitively (so "hamiltons" credits "Hamilton's"), then by distance.
+  const strip=s=>String(s||"").toLowerCase().replace(/['\u2019]/g,"");
+  const toks=strip(q).split(/\s+/).filter(w=>w.length>1);
+  all=all.map(r=>{ const lbl=strip((r.name||"")+" "+(r.label||"")); const nm=toks.filter(t=>lbl.indexOf(t)>-1).length; return {...r,_d:S.pos?distM(S.pos,r):0,_n:nm}; })
     .sort((a,b)=>(b._n-a._n)||(a._d-b._d));
-  acCache.set(q,items); if(acCache.size>60) acCache.delete(acCache.keys().next().value);
-  renderResults(items);
+  acCache.set(q,all); if(acCache.size>60) acCache.delete(acCache.keys().next().value);
+  renderResults(all);
 }
 function poiIcon(r){
   const s=((r.name||"")+" "+(r.label||"")).toLowerCase();
