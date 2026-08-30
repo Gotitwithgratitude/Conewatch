@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v101";
+const APP_VERSION="v102-debug";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -536,16 +536,22 @@ function offlineMatches(q){
 // Overture POI layer for the typeahead — same proxy as full search (apostrophe retry
 // happens server-side). Quota guards: needs a fix, needs 4+ chars, aborts on new keystroke.
 async function overtureSuggest(q, signal){
-  if(!CW_CONFIG.placesProxy || !S.pos || q.trim().length<4) return [];
+  window.__ovDbg="(pending)";
+  if(!CW_CONFIG.placesProxy){ window.__ovDbg="skip:noProxy"; return []; }
+  if(!S.pos){ window.__ovDbg="skip:noPos"; return []; }
+  if(q.trim().length<4){ window.__ovDbg="skip:short("+q.trim().length+")"; return []; }
   try{
     var u=CW_CONFIG.placesProxy+"?q="+encodeURIComponent(q)
       +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=45&mode=name&limit=10";
-    var d=await (await fetch(u,{signal})).json();
-    return ((d&&d.results)||[]).map(function(p){
+    var resp=await fetch(u,{signal});
+    var d=await resp.json();
+    var arr=((d&&d.results)||[]).map(function(p){
       var a=p.address||{};
       return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon };
     }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name; });
-  }catch(e){ if(e.name==="AbortError") throw e; return []; }
+    window.__ovDbg="http"+resp.status+" raw"+(((d&&d.results)||[]).length)+" kept"+arr.length+" q="+((d&&d.meta&&d.meta.q)||"?");
+    return arr;
+  }catch(e){ if(e.name==="AbortError"){ window.__ovDbg="abort"; throw e; } window.__ovDbg="err:"+(e&&e.message||e); return []; }
 }
 // Collapse the same place arriving from Overture + OSM (within ~150m, name-similar).
 // Keep the first (Overture is concatenated first = preferred name), upgrade to the longer label.
@@ -627,6 +633,7 @@ function poiIcon(r){
 function renderResults(list){
   const box=$("results"); box.innerHTML="";
   const q=$("search").value.trim();
+  if(window.__ovDbg){ const dbg=document.createElement("div"); dbg.style.cssText="padding:6px 14px;font:11px monospace;color:#fff;background:#7C3AED"; dbg.textContent="OV "+window.__ovDbg; box.appendChild(dbg); box.style.display="block"; }
   if(!list||!list.length){
     if(q.length<3){box.style.display="none";return;}
     const div=document.createElement("div");div.className="result ricon";
