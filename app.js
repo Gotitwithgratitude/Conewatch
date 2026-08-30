@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v96";
+const APP_VERSION="v97";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2776,7 +2776,7 @@ async function forceGeocode(q){
 const US_STATES={alabama:"AL",alaska:"AK",arizona:"AZ",arkansas:"AR",california:"CA",colorado:"CO",connecticut:"CT",delaware:"DE",florida:"FL",georgia:"GA",hawaii:"HI",idaho:"ID",illinois:"IL",indiana:"IN",iowa:"IA",kansas:"KS",kentucky:"KY",louisiana:"LA",maine:"ME",maryland:"MD",massachusetts:"MA",michigan:"MI",minnesota:"MN",mississippi:"MS",missouri:"MO",montana:"MT",nebraska:"NE",nevada:"NV",ohio:"OH",oklahoma:"OK",oregon:"OR",pennsylvania:"PA",tennessee:"TN",texas:"TX",utah:"UT",vermont:"VT",virginia:"VA",washington:"WA",wisconsin:"WI",wyoming:"WY"};
 const SUF={st:"street",str:"street",ave:"avenue",av:"avenue",rd:"road",dr:"drive",blvd:"boulevard",ln:"lane",ct:"court",pl:"place",hwy:"highway",pkwy:"parkway",cir:"circle",ter:"terrace",trl:"trail",sq:"square"};
 function normStreet(s){
-  return (s||"").toLowerCase().replace(/[.,]/g,"").split(/\s+/)
+  return (s||"").toLowerCase().replace(/[.,'\u2019]/g,"").split(/\s+/)
     .map(function(w){return SUF[w]||w;})
     .filter(function(w){return ["n","s","e","w","north","south","east","west"].indexOf(w)===-1;})
     .join(" ").trim();
@@ -2849,7 +2849,7 @@ function scoreRows(rows,q){
     else if(["university","college","school","hospital","attraction","commercial","retail","supermarket","fuel","restaurant","cafe","pharmacy","bank","hotel","stadium","park","place_of_worship"].indexOf(t)>-1)sc+=22;
     else if(["city","town","state","administrative"].indexOf(t)>-1)sc-=12;
     // NAME MATCH: does the query text appear in the result name? (Wayne State University for "wayne state")
-    var label=String(r.display_name||r.name||"").toLowerCase();
+    var label=String(r.display_name||r.name||"").toLowerCase().replace(/['\u2019]/g,"").replace(/[^a-z0-9 ]/g," ");
     var toks=q.toLowerCase().replace(/[^a-z0-9 ]/g,"").split(/\s+/).filter(function(w){return w.length>1;});
     if(toks.length){ var matched=toks.filter(function(tk){return label.indexOf(tk)>-1;}).length; sc+=matched*14; if(matched===toks.length)sc+=42; }
     // PROXIMITY: when the user didn't name a city/state/ZIP they mean somewhere NEAR them.
