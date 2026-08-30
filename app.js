@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v98";
+const APP_VERSION="v99";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2845,6 +2845,31 @@ function photonToRows(feats){
       address:{house_number:p.housenumber,road:p.street||p.name,city:p.city||p.town||p.village,state:p.state,postcode:p.postcode},
       display_name:[p.name,p.street,p.city,p.state,p.postcode].filter(Boolean).join(", ")};});
 }
+// Collapse the same real place arriving from two sources (e.g. Overture + OSM both
+// return "Hamilton's Propane" a few dozen meters apart). Same place = within ~150m AND
+// one name contains the other. Keep the higher score (list is pre-sorted, so the first
+// seen wins), but show the LONGER label since it carries the fuller address to tell
+// near-identical spots apart. Coords barely differ (<150m), so navigation is unaffected.
+function dedupeNear(list){
+  var out=[];
+  var nm=function(lb){ return String(lb||"").split(",")[0].toLowerCase().replace(/['\u2019]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); };
+  list.forEach(function(r){
+    var rn=nm(r.label);
+    for(var i=0;i<out.length;i++){
+      var k=out[i];
+      if(distM({lat:r.lat,lng:r.lng},{lat:k.lat,lng:k.lng})<=150){
+        var kn=nm(k.label);
+        if(rn&&kn&&(rn===kn||rn.indexOf(kn)>-1||kn.indexOf(rn)>-1)){
+          if(String(r.label||"").length>String(k.label||"").length){ k.label=r.label; k.lat=r.lat; k.lng=r.lng; }
+          k.sc=Math.max(k.sc,r.sc);
+          return; // merged into an existing kept row
+        }
+      }
+    }
+    out.push(r);
+  });
+  return out;
+}
 function scoreRows(rows,q){
   if(!rows||!rows.length)return [];
   var want=parseAddr(q), wStreet=normStreet(want.street), seen={};
@@ -2892,9 +2917,9 @@ function scoreRows(rows,q){
       }
     }
     return {lat:+r.lat,lng:+r.lon,label:r.display_name||q,sc:sc,exactHouse:exactHouse,type:String(r.type||"")};
-  }).filter(function(x){ if(!isFinite(x.lat)||!isFinite(x.lng))return false; var k=x.lat.toFixed(4)+","+x.lng.toFixed(4); if(seen[k])return false; seen[k]=1; return true; })
+  }).filter(function(x){ return isFinite(x.lat)&&isFinite(x.lng); })
     .sort(function(a,b){return b.sc-a.sc;});
-  return scored;
+  return dedupeNear(scored);
 }
 function pickBest(rows,q){
   var want=parseAddr(q), scored=scoreRows(rows,q);
