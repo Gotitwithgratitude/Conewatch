@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v102-debug";
+const APP_VERSION="v103";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -536,22 +536,16 @@ function offlineMatches(q){
 // Overture POI layer for the typeahead — same proxy as full search (apostrophe retry
 // happens server-side). Quota guards: needs a fix, needs 4+ chars, aborts on new keystroke.
 async function overtureSuggest(q, signal){
-  window.__ovDbg="(pending)";
-  if(!CW_CONFIG.placesProxy){ window.__ovDbg="skip:noProxy"; return []; }
-  if(!S.pos){ window.__ovDbg="skip:noPos"; return []; }
-  if(q.trim().length<4){ window.__ovDbg="skip:short("+q.trim().length+")"; return []; }
+  if(!CW_CONFIG.placesProxy || !S.pos || q.trim().length<4) return [];
   try{
     var u=CW_CONFIG.placesProxy+"?q="+encodeURIComponent(q)
       +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=45&mode=name&limit=10";
-    var resp=await fetch(u,{signal});
-    var d=await resp.json();
-    var arr=((d&&d.results)||[]).map(function(p){
+    var d=await (await fetch(u,{signal})).json();
+    return ((d&&d.results)||[]).map(function(p){
       var a=p.address||{};
       return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon };
     }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name; });
-    window.__ovDbg="http"+resp.status+" raw"+(((d&&d.results)||[]).length)+" kept"+arr.length+" q="+((d&&d.meta&&d.meta.q)||"?");
-    return arr;
-  }catch(e){ if(e.name==="AbortError"){ window.__ovDbg="abort"; throw e; } window.__ovDbg="err:"+(e&&e.message||e); return []; }
+  }catch(e){ if(e.name==="AbortError") throw e; return []; }
 }
 // Collapse the same place arriving from Overture + OSM (within ~150m, name-similar).
 // Keep the first (Overture is concatenated first = preferred name), upgrade to the longer label.
@@ -633,7 +627,6 @@ function poiIcon(r){
 function renderResults(list){
   const box=$("results"); box.innerHTML="";
   const q=$("search").value.trim();
-  if(window.__ovDbg){ const dbg=document.createElement("div"); dbg.style.cssText="padding:6px 14px;font:11px monospace;color:#fff;background:#7C3AED"; dbg.textContent="OV "+window.__ovDbg; box.appendChild(dbg); box.style.display="block"; }
   if(!list||!list.length){
     if(q.length<3){box.style.display="none";return;}
     const div=document.createElement("div");div.className="result ricon";
@@ -3275,7 +3268,7 @@ $("tripFrom")&&($("tripFrom").addEventListener("change",async()=>{
    returned Salt Lake City above the Dearborn one 12 miles away. Distance is now part of the
    score itself — unless the person actually typed a city or state. */
 function _placeScore(r,toks,typedPlace){
-  const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase();
+  const lbl=((r.name||"")+" "+(r.label||"")).toLowerCase().replace(/['\u2019]/g,"");
   let nm=0, strong=0;
   toks.forEach(t=>{
     if(lbl.indexOf(t)<0) return;
@@ -3372,6 +3365,7 @@ async function spSearch(q){
   if(!navigator.onLine){ spRender(offlineMatches(q)); return; }
   if(acCache.has(q)){ spRender(acCache.get(q)); return; }
   spRender([], "Searching…");
+  const ovP=overtureSuggest(q,_spAbort.signal);   // Overture POIs run alongside OSM
   let items=[];
   try{
     let u="https://photon.komoot.io/api/?q="+encodeURIComponent(q)+"&limit=10&lang=en";
@@ -3410,12 +3404,15 @@ async function spSearch(q){
       items=(list||[]).map(r=>({name:r.display_name.split(",")[0],label:r.display_name.split(",").slice(1,4).join(",").trim(),lat:+r.lat,lng:+r.lon}));
     }catch(e){ if(e.name==="AbortError")return; }
   }
-  const toks=q.toLowerCase().split(/\s+/).filter(w=>w.length>1);
+  // Merge Overture POIs (finds local businesses OSM lacks) ahead of OSM, collapse duplicates.
+  let ov=[]; try{ ov=await ovP; }catch(e){ if(e.name==="AbortError")return; }
+  items=dedupeSuggest(ov.concat(items));
+  const toks=q.toLowerCase().replace(/['\u2019]/g,"").split(/\s+/).filter(w=>w.length>1);
   const typedPlace=(()=>{ try{ const p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
   items=items.map(r=>{ const withD={...r,_d:S.pos?distM(S.pos,r):undefined};
     return {...withD,_sc:_placeScore(withD,toks,typedPlace)}; })
     .sort((a,b)=>b._sc-a._sc);
-  acCache.set(q,items);
+  if(S.pos) acCache.set(q,items);   // don't cache pre-GPS-lock (Overture-less) results
   spRender(items, items.length?null:"No matches — try adding a city or ZIP.");
 }
 $("spInput")&&($("spInput").addEventListener("input",()=>{
