@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v106";
+const APP_VERSION="v107";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1564,7 +1564,22 @@ function pulseHazard(h){
 }
 
 /* ═══════════ hazards ═══════════ */
+let _cwFxInjected=false;
+function cwInjectFX(){
+  if(_cwFxInjected) return; _cwFxInjected=true;
+  try{
+    const s=document.createElement("style");
+    // Ice = a soft, cold frost aura that gently breathes. Two feathered layers, low opacity,
+    // slow ease so it reads "cold" at a glance without ever looking neon or tacky.
+    s.textContent=
+      "@keyframes cwFrost{0%,100%{box-shadow:0 0 7px 3px rgba(90,200,250,.42),0 0 16px 7px rgba(130,215,255,.20)}"+
+      "50%{box-shadow:0 0 11px 5px rgba(90,200,250,.60),0 0 24px 11px rgba(130,215,255,.32)}}"+
+      ".hz.hz-ice{animation:cwFrost 3.4s ease-in-out infinite}";
+    document.head.appendChild(s);
+  }catch(e){}
+}
 function addHazardMarker(h){
+  cwInjectFX();
   if(!h.id)h.id="h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   if(!h.ts)h.ts=h.created_at?Date.parse(h.created_at)||Date.now():Date.now();
   const m=HZ_META[h.type]||HZ_META.debris;
@@ -1582,9 +1597,18 @@ function addHazardMarker(h){
     el.style.fontSize=Math.round(15*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
     el.dataset.basePx=px;
+  } else if(h.type==="ice"){
+    // Ice gets the cold frost aura (glow only, gentle pulse) — NOT the hard ring the other
+    // hazards use. Leave box-shadow to the .hz-ice CSS so the breathing animation drives it.
+    el.classList.add("hz-ice");
+    el.style.background=m.color;
+    const sc=hazScale(h);
+    const px=Math.round(30*sc);
+    el.style.width=px+"px"; el.style.height=px+"px";
+    el.style.fontSize=Math.round(15*sc)+"px";
+    el.dataset.basePx=px;
   } else {
-    // Every hazard type gets the same treatment potholes got: sized by how much it matters,
-    // with a matching glow ring. Sizing via width/height keeps MapLibre's positioning intact.
+    // Every other hazard: sized by how much it matters, with a matching solid glow ring.
     el.style.background=m.color;
     const sc=hazScale(h);
     const px=Math.round(30*sc);
