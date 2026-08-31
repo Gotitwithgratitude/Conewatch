@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v114";
+const APP_VERSION="v115";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -3649,8 +3649,20 @@ async function nearbyExits(){
 }
 async function reportClosure(){
   if(!S.pos){ toast("Need a GPS lock to report a closure."); return; }
+  closeSheets&&closeSheets();
   const wrap=document.createElement("div");
-  wrap.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:1600;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 14px 44px rgba(0,0,0,.5);max-height:66vh;overflow-y:auto";
+  wrap.id="clsSheet";
+  wrap.style.cssText="position:fixed;left:12px;right:12px;bottom:calc(96px + env(safe-area-inset-bottom));z-index:2400;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 14px 44px rgba(0,0,0,.5);max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch";
+  // Lift the sheet above the on-screen keyboard so the input never hides behind it, and shrink
+  // it so its top can't collide with the instruction banner. Restores on keyboard dismiss.
+  const vv=window.visualViewport;
+  const liftForKeyboard=()=>{
+    if(!vv){ return; }
+    const kb=Math.max(0,(window.innerHeight - vv.height - vv.offsetTop));
+    if(kb>120){ wrap.style.bottom=(kb+12)+"px"; wrap.style.maxHeight="42vh"; }
+    else { wrap.style.bottom="calc(96px + env(safe-area-inset-bottom))"; wrap.style.maxHeight="52vh"; }
+  };
+  if(vv){ vv.addEventListener("resize",liftForKeyboard); vv.addEventListener("scroll",liftForKeyboard); }
   wrap.innerHTML='<div style="font-size:15px;font-weight:800;margin-bottom:3px">⛔ Report a closure</div>'+
     '<div style="font-size:12.5px;color:var(--mute);margin-bottom:10px">Pick the closest exit or type where it is.</div>'+
     '<input id="clsInput" placeholder="e.g. I-94 at Livernois" autocomplete="off" style="width:100%;padding:12px;border-radius:12px;border:1px solid var(--line);background:transparent;color:inherit;font-size:15px;font-family:inherit">'+
@@ -3659,9 +3671,49 @@ async function reportClosure(){
     '<button id="clsGo" style="flex:1;border:none;border-radius:12px;padding:13px;background:#FF3B30;color:#fff;font-weight:800;font-size:15px">Report closed</button>'+
     '<button id="clsX" style="border:1px solid var(--line);border-radius:12px;padding:13px 16px;background:transparent;color:inherit;font-size:15px">Cancel</button></div>';
   document.body.appendChild(wrap);
-  const kill=()=>{ try{wrap.remove();}catch(e){} };
+  const kill=()=>{ try{ if(vv){ vv.removeEventListener("resize",liftForKeyboard); vv.removeEventListener("scroll",liftForKeyboard); } }catch(e){} try{wrap.remove();}catch(e){} };
   wrap.querySelector("#clsX").onclick=kill;
   let picked=null;
+  // ── live road/place search as you type (this was missing — typing found nothing) ──
+  const inp=wrap.querySelector("#clsInput");
+  const list0=()=>wrap.querySelector("#clsList");
+  let clsTimer=null, clsAbort=null;
+  const renderClsRows=(rows,emptyMsg)=>{
+    const list=list0(); if(!list) return;
+    if(!rows||!rows.length){ list.innerHTML='<p class="sub">'+(emptyMsg||"No matches — type a bit more.")+'</p>'; return; }
+    list.innerHTML="";
+    rows.forEach(x=>{
+      const row=document.createElement("div");
+      row.style.cssText="display:flex;align-items:center;gap:10px;padding:11px 8px;border-bottom:1px solid rgba(127,127,127,.14);cursor:pointer";
+      const dist=(x.d!=null&&isFinite(x.d))?('<small style="color:var(--mute);font-size:12px">'+fmtDist(x.d)+' away</small>'):'';
+      row.innerHTML='<span style="font-size:15px">'+(x.icon||"🛣")+'</span><span style="flex:1;min-width:0"><b style="display:block;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+x.name+'</b>'+dist+'</span>';
+      row.onclick=()=>{ picked=x; inp.value=x.name; list.querySelectorAll("div").forEach(r=>r.style.background=""); row.style.background="rgba(127,127,127,.14)"; };
+      list.appendChild(row);
+    });
+  };
+  const clsSearch=(q)=>{
+    if(clsAbort){ try{clsAbort.abort();}catch(e){} }
+    clsAbort=new AbortController();
+    const ll=S.pos?("&lat="+S.pos.lat+"&lon="+S.pos.lng):"";
+    fetch("https://photon.komoot.io/api/?limit=8&lang=en"+ll+"&q="+encodeURIComponent(q),{signal:clsAbort.signal})
+      .then(r=>r.json())
+      .then(d=>{
+        const rows=(d.features||[]).map(f=>{
+          const p=f.properties||{}, c=(f.geometry&&f.geometry.coordinates)||[0,0];
+          const nm=[p.name||p.street,p.city||p.town||p.village,p.state].filter(Boolean).join(", ")||p.name||"Unnamed";
+          return {name:nm,lat:c[1],lng:c[0],d:(S.pos?distM(S.pos,{lat:c[1],lng:c[0]}):null),icon:"📍"};
+        }).filter(r=>r.name&&isFinite(r.lat));
+        renderClsRows(rows,"No matches — try the road name.");
+      })
+      .catch(e=>{ if(e.name!=="AbortError") renderClsRows(null,"Search unavailable — type the location and tap Report."); });
+  };
+  inp.addEventListener("input",()=>{
+    picked=null;
+    const q=inp.value.trim();
+    clearTimeout(clsTimer);
+    if(q.length<3){ return; }   // keep the nearby-exits list until they actually type
+    clsTimer=setTimeout(()=>clsSearch(q),200);
+  });
   wrap.querySelector("#clsGo").onclick=()=>{
     const typed=(wrap.querySelector("#clsInput").value||"").trim();
     const where=picked?picked.name:typed;
