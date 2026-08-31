@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v111";
+const APP_VERSION="v113";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -204,6 +204,7 @@ let mapStyleTheme="dark";
   const style=await styleFor(S.themeNow);
   map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0, attributionControl:true });
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
+    _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
     if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key) loadSharedHazards(); if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
     else $("welcome").style.display="flex"; });
@@ -245,6 +246,43 @@ function toggleHeat(){
   if(S.heatOn){ ensureHeatLayer(); refreshHeat(); try{map.setLayoutProperty("rough-heat","visibility","visible");}catch(e){} toast("🌡️ Road-quality heatmap ON — green=smooth, red=rough"); }
   else { try{map.setLayoutProperty("rough-heat","visibility","none");}catch(e){} toast("Heatmap off"); }
   const b=$("heatState"); if(b)b.textContent=S.heatOn?"On — pothole & rough-road density":"Off";
+}
+// ── Map detail modes: Full → Clean → Minimal → Full ────────────────────────────
+// Declutters ConeWatch's own overlays (heat, glows, 3D, marker size). The raster basemap
+// paint (land/water/labels) can't be restyled without swapping tile providers, so this
+// controls what WE draw — which is where the visual noise actually lives.
+const MAP_MODES=["full","clean","minimal"];
+const MAP_MODE_LABEL={full:"🗺 Full detail",clean:"🧭 Clean — heat & 3D hidden",minimal:"▁ Minimal — just get me there"};
+function applyMapMode(){
+  const mode=S.mapMode||"full";
+  try{document.body.classList.toggle("cw-minimal",mode==="minimal");}catch(e){}
+  try{document.body.classList.toggle("cw-clean",mode==="clean");}catch(e){}
+  // roughness heat: only in full (and only if the user has it on)
+  try{ map.setLayoutProperty("rough-heat","visibility",(mode==="full"&&S.heatOn)?"visible":"none"); }catch(e){}
+  // 3D buildings: only in full (best-effort — may not exist on the raster basemap)
+  try{ if(map.getLayer("cw-3d")) map.setLayoutProperty("cw-3d","visibility",(mode==="full"&&S.is3d)?"visible":"none"); }catch(e){}
+  // Discover POI markers: hidden in minimal
+  try{ poiMarkers.forEach(m=>{ const el=m.getElement&&m.getElement(); if(el) el.style.display=(mode==="minimal")?"none":""; }); }catch(e){}
+  const btn=$("fabMapMode"); if(btn){ btn.classList.toggle("active",mode!=="full"); btn.textContent=(mode==="minimal")?"▁":(mode==="clean")?"◐":"◑"; }
+}
+function cycleMapMode(){
+  const i=MAP_MODES.indexOf(S.mapMode||"full");
+  S.mapMode=MAP_MODES[(i+1)%MAP_MODES.length];
+  applyMapMode();
+  toast(MAP_MODE_LABEL[S.mapMode]);
+  try{saveSettings();}catch(e){}
+}
+// inject the map-mode button into the tools tray, next to 3D / Satellite (same family)
+function _cwAddMapModeBtn(){
+  try{
+    if($("fabMapMode")) return;
+    const tray=$("moreFabs"); if(!tray) return;
+    const b=document.createElement("button");
+    b.className="fab"; b.id="fabMapMode"; b.setAttribute("aria-label","Map detail (Full / Clean / Minimal)");
+    b.textContent="◑"; b.title="Map detail: tap to cycle Full → Clean → Minimal";
+    b.onclick=cycleMapMode;
+    const after=$("fab3d")||$("fabSat"); if(after&&after.parentNode===tray) tray.insertBefore(b,after.nextSibling); else tray.appendChild(b);
+  }catch(e){}
 }
 function addMapLayers(){
   const a=ACCENT[S.themeNow];
@@ -1345,7 +1383,7 @@ function navTick(){
   $("nbGlyph").textContent=maneuverGlyph(cur);
   if(cur.exits){$("nbExit").textContent="Exit "+String(cur.exits).split(";")[0];$("nbExit").style.display="block";}
   else $("nbExit").style.display="none";
-  renderLanes(cur);
+  renderLanes(cur,dNext);
   $("hudDist").textContent=fmtDist(dNext);
   $("hudInstr").textContent=stepText(cur);
   $("hudSpeed").textContent=Math.round(S.speedMph);
@@ -1594,7 +1632,11 @@ function cwInjectFX(){
       // Nav banner: the Share/Map/HUD/End/mute buttons float absolutely at the top-right, so
       // reserve headroom for them — otherwise the freeway shield in the instruction row rides
       // up into the mute button (the M-10 overlap).
-      "#navbanner{padding-top:42px}";
+      "#navbanner{padding-top:42px}"+
+      // Minimal map mode: hazards collapse to small colored dots — no emoji, no glow (frost/
+      // cruiser included). Never touch transform (MapLibre uses it to position the marker).
+      "body.cw-minimal .hz{width:14px!important;height:14px!important;font-size:0!important;"+
+      "box-shadow:none!important;animation:none!important;border-radius:50%!important;opacity:.9}";
     document.head.appendChild(s);
   }catch(e){}
 }
@@ -2142,7 +2184,7 @@ setInterval(()=>{$("clockTime").textContent=new Date().toLocaleTimeString([],{ho
 
 
 /* ═══════════ v3: persistence · welcome · relock · tap-inspect · satellite 360 · speed limits ═══════════ */
-function saveSettings(){try{localStorage.setItem("cw",JSON.stringify({sb:S.sb,mpg:$("mpg").value,gas:$("gasPrice").value,theme:S.themeMode,saver:S.saver,alerts:S.audioAlerts,bump:S.bumpOn,heat:S.heatOn,units:S.units,voice:S.voiceOn,satKey:S.satKey}));}catch{}}
+function saveSettings(){try{localStorage.setItem("cw",JSON.stringify({sb:S.sb,mpg:$("mpg").value,gas:$("gasPrice").value,theme:S.themeMode,saver:S.saver,alerts:S.audioAlerts,bump:S.bumpOn,heat:S.heatOn,units:S.units,voice:S.voiceOn,satKey:S.satKey,mapMode:S.mapMode}));}catch{}}
 function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}");
   if(c.sb){S.sb=c.sb;$("sbUrl").value=c.sb.url||"";$("sbKey").value=c.sb.key||"";}
   if(c.mpg)$("mpg").value=c.mpg; if(c.gas)$("gasPrice").value=c.gas;
@@ -2153,6 +2195,7 @@ function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}")
   if(c.saver!==undefined)S.saver=c.saver;
   if(c.alerts!==undefined)S.audioAlerts=c.alerts;
   if(c.bump!==undefined)S.bumpOn=c.bump;
+  if(c.mapMode)S.mapMode=c.mapMode;
   if(c.units)S.units=c.units;
   if(c.voice!==undefined)S.voiceOn=c.voice;
   if(c.satKey){S.satKey=c.satKey;var sk=$("satKey");if(sk)sk.value=c.satKey;}}catch{}}
@@ -2769,10 +2812,17 @@ function maneuverGlyph(st){
   return "↑";
 }
 const LANE_GLYPH={straight:"↑",left:"←",right:"→","slight left":"↖","slight right":"↗","sharp left":"↰","sharp right":"↱",uturn:"⤴",merge:"↑",none:"↑"};
-function renderLanes(st){
-  const lanes=st.intersections&&st.intersections[0]&&st.intersections[0].lanes;
-  const row=$("laneRow");
-  if(!lanes||!lanes.length){row.style.display="none";return;}
+function _lanesForStep(idx){
+  const st=S.steps&&S.steps[idx]; if(!st||!st.intersections) return null;
+  for(const it of st.intersections){ if(it.lanes&&it.lanes.length) return it.lanes; }   // lanes can sit on any intersection of the step
+  return null;
+}
+function renderLanes(st,dNext){
+  const row=$("laneRow"); if(!row) return;
+  // OSRM may attach turn lanes to this step OR to the approach (previous step). Check both.
+  let lanes=_lanesForStep(S.stepIdx) || _lanesForStep(S.stepIdx-1);
+  // show lanes only as you approach the turn (~0.4 mi) — keeps the banner clean the rest of the time
+  if(!lanes||!lanes.length || (dNext!==undefined && dNext>650)){ row.style.display="none"; return; }
   row.innerHTML="";
   lanes.forEach(l=>{
     const s=document.createElement("span");
