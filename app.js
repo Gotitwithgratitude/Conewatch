@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v108";
+const APP_VERSION="v109";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1580,10 +1580,15 @@ function cwInjectFX(){
       "@keyframes cwCruiser{0%{box-shadow:0 0 8px 4px rgba(229,72,77,.60),0 0 20px 9px rgba(229,72,77,.28)}"+
       "50%{box-shadow:0 0 8px 4px rgba(59,130,246,.60),0 0 20px 9px rgba(59,130,246,.28)}"+
       "100%{box-shadow:0 0 8px 4px rgba(229,72,77,.60),0 0 20px 9px rgba(229,72,77,.28)}}"+
-      ".hz.hz-police{animation:cwCruiser 2.2s ease-in-out infinite}";
+      ".hz.hz-police{animation:cwCruiser 2.2s ease-in-out infinite}"+
+      // Nav banner: the Share/Map/HUD/End/mute buttons float absolutely at the top-right, so
+      // reserve headroom for them — otherwise the freeway shield in the instruction row rides
+      // up into the mute button (the M-10 overlap).
+      "#navbanner{padding-top:42px}";
     document.head.appendChild(s);
   }catch(e){}
 }
+try{ cwInjectFX(); }catch(e){}   // inject at load so the banner fix applies before any hazard renders
 function addHazardMarker(h){
   cwInjectFX();
   if(!h.id)h.id="h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
