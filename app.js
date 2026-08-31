@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v113";
+const APP_VERSION="v114";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -574,7 +574,7 @@ function fmtDur(s){
   const d=Math.floor(m/1440),h=Math.floor((m%1440)/60); return h?`${d} day${d>1?'s':''} ${h} hr`:`${d} day${d>1?'s':''}`;
 }
 function setMode(m){S.mode=m;document.querySelectorAll(".mode").forEach(x=>x.classList.toggle("on",x.dataset.mode===m));}
-function rushFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;return (S.mode==="car"&&((h>=7&&h<=9)||(h>=16&&h<=18.5)))?1.28:1;}
+function rushFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;return (S.mode==="car"&&((h>=7&&h<=9)||(h>=16&&h<=18.5)))?1.13:1;}
 
 /* ═══════════ live address autocomplete (debounced + cached + aborted) ═══════════ */
 const acCache=new Map(); let acAbort=null, acTimer=null;
