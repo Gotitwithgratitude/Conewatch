@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v105";
+const APP_VERSION="v106";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -211,9 +211,11 @@ let mapStyleTheme="dark";
 
 function heatFeatures(){
   const f=[];
-  // reported potholes/impacts weigh heavy
-  (S.hazards||[]).forEach(hz=>{ if(hz.type==="pothole"||hz.type==="debris"){ f.push({type:"Feature",properties:{w:Math.min(1,(hz.reports||1)/4)},geometry:{type:"Point",coordinates:[hz.lng,hz.lat]}}); } });
-  // plus this driver's own sensed roughness
+  // ROUGHNESS HEAT = road surface condition only. Potholes are the only reported hazard
+  // that belongs here; cones, closures, police, debris, ice, accidents each get their own
+  // visual language elsewhere, so the green→red heat always means "how rough is the road."
+  (S.hazards||[]).forEach(hz=>{ if(hz.type==="pothole"){ f.push({type:"Feature",properties:{w:Math.min(1,(hz.reports||1)/4)},geometry:{type:"Point",coordinates:[hz.lng,hz.lat]}}); } });
+  // plus this driver's own accelerometer-sensed roughness
   (roughPts||[]).forEach(p=>{ f.push({type:"Feature",properties:{w:p.s||0.4},geometry:{type:"Point",coordinates:[p.lng,p.lat]}}); });
   return {type:"FeatureCollection",features:f};
 }
