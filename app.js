@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v107";
+const APP_VERSION="v108";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1574,7 +1574,13 @@ function cwInjectFX(){
     s.textContent=
       "@keyframes cwFrost{0%,100%{box-shadow:0 0 7px 3px rgba(90,200,250,.42),0 0 16px 7px rgba(130,215,255,.20)}"+
       "50%{box-shadow:0 0 11px 5px rgba(90,200,250,.60),0 0 24px 11px rgba(130,215,255,.32)}}"+
-      ".hz.hz-ice{animation:cwFrost 3.4s ease-in-out infinite}";
+      ".hz.hz-ice{animation:cwFrost 3.4s ease-in-out infinite}"+
+      // Police = a slow, smooth red↔blue cross-fade under the marker — evokes cruiser lights
+      // without ever strobing. Colors swap glow dominance each half-cycle, feathered + low-opacity.
+      "@keyframes cwCruiser{0%{box-shadow:0 0 8px 4px rgba(229,72,77,.60),0 0 20px 9px rgba(229,72,77,.28)}"+
+      "50%{box-shadow:0 0 8px 4px rgba(59,130,246,.60),0 0 20px 9px rgba(59,130,246,.28)}"+
+      "100%{box-shadow:0 0 8px 4px rgba(229,72,77,.60),0 0 20px 9px rgba(229,72,77,.28)}}"+
+      ".hz.hz-police{animation:cwCruiser 2.2s ease-in-out infinite}";
     document.head.appendChild(s);
   }catch(e){}
 }
@@ -1601,6 +1607,16 @@ function addHazardMarker(h){
     // Ice gets the cold frost aura (glow only, gentle pulse) — NOT the hard ring the other
     // hazards use. Leave box-shadow to the .hz-ice CSS so the breathing animation drives it.
     el.classList.add("hz-ice");
+    el.style.background=m.color;
+    const sc=hazScale(h);
+    const px=Math.round(30*sc);
+    el.style.width=px+"px"; el.style.height=px+"px";
+    el.style.fontSize=Math.round(15*sc)+"px";
+    el.dataset.basePx=px;
+  } else if(h.type==="police"){
+    // Police gets the red↔blue cruiser cross-fade (glow only). Leave box-shadow to the
+    // .hz-police CSS so the animation drives the color swap.
+    el.classList.add("hz-police");
     el.style.background=m.color;
     const sc=hazScale(h);
     const px=Math.round(30*sc);
