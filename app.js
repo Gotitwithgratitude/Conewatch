@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v115";
+const APP_VERSION="v117";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1134,7 +1134,7 @@ async function fetchRoute(silent){
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
     if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
     const r=data.routes[0];
-    S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
+    S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     try{refreshRouteCondition();}catch(e){}
@@ -1288,6 +1288,7 @@ async function startNavigation(){
   try{$("confirmBar").style.display="none";}catch(e){}   // clean hand-off — no overlapping cards
   closeSheets();
   $("navbanner").style.display="block";
+  S.peekIdx=null; try{ _peekChrome(); }catch(e){}   // arm the ‹ › step-preview chrome
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
   try{cameraFollow();}catch(e){} try{navTick();}catch(e){} try{loadWeather();}catch(e){}
@@ -1369,21 +1370,9 @@ function navTick(){
   const cur=S.steps[S.stepIdx];
   const [lng,lat]=cur.maneuver.location;
   const dNext=distM(S.pos,{lat,lng});
-  $("nbDist").textContent=fmtDist(dNext);
-  const destBig=cur.destinations?String(cur.destinations).split(",")[0].split(";")[0].trim():null;
-  $("nbInstr").textContent=destBig||stepText(cur);
-  const ref=cur.ref?String(cur.ref).split(";")[0].trim():"";
-  if(ref){$("nbRef").innerHTML=shieldHTML(ref);$("nbRef").style.cssText="display:flex;background:none;padding:0";}else $("nbRef").style.display="none";
-  const rn=cur.name||"";
-  if(rn){$("roadName").textContent=rn;
-    if(ref){$("roadRef").innerHTML=shieldHTML(ref);$("roadRef").style.cssText="display:flex;background:none;padding:0;min-width:auto;height:auto";}
-    else $("roadRef").style.display="none";
-    $("roadPill").style.display="flex";
-  } else $("roadPill").style.display="none";
-  $("nbGlyph").textContent=maneuverGlyph(cur);
-  if(cur.exits){$("nbExit").textContent="Exit "+String(cur.exits).split(";")[0];$("nbExit").style.display="block";}
-  else $("nbExit").style.display="none";
-  renderLanes(cur,dNext);
+  // If a peeked step has been passed while previewing, drop back to live.
+  if(S.peekIdx!=null && S.stepIdx>=S.peekIdx) clearPeek();
+  if(S.peekIdx==null) paintManeuver(cur, fmtDist(dNext), S.stepIdx, dNext);
   $("hudDist").textContent=fmtDist(dNext);
   $("hudInstr").textContent=stepText(cur);
   $("hudSpeed").textContent=Math.round(S.speedMph);
@@ -1495,7 +1484,7 @@ function hazardsBlockingAhead(){
   const co=S.route.geometry.coordinates; if(!co||co.length<2)return [];
   let ni=0,nd=Infinity; for(let i=0;i<co.length;i++){const d=distM(S.pos,{lat:co[i][1],lng:co[i][0]});if(d<nd){nd=d;ni=i;}}
   const ahead=[]; let acc=0;
-  for(let i=ni;i<co.length-1;i++){ ahead.push(co[i]); acc+=distM({lat:co[i][1],lng:co[i][0]},{lat:co[i+1][1],lng:co[i+1][0]}); if(acc>1800)break; }
+  for(let i=ni;i<co.length-1;i++){ ahead.push(co[i]); acc+=distM({lat:co[i][1],lng:co[i][0]},{lat:co[i+1][1],lng:co[i+1][0]}); if(acc>3000)break; }   // look ~3km ahead (was 1.8km) — more time to reroute smoothly
   const BLOCK=["accident","closure","road_closure","cone","cones","construction","debris","flooding"];
   return S.hazards.filter(h=>{
     if(!BLOCK.includes(String(h.type||"").toLowerCase()))return false;
@@ -1511,12 +1500,17 @@ async function rerouteAvoiding(avoid){
     const pts=[S.pos,...S.stops,S.dest].map(p=>`${p.lng},${p.lat}`).join(";");
     const data=await osrmFetch(pts,true);
     if(data.code==="Ok"&&data.routes&&data.routes.length){
-      const clear=data.routes.filter(rt=>!avoid.some(h=>routeNearPoint(rt.geometry.coordinates,h,45)));
-      const r=clear[0]||data.routes[0];
-      S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.offRouteCount=0;S.alerted.clear();
-      try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch(e){}
-      if(clear.length){ speak("Reported closure ahead. Rerouting around it."); toast("↩ Rerouted around a reported blockage",2800); }
-      else { speak("Rerouting."); toast("Rerouting…",1600); }
+      if(clear.length){
+        const r=clear[0];
+        S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
+        try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch(e){}
+        speak("Reported closure ahead. Rerouting around it."); toast("↩ Rerouted around a reported blockage",2800);
+      } else {
+        // No alternative avoids it — you're likely right on top of it. Don't silently keep the
+        // blocked route pretending we rerouted; tell the driver the truth so they can react.
+        speak("Heads up — reported closure ahead and no clear detour. Proceed with caution.");
+        toast("⚠️ Closure ahead — no clear detour found",3200);
+      }
     }
   }catch(e){}
   S.rerouting=false;
@@ -2796,6 +2790,68 @@ window.addEventListener("popstate",()=>{histOpen=false;closeAllUI();});
 
 
 /* ═══════════ v6: Apple-style driving view — maneuver glyphs + lane guidance ═══════════ */
+// Factored banner paint — used for the live step AND for peek-ahead previews. Identical
+// output to the old inline code when called with the live step, so normal nav is unchanged.
+function paintManeuver(step, distText, idx, gateDist){
+  $("nbDist").textContent=distText;
+  const destBig=step.destinations?String(step.destinations).split(",")[0].split(";")[0].trim():null;
+  $("nbInstr").textContent=destBig||stepText(step);
+  const ref=step.ref?String(step.ref).split(";")[0].trim():"";
+  if(ref){$("nbRef").innerHTML=shieldHTML(ref);$("nbRef").style.cssText="display:flex;background:none;padding:0";}else $("nbRef").style.display="none";
+  const rn=step.name||"";
+  if(rn){$("roadName").textContent=rn;
+    if(ref){$("roadRef").innerHTML=shieldHTML(ref);$("roadRef").style.cssText="display:flex;background:none;padding:0;min-width:auto;height:auto";}
+    else $("roadRef").style.display="none";
+    $("roadPill").style.display="flex";
+  } else $("roadPill").style.display="none";
+  $("nbGlyph").textContent=maneuverGlyph(step);
+  if(step.exits){$("nbExit").textContent="Exit "+String(step.exits).split(";")[0];$("nbExit").style.display="block";}
+  else $("nbExit").style.display="none";
+  renderLanes(step, gateDist, idx);
+}
+// ── Peek-ahead: step through upcoming maneuvers with ‹ › then auto-return to the live step ──
+let _peekTimer=null;
+function _peekChrome(){
+  const bn=$("navbanner"); if(!bn) return null;
+  let c=$("peekChrome");
+  if(!c){
+    c=document.createElement("div"); c.id="peekChrome";
+    c.innerHTML=
+      '<button id="peekPrev" aria-label="Previous step" style="position:absolute;left:-2px;top:50%;transform:translateY(-50%);width:34px;height:44px;border:none;background:transparent;color:var(--nav-accent);font-size:26px;font-weight:800;opacity:.85">‹</button>'+
+      '<button id="peekNext" aria-label="Next step" style="position:absolute;right:-2px;top:50%;transform:translateY(-50%);width:34px;height:44px;border:none;background:transparent;color:var(--nav-accent);font-size:26px;font-weight:800;opacity:.85">›</button>'+
+      '<div id="peekTag" style="display:none;position:absolute;left:50%;bottom:-11px;transform:translateX(-50%);background:var(--nav-accent);color:#08131f;font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 10px;border-radius:20px;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,.3)">PREVIEW · tap for live</div>';
+    bn.appendChild(c);
+    c.querySelector("#peekNext").onclick=(e)=>{ e.stopPropagation(); peekStep(1); };
+    c.querySelector("#peekPrev").onclick=(e)=>{ e.stopPropagation(); peekStep(-1); };
+    c.querySelector("#peekTag").onclick=(e)=>{ e.stopPropagation(); clearPeek(); };
+  }
+  return c;
+}
+function peekStep(dir){
+  if(!S.navigating||!S.steps||!S.steps.length) return;
+  const base=(S.peekIdx==null)?S.stepIdx:S.peekIdx;
+  peekTo(base+dir);
+}
+function peekTo(i){
+  if(!S.steps||!S.steps.length) return;
+  const maxI=S.steps.length-1;
+  if(i>maxI) i=maxI;
+  if(i<=S.stepIdx){ clearPeek(); return; }          // back at/before the live step → resume live
+  S.peekIdx=i;
+  let cum=0;
+  try{ const loc=S.steps[S.stepIdx].maneuver.location; cum=S.pos?distM(S.pos,{lat:loc[1],lng:loc[0]}):0; }catch(e){}
+  for(let k=S.stepIdx;k<i;k++) cum+=(S.steps[k].distance||0);
+  paintManeuver(S.steps[i], "in "+fmtDist(cum), i, undefined);   // undefined gate → always show its lanes
+  const c=_peekChrome(); if(c){ const t=c.querySelector("#peekTag"); if(t)t.style.display="block"; }
+  const bn=$("navbanner"); if(bn) bn.style.outline="2px solid var(--nav-accent)";
+  clearTimeout(_peekTimer); _peekTimer=setTimeout(clearPeek,6000);   // auto-return after 6s idle
+}
+function clearPeek(){
+  S.peekIdx=null; clearTimeout(_peekTimer);
+  const c=$("peekChrome"); if(c){ const t=c.querySelector("#peekTag"); if(t)t.style.display="none"; }
+  const bn=$("navbanner"); if(bn) bn.style.outline="";
+  // the live loop repaints the banner from the current step on its next frame
+}
 function maneuverGlyph(st){
   const m=st.maneuver,mod=m.modifier||"";
   if(m.type==="arrive")return "⚑";
@@ -2817,10 +2873,11 @@ function _lanesForStep(idx){
   for(const it of st.intersections){ if(it.lanes&&it.lanes.length) return it.lanes; }   // lanes can sit on any intersection of the step
   return null;
 }
-function renderLanes(st,dNext){
+function renderLanes(st,dNext,idx){
   const row=$("laneRow"); if(!row) return;
+  const at=(idx==null?S.stepIdx:idx);
   // OSRM may attach turn lanes to this step OR to the approach (previous step). Check both.
-  let lanes=_lanesForStep(S.stepIdx) || _lanesForStep(S.stepIdx-1);
+  let lanes=_lanesForStep(at) || _lanesForStep(at-1);
   // show lanes only as you approach the turn (~0.4 mi) — keeps the banner clean the rest of the time
   if(!lanes||!lanes.length || (dNext!==undefined && dNext>650)){ row.style.display="none"; return; }
   row.innerHTML="";
