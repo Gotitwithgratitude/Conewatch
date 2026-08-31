@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v109";
+const APP_VERSION="v111";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -154,6 +154,16 @@ function hazPopupHTML(h){
     `</div></div>`;
 }
 function refreshHazPopup(h){ try{ if(h._marker&&h._marker.getPopup())h._marker.getPopup().setHTML(hazPopupHTML(h)); }catch(e){} }
+// One popup at a time: when any popup opens, close whatever was open before it. Stops the
+// hazard + inspect popups from stacking on top of each other.
+let _cwOpenPopup=null;
+function trackPopup(p){
+  try{
+    p.on("open",()=>{ if(_cwOpenPopup && _cwOpenPopup!==p){ try{_cwOpenPopup.remove();}catch(e){} } _cwOpenPopup=p; });
+    p.on("close",()=>{ if(_cwOpenPopup===p) _cwOpenPopup=null; });
+  }catch(e){}
+  return p;
+}
 // confirm = "still here": bumps count AND freshens the timer (crowd feedback keeps live reports alive, lets stale ones expire)
 window.cwConfirm=function(id){
   const h=S.hazards.find(x=>x.id===id); if(!h)return;
@@ -1349,14 +1359,14 @@ function navTick(){
   const _fast=(S.speedMph||0)>45;
   const _isExit=/ramp|exit|fork|merge/.test((cur.maneuver&&cur.maneuver.type)||"");
   const _lbl=(cur.exits?("exit "+String(cur.exits).split(";")[0]+", "):"")+stepText(cur);
-  if(S.annStage<3 && dNext<75){                            // final: act now
+  if(S.annStage<3 && dNext < (_fast?120:55)){            // final "act now": ~180ft city, ~400ft hwy
     S.annStage=3; turnCue(2); speak(stepText(cur));
-  } else if(S.annStage<2 && (_secs<22 || dNext<380)){      // ~quarter mile at speed
+  } else if(S.annStage<2 && _secs<15 && dNext<800){       // main heads-up: ~15s lead, capped ~0.5mi
     S.annStage=2; turnCue(2); speak("In "+spokenDist(dNext)+", "+_lbl);
   } else if(S.annStage<1 && _fast && (_secs<60 || dNext<1600) && (_isExit||dNext<1600)){
-    S.annStage=1; turnCue(1); speak("In "+spokenDist(dNext)+", "+_lbl);   // ~1 mile heads-up
+    S.annStage=1; turnCue(1); speak("In "+spokenDist(dNext)+", "+_lbl);   // ~1 mile heads-up (highway)
   } else if(S.annStage<0.5 && _fast && _isExit && _secs<130){
-    S.annStage=0.5; speak("In "+spokenDist(dNext)+", "+_lbl);             // ~2 mile early warning
+    S.annStage=0.5; speak("In "+spokenDist(dNext)+", "+_lbl);             // ~2 mile early warning (exits)
   }
 
   // remaining = distance to the next maneuver + every step AFTER it (the current step was being
@@ -1640,7 +1650,7 @@ function addHazardMarker(h){
   }
   el.textContent=m.emoji;
   const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
-    .setPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h)))
+    .setPopup(trackPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h))))
     .addTo(map);
   hzMarkers.push(mk); h._marker=mk;
 }
@@ -2295,7 +2305,7 @@ function bindInspect(){
           <button class="ipb" data-a="sat" style="background:#1D6EF2;color:#fff;border:none;border-radius:12px;padding:6px 12px;font-size:12px">🛰 360°</button>
         </div>`;
       if(inspectPopup)inspectPopup.remove();
-      inspectPopup=new maplibregl.Popup({offset:10,maxWidth:"270px"}).setLngLat([lng,lat]).setDOMContent(div).addTo(map);
+      inspectPopup=trackPopup(new maplibregl.Popup({offset:10,maxWidth:"270px"}).setLngLat([lng,lat]).setDOMContent(div)).addTo(map);
       div.querySelectorAll(".ipb").forEach(b=>b.onclick=()=>{
         inspectPopup.remove();
         if(b.dataset.a==="go")setDestination({lat,lng},name);
