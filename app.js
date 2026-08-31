@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v104";
+const APP_VERSION="v105";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -491,12 +491,24 @@ function _projPointToSeg(plng,plat,alng,alat,blng,blat){
 function snapToRoute(pt){
   const co = S.route && S.route.geometry && S.route.geometry.coordinates;
   if(!co || co.length<2) return null;
+  // Score each segment by distance, but on divided/parallel roads several segments are
+  // near — so add a penalty when a segment's heading disagrees with the driver's course.
+  // This keeps the snap on YOUR carriageway instead of the oncoming one, which is what
+  // used to fake a ~180° heading divergence and trigger a false "off route".
+  const hasCourse = (S.course!==null && !isNaN(S.course) && (S.speedMph||0)>4);
   let best=null;
   for(let i=0;i<co.length-1;i++){
     const a=co[i], b=co[i+1];
     const q=_projPointToSeg(pt.lng,pt.lat,a[0],a[1],b[0],b[1]);
     const d=distM(q,pt);
-    if(!best||d<best.dist){ best={dist:d,lat:q.lat,lng:q.lng,a:a,b:b}; }
+    let score=d;
+    if(hasCourse){
+      const segB=bearing({lat:a[1],lng:a[0]},{lat:b[1],lng:b[0]});
+      const hd=Math.abs(((S.course-segB+540)%360)-180);   // 0=same way, 180=opposite
+      // only nudge, don't override: up to ~25m of penalty for a fully-opposed segment
+      score += (hd/180)*25;
+    }
+    if(!best||score<best.score){ best={score:score,dist:d,lat:q.lat,lng:q.lng,a:a,b:b}; }
   }
   if(best){ best.bearing=bearing({lat:best.a[1],lng:best.a[0]},{lat:best.b[1],lng:best.b[0]}); }
   return best;
@@ -1409,7 +1421,9 @@ function navTick(){
       }
     }catch(e){}
     if(dR>thresh || turnedOff){
-      const need=(dR>130||turnedOff)?1:2;          // far off, or clearly turned away → reroute now
+      // Distance far off → react fast (1-2 frames). Heading-only ("turnedOff") needs 2
+      // sustained frames so one GPS blip on a divided road can't fake a wrong turn.
+      const need = (dR>130) ? 1 : (turnedOff && dR<=thresh ? 2 : 2);
       if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>7000){
         S.offRouteCount=0;S.lastReroute=Date.now();
         toast("Off route — rerouting…",1400);speak("Rerouting.");fetchRoute(true);
