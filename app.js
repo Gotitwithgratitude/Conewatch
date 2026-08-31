@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v103";
+const APP_VERSION="v104";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1059,9 +1059,14 @@ async function fetchRoute(silent){
   }
   if(!navigator.onLine){ if(!silent)toast("Offline — showing your saved route. It stays active.",3200); return; }
   S.rerouting=true; S._reroutingAt=Date.now();
+  // During active turn-by-turn, a reroute MUST start from where you are now — never the
+  // original planned origin. Using S.origin on a reroute sent drivers back toward their
+  // start point (the "rerouting the wrong direction" bug). Planning (not navigating) still
+  // honors an explicitly chosen start.
+  const _startPt=(S.navigating||silent)?S.pos:(S.origin||S.pos);
   try{
     const data=await Promise.race([
-      routeFetch([(S.origin||S.pos),...S.stops,S.dest]),
+      routeFetch([_startPt,...S.stops,S.dest]),
       new Promise(res=>setTimeout(()=>res({code:"Timeout"}),18000))     // never wait forever
     ]);
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
