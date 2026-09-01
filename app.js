@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v117";
+const APP_VERSION="v121";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -226,8 +226,10 @@ function heatFeatures(){
   // that belongs here; cones, closures, police, debris, ice, accidents each get their own
   // visual language elsewhere, so the green→red heat always means "how rough is the road."
   (S.hazards||[]).forEach(hz=>{ if(hz.type==="pothole"){ f.push({type:"Feature",properties:{w:Math.min(1,(hz.reports||1)/4)},geometry:{type:"Point",coordinates:[hz.lng,hz.lat]}}); } });
-  // plus this driver's own accelerometer-sensed roughness
-  (roughPts||[]).forEach(p=>{ f.push({type:"Feature",properties:{w:p.s||0.4},geometry:{type:"Point",coordinates:[p.lng,p.lat]}}); });
+  // plus this driver's own accelerometer-sensed roughness — recent only (last ~21 days), so
+  // stale over-logged points age out instead of permanently painting the whole route.
+  const _cut=Date.now()-21*864e5;
+  (roughPts||[]).forEach(p=>{ if((p.t||0)>=_cut) f.push({type:"Feature",properties:{w:p.s||0.4},geometry:{type:"Point",coordinates:[p.lng,p.lat]}}); });
   return {type:"FeatureCollection",features:f};
 }
 function refreshHeat(){ try{ if(map.getSource("rough"))map.getSource("rough").setData(heatFeatures()); }catch(e){} }
@@ -235,10 +237,10 @@ function ensureHeatLayer(){
   if(!map.getSource("rough"))map.addSource("rough",{type:"geojson",data:heatFeatures()});
   if(!map.getLayer("rough-heat"))map.addLayer({id:"rough-heat",type:"heatmap",source:"rough",maxzoom:18,paint:{
     "heatmap-weight":["get","w"],
-    "heatmap-intensity":["interpolate",["linear"],["zoom"],10,1,18,3],
+    "heatmap-intensity":["interpolate",["linear"],["zoom"],10,0.6,18,2],
     "heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(0,0,0,0)",0.2,"#2ecc71",0.45,"#f1c40f",0.7,"#e67e22",1,"#e74c3c"],
-    "heatmap-radius":["interpolate",["linear"],["zoom"],10,12,16,34],
-    "heatmap-opacity":0.75
+    "heatmap-radius":["interpolate",["linear"],["zoom"],10,8,16,26],
+    "heatmap-opacity":0.7
   }});
 }
 function toggleHeat(){
@@ -492,6 +494,7 @@ function onPos(p){
   $("rsLoc").textContent=`You are at ${lat.toFixed(5)}, ${lng.toFixed(5)} (±${Math.round(accuracy)} m)`;
   $("sosCoords").textContent=`${lat.toFixed(5)}, ${lng.toFixed(5)}`;
   if(S.navigating) navTick();
+  try{ healRoughness(); }catch(e){}   // smooth re-drives heal old/false roughness points
 }
 function onPosErr(e){
   const msgs={1:"Location denied — enable it in browser settings. (Previews often block GPS; the deployed HTTPS site works.)",2:"Position unavailable — move near a window.",3:"GPS timeout — retrying…"};
@@ -1289,6 +1292,7 @@ async function startNavigation(){
   closeSheets();
   $("navbanner").style.display="block";
   S.peekIdx=null; try{ _peekChrome(); }catch(e){}   // arm the ‹ › step-preview chrome
+  try{ if(typeof wireBannerSwipe==="function") wireBannerSwipe(); }catch(e){}
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
   try{cameraFollow();}catch(e){} try{navTick();}catch(e){} try{loadWeather();}catch(e){}
@@ -1450,6 +1454,21 @@ function navTick(){
   if(!S.remoteStart && acc<90 && navigator.onLine){
     const thresh=Math.max(45,acc*2);
     const dR=minDistToRoute();
+    // Interchange ambiguity guard: on stacked ramps (I-375/Chrysler etc.) several route
+    // vertices sit within a few meters of each other, so the position can snap to the wrong
+    // parallel ramp and fake a "wrong turn." When the route folds back near itself like that,
+    // hold off rerouting for a beat and let the ambiguity resolve — rerouting here is what sent
+    // drivers the wrong way through downtown interchanges.
+    let ambiguous=false;
+    try{
+      const co=S.route.geometry.coordinates;
+      if(co&&co.length>2){
+        let near=0;
+        for(let i=0;i<co.length;i+=2){ if(distM(S.pos,{lat:co[i][1],lng:co[i][0]})<70) near++; if(near>=2)break; }
+        // 2+ separate route stretches within 70m = folded/parallel geometry → ambiguous snap
+        ambiguous = near>=2 && dR<70;
+      }
+    }catch(e){}
     // A WRONG TURN shows up as heading divergence long before distance does — catch it immediately.
     let turnedOff=false;
     try{
@@ -1459,9 +1478,10 @@ function navTick(){
         if(diff>55 && dR>20) turnedOff=true;      // pointing well away from the route = you left it
       }
     }catch(e){}
-    if(dR>thresh || turnedOff){
+    if((dR>thresh || turnedOff) && !(ambiguous && dR<130)){
       // Distance far off → react fast (1-2 frames). Heading-only ("turnedOff") needs 2
-      // sustained frames so one GPS blip on a divided road can't fake a wrong turn.
+      // sustained frames so one GPS blip on a divided road can't fake a wrong turn. And inside
+      // an ambiguous interchange we only reroute if truly far off (dR>130), never on heading alone.
       const need = (dR>130) ? 1 : (turnedOff && dR<=thresh ? 2 : 2);
       if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>7000){
         S.offRouteCount=0;S.lastReroute=Date.now();
@@ -1915,20 +1935,26 @@ async function requestMotion(){
   window.addEventListener("devicemotion",onMotion);
 }
 // impact detection → road-roughness logging + pothole prompt (the road-quality moat)
-let lastBump=0;
+let lastBump=0, _accBaseline=9.8;
 function onMotion(e){
   if(!S.bumpOn||S.speedMph<8)return;
   const a=e.accelerationIncludingGravity;if(!a)return;
   const mag=Math.sqrt((a.x||0)**2+(a.y||0)**2+(a.z||0)**2);
-  // baseline gravity ~9.8; anything well above = a jolt. Scale to a 0..1 roughness score.
-  const jolt=mag-9.8;
-  if(jolt>9 && S.pos){
-    // silently log every real jolt as a road-roughness point (feeds the heatmap) — no prompt, no spam
-    roughLog(S.pos.lat,S.pos.lng,Math.min(1,(jolt-9)/22));
+  // Track a slow running baseline (the phone's resting orientation ≈ 1g in whatever direction
+  // it's mounted). A real pothole is a SPIKE above that baseline — measuring the spike instead
+  // of raw magnitude makes detection independent of how the phone is sitting, and kills the
+  // constant low-level triggering from seams and freeway ripple.
+  _accBaseline = _accBaseline*0.95 + mag*0.05;      // EMA, ~1-2s time constant
+  const jolt = mag - _accBaseline;                  // deviation from baseline = the actual jolt
+  if(jolt>_recentPeakJolt) _recentPeakJolt=jolt;    // rolling peak, decayed each GPS fix (for self-healing)
+  if(jolt>7.5 && S.pos){
+    // real jolt → log as a road-roughness point (feeds the heatmap). Raised from 4 → 7.5 so
+    // only genuine rough spots plot, not every joint — this also stops the heatmap flooding.
+    roughLog(S.pos.lat,S.pos.lng,Math.min(1,(jolt-7.5)/20));
   }
-  if(mag>26&&Date.now()-lastBump>8000){
+  if(jolt>15 && Date.now()-lastBump>15000){         // raised 16→~big hit; cooldown 8s→15s
     lastBump=Date.now();
-    // strong hit → offer to report a pothole (severity scales with the impact)
+    // strong hit → offer to report a pothole
     $("bumpBar").style.display="flex";
     beep(520,.2);if(navigator.vibrate)navigator.vibrate(60);
     setTimeout(()=>{$("bumpBar").style.display="none";},9000);
@@ -1936,6 +1962,36 @@ function onMotion(e){
 }
 // rolling road-roughness log (kept local + drawn as a heatmap; recent points only)
 let roughPts=[]; try{ roughPts=JSON.parse(localStorage.getItem("cw_rough")||"[]"); }catch(e){}
+// ── Self-healing road sensor ──────────────────────────────────────────────────
+// As you re-drive a road, smooth passes are a vote that the surface is fine now (pothole
+// filled, or the original point was noise). Each smooth pass GENTLY lowers a nearby point's
+// weight; a fresh jolt there re-arms it. Points that fade below a floor are dropped, so the
+// heatmap becomes a living consensus of CURRENT road state — and old over-logged data clears
+// itself as you drive familiar routes.
+let _recentPeakJolt=0;
+function healRoughness(){
+  if(!S.pos||!roughPts.length||(S.speedMph||0)<8) return;
+  const peak=_recentPeakJolt; _recentPeakJolt=0;    // was this stretch just driven smoothly?
+  const smooth = peak < 5.0;
+  let changed=false; const drop=[];
+  for(let i=0;i<roughPts.length;i++){
+    const p=roughPts[i];
+    if(distM(S.pos,{lat:p.lat,lng:p.lng})>28) continue;   // only points we're passing over
+    if(smooth){
+      p.s=(p.s||0.4)-0.12;                          // gentle: ~3-4 clean passes to fade a point out
+      if(p.s<=0.12) drop.push(i);                   // faded below the floor → heal it away
+      changed=true;
+    } else if(peak>7.5){
+      p.s=Math.min(1,(p.s||0.4)+0.15); p.t=Date.now();   // still rough → re-arm (real potholes never heal)
+      changed=true;
+    }
+  }
+  if(drop.length){ for(let k=drop.length-1;k>=0;k--) roughPts.splice(drop[k],1); }
+  if(changed){
+    try{ localStorage.setItem("cw_rough",JSON.stringify(roughPts.slice(-1500))); }catch(e){}
+    if(S.heatOn) refreshHeat();
+  }
+}
 function roughLog(lat,lng,score){
   roughPts.push({lat,lng,s:score,t:Date.now()});
   if(roughPts.length>1500)roughPts=roughPts.slice(-1500);   // cap
@@ -2852,6 +2908,27 @@ function clearPeek(){
   const bn=$("navbanner"); if(bn) bn.style.outline="";
   // the live loop repaints the banner from the current step on its next frame
 }
+// Swipe the instruction banner to step through upcoming maneuvers (same engine as the ‹ ›
+// buttons). Google convention: swipe LEFT = look ahead, swipe RIGHT = back. Bound to the
+// banner only so it never fights the map; ignores taps, button presses, and vertical scrolls.
+function wireBannerSwipe(){
+  const bn=$("navbanner"); if(!bn||bn._swipeWired) return; bn._swipeWired=true;
+  let x0=0,y0=0,active=false;
+  bn.addEventListener("touchstart",(e)=>{
+    if(!S.navigating) { active=false; return; }
+    if(e.target.closest("button")) { active=false; return; }   // let ‹ › and Share/HUD/End work
+    const t=e.touches&&e.touches[0]; if(!t){active=false;return;}
+    x0=t.clientX; y0=t.clientY; active=true;
+  },{passive:true});
+  bn.addEventListener("touchend",(e)=>{
+    if(!active) return; active=false;
+    const t=e.changedTouches&&e.changedTouches[0]; if(!t) return;
+    const dx=t.clientX-x0, dy=t.clientY-y0;
+    if(Math.abs(dx)<50 || Math.abs(dx)<Math.abs(dy)*1.4) return;  // needs a real, mostly-horizontal swipe
+    peekStep(dx<0 ? 1 : -1);   // swipe left (dx<0) → ahead; swipe right → back
+  },{passive:true});
+}
+try{ wireBannerSwipe(); }catch(e){}
 function maneuverGlyph(st){
   const m=st.maneuver,mod=m.modifier||"";
   if(m.type==="arrive")return "⚑";
