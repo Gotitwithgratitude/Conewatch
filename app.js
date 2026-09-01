@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v122";
+const APP_VERSION="v123";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1295,7 +1295,8 @@ async function startNavigation(){
   try{$("confirmBar").style.display="none";}catch(e){}   // clean hand-off — no overlapping cards
   closeSheets();
   $("navbanner").style.display="block";
-  S.peekIdx=null; try{ _peekChrome(); }catch(e){}   // arm the ‹ › step-preview chrome
+  S.peekIdx=null; S._bnFull=true; try{ $("navbanner").classList.remove("nb-collapsed"); }catch(e){}
+  try{ _peekChrome(); }catch(e){}   // arm the ‹ › step-preview chrome
   try{ if(typeof wireBannerSwipe==="function") wireBannerSwipe(); }catch(e){}
   $("navPill").style.display="flex";
   $("roadPill").style.display="flex";
@@ -1315,7 +1316,7 @@ function endNavigation(){
   document.body.classList.remove("driving"); layout();
   try{if(document.fullscreenElement&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});}catch{}
   hideRelock();
-  $("navbanner").style.display="none";$("navPill").style.display="none";$("roadPill").style.display="none";$("hud").style.display="none";
+  $("navbanner").classList.remove("nb-collapsed");$("navbanner").style.display="none";$("navPill").style.display="none";$("roadPill").style.display="none";$("hud").style.display="none";
   releaseWakeLock();
   clearInterval(limitTimer); $("limitBadge").style.display="none"; S.limit=null;
   // Clear the trip itself — the line, destination pin and route state used to stay on the map
@@ -1650,7 +1651,16 @@ function cwInjectFX(){
       // Nav banner: the Share/Map/HUD/End/mute buttons float absolutely at the top-right, so
       // reserve headroom for them — otherwise the freeway shield in the instruction row rides
       // up into the mute button (the M-10 overlap).
-      "#navbanner{padding-top:42px}"+
+      "#navbanner{padding-top:42px;transition:padding .18s ease}"+
+      // Compact "cruising" state (no turn imminent): hide non-critical rows so the driver can
+      // see the map ahead. Expands automatically as a turn nears.
+      "#navbanner.nb-collapsed{padding:12px 14px 10px}"+
+      "#navbanner.nb-collapsed .nb-btns{display:none}"+
+      "#navbanner.nb-collapsed #laneRow{display:none!important}"+
+      "#navbanner.nb-collapsed .nb-meta{display:none}"+
+      "#navbanner.nb-collapsed #nbExit{display:none!important}"+
+      "#navbanner.nb-collapsed .nb-instr{font-size:17px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"+
+      "#navbanner.nb-collapsed #nbGlyph{font-size:26px}"+
       // Minimal map mode: hazards collapse to small colored dots — no emoji, no glow (frost/
       // cruiser included). Never touch transform (MapLibre uses it to position the marker).
       "body.cw-minimal .hz{width:14px!important;height:14px!important;font-size:0!important;"+
@@ -2869,6 +2879,19 @@ function paintManeuver(step, distText, idx, gateDist){
   if(step.exits){$("nbExit").textContent="Exit "+String(step.exits).split(";")[0];$("nbExit").style.display="block";}
   else $("nbExit").style.display="none";
   renderLanes(step, gateDist, idx);
+  // Auto-collapse when no turn is imminent so the driver sees the map ahead. Hysteresis: expand
+  // under ~0.28mi, collapse back over ~0.38mi. Never collapse while peeking (preview needs full).
+  try{
+    const bn=$("navbanner"); if(bn){
+      if(gateDist===undefined || S.peekIdx!=null){ bn.classList.remove("nb-collapsed"); }
+      else {
+        const mi=gateDist/1609.34;
+        if(mi<0.28) S._bnFull=true;
+        else if(mi>0.38) S._bnFull=false;
+        bn.classList.toggle("nb-collapsed", !S._bnFull);
+      }
+    }
+  }catch(e){}
 }
 // ── Peek-ahead: step through upcoming maneuvers with ‹ › then auto-return to the live step ──
 let _peekTimer=null;
