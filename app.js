@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v123";
+const APP_VERSION="v125";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -146,6 +146,7 @@ function hazPopupHTML(h){
   const perm=HAZ_TTL[h.type]===0;
   const goneLabel=perm?"✗ Fixed":"✗ Gone";
   return `<div style="min-width:150px"><b style="color:${m.color}">${m.emoji} ${m.label}</b><br>`+
+    (laneText(h.lanes)?`<span style="font-size:12px;font-weight:700;color:${m.color}">🛣 ${laneText(h.lanes)}</span><br>`:``)+
     `<span style="font-size:12px">${h.note||"Driver report"}</span><br>`+
     `<span style="font-size:11px;opacity:.6">${h.reports||1} report${(h.reports||1)>1?"s":""} · ${_ago(h.ts)}</span>`+
     `<div style="display:flex;gap:6px;margin-top:8px">`+
@@ -1605,9 +1606,10 @@ function hazardAlert(h,stage){
     return;
   }
   // close now: sharper double tone + short spoken cue
-  toast(`${m.emoji} ${sizeTxt}${m.label} — right ahead`,3000);
+  const _lnA=laneText(h.lanes);
+  toast(`${m.emoji} ${sizeTxt}${m.label} — right ahead${_lnA?" · "+_lnA:""}`,3000);
   try{ beep(760,.11,.22); setTimeout(()=>beep(980,.14,.24),150); }catch(e){}
-  try{ if(S.voiceOn)speak((sizeTxt?sizeTxt:"")+m.label+" ahead"); }catch(e){}
+  try{ if(S.voiceOn)speak((sizeTxt?sizeTxt:"")+m.label+" ahead"+(_lnA?", "+_lnA:"")); }catch(e){}
   if(navigator.vibrate)navigator.vibrate([70,50,70]);
   try{ pulseHazard(h); }catch(e){}
 }
@@ -1658,7 +1660,9 @@ function cwInjectFX(){
       "#navbanner.nb-collapsed .nb-btns{display:none}"+
       "#navbanner.nb-collapsed #laneRow{display:none!important}"+
       "#navbanner.nb-collapsed .nb-meta{display:none}"+
-      "#navbanner.nb-collapsed #nbExit{display:none!important}"+
+      // Keep the EXIT prominent even when collapsed (like Google) — it's the one cue a driver
+      // most needs at a glance. Bump its size a touch so it reads clearly in the slim bar.
+      "#navbanner.nb-collapsed #nbExit{display:block!important;font-size:16px;padding:6px 13px}"+
       "#navbanner.nb-collapsed .nb-instr{font-size:17px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"+
       "#navbanner.nb-collapsed #nbGlyph{font-size:26px}"+
       // Minimal map mode: hazards collapse to small colored dots — no emoji, no glow (frost/
@@ -1792,10 +1796,51 @@ function askPotholeSize(note){
     if(sv>0) reportHazard("pothole", note||"", sv);
   });
 }
-async function reportHazard(type,note,psev,skipPick){
+// Which hazard types block specific lanes — for these we ask which lanes are affected, so the
+// alert can say "right two lanes blocked" instead of a vague "construction ahead."
+const LANE_TYPES=["construction_cones","road_closure","accident","debris","stalled"];
+function askLanes(type,note){
+  if(!S.pos){toast("Need a GPS lock to report.");return;}
+  const wrap=document.createElement("div");
+  wrap.id="lanePick";
+  wrap.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom));z-index:1600;background:var(--panel-solid);border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.45);max-width:92vw";
+  const btn=(v,label)=>'<button data-l="'+v+'" style="border:1px solid var(--line);border-radius:13px;padding:11px 13px;background:transparent;color:inherit;font-weight:700;font-size:13.5px;white-space:nowrap">'+label+'</button>';
+  wrap.innerHTML=
+    '<div style="font-size:13px;color:var(--mute);margin-bottom:9px;text-align:center">Which lanes are blocked? <span style="opacity:.7">(tap all that apply)</span></div>'+
+    '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'+
+      btn("left","⬅️ Left")+btn("center","⬆️ Center")+btn("right","➡️ Right")+btn("shoulder","🛑 Shoulder")+btn("all","🚧 All lanes")+
+    '</div>'+
+    '<div style="display:flex;gap:8px;justify-content:center;margin-top:11px">'+
+      '<button id="laneGo" style="border:none;border-radius:13px;padding:11px 22px;background:#FF6B1A;color:#141619;font-weight:800;font-size:14px">Report</button>'+
+      '<button id="laneSkip" style="border:1px solid var(--line);border-radius:13px;padding:11px 15px;background:transparent;color:inherit;font-size:14px">Skip</button>'+
+    '</div>';
+  document.body.appendChild(wrap);
+  const picked=new Set();
+  const kill=()=>{ try{wrap.remove();}catch(e){} clearTimeout(t); };
+  const t=setTimeout(kill,15000);
+  wrap.querySelectorAll("button[data-l]").forEach(b=>b.onclick=()=>{
+    const v=b.dataset.l;
+    if(v==="all"){ picked.clear(); picked.add("all"); wrap.querySelectorAll("button[data-l]").forEach(x=>x.style.background="transparent"); b.style.background="rgba(255,107,26,.35)"; return; }
+    picked.delete("all"); const allBtn=wrap.querySelector('button[data-l="all"]'); if(allBtn)allBtn.style.background="transparent";
+    if(picked.has(v)){ picked.delete(v); b.style.background="transparent"; }
+    else { picked.add(v); b.style.background="rgba(255,107,26,.35)"; }
+  });
+  wrap.querySelector("#laneSkip").onclick=()=>{ kill(); reportHazard(type,note,null,true,"none"); };
+  wrap.querySelector("#laneGo").onclick=()=>{ const lanes=[...picked].join(","); kill(); reportHazard(type,note,null,true,lanes||"none"); };
+}
+function laneText(lanes){
+  if(!lanes||lanes==="none") return "";
+  if(lanes==="all") return "all lanes blocked";
+  const names={left:"left",center:"center",right:"right",shoulder:"shoulder"};
+  const parts=String(lanes).split(",").map(x=>names[x]).filter(Boolean);
+  if(!parts.length) return "";
+  return parts.join(" + ")+(parts.length>1?" lanes":" lane")+" blocked";
+}
+async function reportHazard(type,note,psev,skipPick,lanes){
   if(!S.pos){toast("Need a GPS lock to report.");return;}
   if(type==="pothole" && !psev){ askPotholeSize(note); return; }
   if(type==="camera" && !skipPick){ askCameraType(note); return; }
+  if(LANE_TYPES.indexOf(type)>-1 && lanes===undefined){ askLanes(type,note); return; }
   closeSheets(); if(navigator.vibrate)navigator.vibrate(40);
   // MERGE: an existing report of the SAME type within ~35m gets confirmed (count++), not duplicated.
   // Different hazard types at the same spot each keep their own pin.
@@ -1808,12 +1853,14 @@ async function reportHazard(type,note,psev,skipPick){
     return;
   }
   const _p=((type==="pothole"||type==="debris")&&S.course!=null&&!isNaN(S.course))?(function(){const rad=(S.course+90)*Math.PI/180,dM=4;return{lat:S.pos.lat+(dM*Math.cos(rad))/111111,lng:S.pos.lng+(dM*Math.sin(rad))/(111111*Math.cos(S.pos.lat*Math.PI/180))};})():{lat:S.pos.lat,lng:S.pos.lng};
-  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:_p.lat,lng:_p.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1,psev:psev||undefined};
+  const h={id:"h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),gone:0,type,lat:_p.lat,lng:_p.lng,note:note||"Driver report",sev:type==="accident"?4:2,reports:1,psev:psev||undefined,lanes:(lanes&&lanes!=="none")?lanes:undefined};
   S.hazards.push(h);addHazardMarker(h);
-  toast(`${HZ_META[type].label} reported ✓`);
+  const _lt=laneText(h.lanes);
+  toast(`${HZ_META[type].label} reported ✓${_lt?" · "+_lt:""}`);
   if(S.sb.url&&S.sb.key){
     try{
-      const payload={type:h.type,lat:h.lat,lng:h.lng,note:(h.psev?("size:"+POT_SEV[h.psev].label+(h.note?" · "+h.note:"")):(h.note||"")),sev:h.psev||h.sev||2,reports:h.reports||1};
+      const _ln=laneText(h.lanes);
+      const payload={type:h.type,lat:h.lat,lng:h.lng,note:(h.psev?("size:"+POT_SEV[h.psev].label+(h.note?" · "+h.note:"")):(h.note||""))+(_ln?" · "+_ln:""),sev:h.psev||h.sev||2,reports:h.reports||1};
       const r=await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json",Prefer:"return=minimal"}),body:JSON.stringify(payload)});
       if(!r.ok)toast("Saved on your map — cloud sync failed ("+r.status+")");
     }catch(e){ toast("Saved on your map — offline, will show for you"); }
