@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v128";
+const APP_VERSION="v129";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -615,8 +615,8 @@ async function fsqSuggest(q, signal){
     var d=await (await fetch(u,{signal})).json();
     return ((d&&d.results)||[]).map(function(p){
       var a=p.address||{};
-      return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon };
-    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name; });
+      return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon, cc:a.country_code };
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name&&_sameCountry(r.cc); });
   }catch(e){ if(e.name==="AbortError") throw e; return []; }
 }
 async function overtureSuggest(q, signal){
@@ -1327,6 +1327,7 @@ async function startNavigation(){
 function endNavigation(){
   S.navigating=false;S.headingUp=false;S.remoteStart=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
   try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
+
   try{speechSynthesis.cancel();}catch{}
   document.body.classList.remove("driving"); layout();
   try{if(document.fullscreenElement&&document.exitFullscreen)document.exitFullscreen().catch(()=>{});}catch{}
@@ -1353,6 +1354,9 @@ function endNavigation(){
     try{ _setFromUI(); }catch(e){}
   }catch(e){}
   map.easeTo({pitch:S.is3d?55:0,bearing:0});
+  // A new version arrived mid-drive and the reload was held so it couldn't wipe the live route.
+  // The trip is over and cleanup has run, so it's safe to apply now.
+  if(S.pendingReload){ S.pendingReload=false; toast("Updating ConeWatch…",1500); setTimeout(function(){ location.reload(); },1700); }
 }
 $("endnav").onclick=endNavigation;
 $("startNav").onclick=startNavigation;
@@ -3119,9 +3123,22 @@ async function getLocality(){
     const d=await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${S.pos.lat}&lon=${S.pos.lng}&zoom=10`)).json();
     const a=d.address||{};
     localityCache=[a.city||a.town||a.village||a.county,a.state].filter(Boolean).join(", ");
+    if(a.country_code) myCountry=String(a.country_code).toUpperCase();   // for the cross-border search filter
   }catch{}
   return localityCache;
 }
+/* ═══════════ cross-border search filter ═══════════
+   In Detroit a 25-mile radius reaches well into Windsor, so "flower bowl" returned Ontario
+   bowling alleys a driver would never mean. Filter results to the driver's OWN country rather
+   than hardcoding US — worldwide search stays intact for anyone using this outside the States.
+   Until the reverse geocode resolves, myCountry is null and nothing is filtered (fail-open). */
+var myCountry=null;
+function _sameCountry(cc){
+  if(!myCountry||!cc) return true;                 // unknown either side → keep it
+  return String(cc).toUpperCase()===myCountry;
+}
+// kick off the lookup early so the country is known before the first search
+setTimeout(function(){ try{ if(S.pos) getLocality(); }catch(e){} }, 3000);
 // OVERTURE POI FALLBACK — calls the same-origin serverless proxy (key stays server-side),
 // normalizes Overture places into the row shape scoreRows() expects. Silent [] if the proxy
 // isn't deployed yet, the key/quota is unavailable, or there's no fix — search just uses OSM.
@@ -3136,10 +3153,10 @@ async function foursquarePOIs(q){
     var d=await (await fetchT(u,8000)).json();
     var arr=(d&&d.results)||[];
     return arr.map(function(p){
-      return { lat:p.lat, lon:p.lon, type:p.category||"poi",
+      return { lat:p.lat, lon:p.lon, type:p.category||"poi", cc:(p.address&&p.address.country_code)||undefined,
         address:{ name:p.name, city:(p.address&&p.address.locality)||undefined },
         display_name:[p.name,(p.address&&p.address.locality)].filter(Boolean).join(", ") };
-    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lon)&&r.address.name; });
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lon)&&r.address.name&&_sameCountry(r.cc); });
   }catch(e){ return []; }
 }
 async function overturePOIs(q){
@@ -3632,9 +3649,13 @@ if("serviceWorker" in navigator){
       setInterval(function(){ try{reg.update();}catch(e){} }, 30*60*1000);   // and every 30 min while open
     }).catch(function(){});
     // when a new service worker takes control, reload ONCE so the user is on the latest — no manual delete/re-add
+    // NEVER reload mid-drive: a deploy landing while someone is navigating would wipe the live
+    // route, possibly right at a turn. Hold it and apply when navigation ends (endNavigation).
     var _swReloaded=false;
     navigator.serviceWorker.addEventListener("controllerchange",function(){
-      if(_swReloaded||!hadController)return; _swReloaded=true; location.reload();
+      if(_swReloaded||!hadController)return;
+      if(S.navigating){ S.pendingReload=true; return; }
+      _swReloaded=true; location.reload();
     });
   });
 }
