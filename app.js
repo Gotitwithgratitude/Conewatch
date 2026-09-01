@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v121";
+const APP_VERSION="v122";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -159,7 +159,11 @@ function refreshHazPopup(h){ try{ if(h._marker&&h._marker.getPopup())h._marker.g
 let _cwOpenPopup=null;
 function trackPopup(p){
   try{
-    p.on("open",()=>{ if(_cwOpenPopup && _cwOpenPopup!==p){ try{_cwOpenPopup.remove();}catch(e){} } _cwOpenPopup=p; });
+    p.on("open",()=>{
+      if(_cwOpenPopup && _cwOpenPopup!==p){ try{_cwOpenPopup.remove();}catch(e){} }
+      if(typeof inspectPopup!=="undefined" && inspectPopup && inspectPopup!==p){ try{inspectPopup.remove();}catch(e){} inspectPopup=null; }
+      _cwOpenPopup=p;
+    });
     p.on("close",()=>{ if(_cwOpenPopup===p) _cwOpenPopup=null; });
   }catch(e){}
   return p;
@@ -2398,6 +2402,7 @@ function bindInspect(){
           <button class="ipb" data-a="sat" style="background:#1D6EF2;color:#fff;border:none;border-radius:12px;padding:6px 12px;font-size:12px">🛰 360°</button>
         </div>`;
       if(inspectPopup)inspectPopup.remove();
+      if(_cwOpenPopup){ try{_cwOpenPopup.remove();}catch(e){} _cwOpenPopup=null; }   // close any open hazard popup first so it can't hide behind this
       inspectPopup=trackPopup(new maplibregl.Popup({offset:10,maxWidth:"270px"}).setLngLat([lng,lat]).setDOMContent(div)).addTo(map);
       div.querySelectorAll(".ipb").forEach(b=>b.onclick=()=>{
         inspectPopup.remove();
