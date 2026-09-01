@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v125";
+const APP_VERSION="v126";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2444,6 +2444,13 @@ map && null; // (map exists by the time clicks happen)
 function bindInspect(){
   map.on("click",async(e)=>{
     if(S.navigating)return;
+    // A tap on a hazard/POI marker must NOT also open the place-inspect popup — MapLibre lets
+    // the marker click fall through to the map, which was opening BOTH popups from one tap and
+    // stacking the place card on top of the hazard's "Still here / Gone" prompt.
+    try{
+      const oe=e.originalEvent;
+      if(oe && oe.target && oe.target.closest && oe.target.closest(".hz, .maplibregl-marker, .maplibregl-popup")) return;
+    }catch(err){}
     if(document.querySelector(".sheet.open")){closeSheets();return;}
     if(map.isMoving())return;
     if(Date.now()-(window.__lastInspect||0)<1200)return; window.__lastInspect=Date.now();
