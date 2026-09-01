@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v126";
+const APP_VERSION="v127";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -500,6 +500,7 @@ function onPos(p){
   $("sosCoords").textContent=`${lat.toFixed(5)}, ${lng.toFixed(5)}`;
   if(S.navigating) navTick();
   try{ healRoughness(); }catch(e){}   // smooth re-drives heal old/false roughness points
+  try{ learnSlowdown(); checkSlowAhead(); }catch(e){}   // learn + warn on recurring slow stretches
 }
 function onPosErr(e){
   const msgs={1:"Location denied — enable it in browser settings. (Previews often block GPS; the deployed HTTPS site works.)",2:"Position unavailable — move near a window.",3:"GPS timeout — retrying…"};
@@ -2019,6 +2020,46 @@ function onMotion(e){
     $("bumpBar").style.display="flex";
     beep(520,.2);if(navigator.vibrate)navigator.vibrate(60);
     setTimeout(()=>{$("bumpBar").style.display="none";},9000);
+  }
+}
+// ── Recurring-slowdown learner ────────────────────────────────────────────────
+// No live-traffic feed exists on this stack, so instead of pretending, we learn YOUR pattern:
+// when you crawl through the same stretch at the same sort of time repeatedly, the app starts
+// warning you before you get there. Purely local, purely from your own drives.
+let slowPts=[]; try{ slowPts=JSON.parse(localStorage.getItem("cw_slow")||"[]"); }catch(e){}
+let _slowRun=0, _slowAnchor=null, _lastSlowWarn=0;
+function _slowKey(lat,lng){ return lat.toFixed(3)+","+lng.toFixed(3); }          // ~110m cells
+function _timeBucket(d){ const x=d||new Date(); return (x.getDay()>=1&&x.getDay()<=5?"wd":"we")+":"+x.getHours(); }
+function learnSlowdown(){
+  if(!S.pos) return;
+  const lim=S.limit||45;
+  const slow=(S.speedMph>1 && S.speedMph < lim*0.5);   // moving, but well under the limit = congestion
+  if(slow){
+    if(!_slowAnchor) _slowAnchor={lat:S.pos.lat,lng:S.pos.lng};
+    _slowRun++;
+    // sustained (~8 fixes) so a red light or a turn doesn't get logged as traffic
+    if(_slowRun===8){
+      const key=_slowKey(_slowAnchor.lat,_slowAnchor.lng), tb=_timeBucket();
+      let rec=slowPts.find(p=>p.k===key && p.tb===tb);
+      if(rec){ rec.n=(rec.n||1)+1; rec.t=Date.now(); }
+      else slowPts.push({k:key,tb,lat:_slowAnchor.lat,lng:_slowAnchor.lng,n:1,t:Date.now()});
+      try{ localStorage.setItem("cw_slow",JSON.stringify(slowPts.slice(-400))); }catch(e){}
+    }
+  } else { _slowRun=0; _slowAnchor=null; }
+}
+function checkSlowAhead(){
+  if(!S.pos||!S.navigating||!slowPts.length) return;
+  if(S.speedMph<15) return;                                  // already crawling — no point warning
+  if(Date.now()-_lastSlowWarn<120000) return;                // at most one nudge every 2 min
+  const tb=_timeBucket(), now=Date.now(), cut=now-90*864e5;  // only patterns seen in the last ~90 days
+  for(const p of slowPts){
+    if(p.tb!==tb || (p.n||1)<2 || (p.t||0)<cut) continue;    // must have happened 2+ times at this hour
+    const d=distM(S.pos,{lat:p.lat,lng:p.lng});
+    if(d<900 && d>250){                                      // roughly a half-mile heads-up
+      // Soft, honest wording — a learned pattern from your own drives, not live traffic.
+      toast("🕒 This stretch is usually slow around now",3200);
+      _lastSlowWarn=now; return;
+    }
   }
 }
 // rolling road-roughness log (kept local + drawn as a heatmap; recent points only)
