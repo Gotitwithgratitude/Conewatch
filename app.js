@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v127";
+const APP_VERSION="v128";
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -36,7 +36,8 @@ const CW_CONFIG = {
   // serverless proxy holds the secret key server-side — the browser never sees it.
   // Setup: (1) deploy /api/places.js with the repo, (2) set OPA_KEY env var in Vercel.
   // Until then this silently 404s → no-op, search falls back to OSM exactly as before.
-  placesProxy: "/api/places"
+  placesProxy: "/api/places",
+  fsqProxy: "/api/fsq"
 };
 const PROFILES = { car:"routed-car/route/v1/driving", bike:"routed-bike/route/v1/driving", foot:"routed-foot/route/v1/driving", hike:"routed-foot/route/v1/driving" };
 const ACCENT = { dark:{route:"#35E0C8",casing:"#0A3B33"}, light:{route:"#1D6EF2",casing:"#0A2E66"} };
@@ -606,6 +607,18 @@ function offlineMatches(q){
 }
 // Overture POI layer for the typeahead — same proxy as full search (apostrophe retry
 // happens server-side). Quota guards: needs a fix, needs 4+ chars, aborts on new keystroke.
+async function fsqSuggest(q, signal){
+  if(!CW_CONFIG.fsqProxy || !S.pos || q.trim().length<4) return [];
+  try{
+    var u=CW_CONFIG.fsqProxy+"?q="+encodeURIComponent(q)
+      +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=25&limit=10";
+    var d=await (await fetch(u,{signal})).json();
+    return ((d&&d.results)||[]).map(function(p){
+      var a=p.address||{};
+      return { name:p.name, label:[a.street,a.locality].filter(Boolean).join(", "), lat:p.lat, lng:p.lon };
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lng)&&r.name; });
+  }catch(e){ if(e.name==="AbortError") throw e; return []; }
+}
 async function overtureSuggest(q, signal){
   if(!CW_CONFIG.placesProxy || !S.pos || q.trim().length<4) return [];
   try{
@@ -3112,6 +3125,23 @@ async function getLocality(){
 // OVERTURE POI FALLBACK — calls the same-origin serverless proxy (key stays server-side),
 // normalizes Overture places into the row shape scoreRows() expects. Silent [] if the proxy
 // isn't deployed yet, the key/quota is unavailable, or there's no fix — search just uses OSM.
+// FOURSQUARE POI LAYER: a second business index alongside Overture. Open datasets (OSM,
+// Overture) lag on new/small businesses; Foursquare carries them. Returns [] silently if the
+// proxy or key isn't set up, so the app behaves exactly as before without it.
+async function foursquarePOIs(q){
+  if(!CW_CONFIG.fsqProxy || !S.pos) return [];
+  try{
+    var u=CW_CONFIG.fsqProxy+"?q="+encodeURIComponent(q)
+      +"&lat="+S.pos.lat+"&lon="+S.pos.lng+"&radius_mi=25&limit=15";
+    var d=await (await fetchT(u,8000)).json();
+    var arr=(d&&d.results)||[];
+    return arr.map(function(p){
+      return { lat:p.lat, lon:p.lon, type:p.category||"poi",
+        address:{ name:p.name, city:(p.address&&p.address.locality)||undefined },
+        display_name:[p.name,(p.address&&p.address.locality)].filter(Boolean).join(", ") };
+    }).filter(function(r){ return isFinite(r.lat)&&isFinite(r.lon)&&r.address.name; });
+  }catch(e){ return []; }
+}
 async function overturePOIs(q){
   if(!CW_CONFIG.placesProxy || !S.pos) return [];
   try{
@@ -3153,6 +3183,8 @@ async function geocodeCandidates(q){
     // OVERTURE POI LAYER: Overture (OSM + Meta + Microsoft + …) carries local businesses
     // raw OSM lacks. Proximity-only, so it runs exactly here — a name search near the driver.
     jobs.push(overturePOIs(q).then(rows=>{out=out.concat(rows);}).catch(()=>{}));
+    // Second POI index — fills Overture/OSM gaps on newer or smaller businesses.
+    jobs.push(foursquarePOIs(q).then(rows=>{out=out.concat(rows);}).catch(()=>{}));
   }
   await Promise.all(jobs);
   return scoreRows(out,q);
@@ -3749,6 +3781,7 @@ async function spSearch(q){
   if(acCache.has(q)){ spRender(acCache.get(q)); return; }
   spRender([], "Searching…");
   const ovP=overtureSuggest(q,_spAbort.signal);   // Overture POIs run alongside OSM
+  const fqP=fsqSuggest(q,_spAbort.signal);       // Foursquare fills fresh-business gaps
   let items=[];
   try{
     let u="https://photon.komoot.io/api/?q="+encodeURIComponent(q)+"&limit=10&lang=en";
@@ -3789,6 +3822,7 @@ async function spSearch(q){
   }
   // Merge Overture POIs (finds local businesses OSM lacks) ahead of OSM, collapse duplicates.
   let ov=[]; try{ ov=await ovP; }catch(e){ if(e.name==="AbortError")return; }
+  try{ const fq=await fqP; if(fq&&fq.length) ov=ov.concat(fq); }catch(e){ if(e.name==="AbortError")return; }
   items=dedupeSuggest(ov.concat(items));
   const toks=q.toLowerCase().replace(/['\u2019]/g,"").split(/\s+/).filter(w=>w.length>1);
   const typedPlace=(()=>{ try{ const p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
