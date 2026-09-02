@@ -421,7 +421,9 @@
      Dragging a finger across the grid lights each tile as it passes, but never confirms —
      a moved touch doesn't produce a click, so the report only fires on a real tap. This is
      visual only: no preventDefault, no intercepting, so the existing tap path is untouched. */
-  .rtile{transition:transform .11s cubic-bezier(.2,.8,.2,1),box-shadow .14s ease,border-color .14s ease,background .14s ease}
+  .rtile{transition:transform .11s cubic-bezier(.2,.8,.2,1),box-shadow .14s ease,border-color .14s ease,background .14s ease;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .rtile *{-webkit-user-select:none;user-select:none;pointer-events:none}
   .rtile.lit{transform:scale(1.07);border-color:var(--cone);background:var(--panel-hi);
     box-shadow:0 0 0 2px var(--cone),0 10px 28px rgba(255,106,31,.34);z-index:1}
   .rtile.lit .ic{transform:scale(1.12);transition:transform .14s cubic-bezier(.2,.8,.2,1)}
