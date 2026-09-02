@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v145";
+const APP_VERSION="v146";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1889,14 +1889,101 @@ function _setPref(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
 
 // ── compact header
 function applyHdrCompact(){
-  var on=_pref("cw_hdr_compact","0")==="1";
+  // Two ways the header goes compact: the user pinned it (pref), or navigation started
+  // (auto). Auto is transient — it clears when the route ends, so the pref survives.
+  var on=_pref("cw_hdr_compact","0")==="1" || document.body.dataset.hdrAuto==="1";
   try{ document.body.classList.toggle("hdr-compact",on);
        var t=$("hdrToggle"); if(t){ t.textContent = on?"\u25bc":"\u25b2";
          t.setAttribute("aria-label", on?"Expand header":"Collapse header"); }
   }catch(e){}
   try{ layout(); }catch(e){}          // re-measure --hdrH so the FAB rail follows
 }
-function toggleHdrCompact(){ _setPref("cw_hdr_compact", _pref("cw_hdr_compact","0")==="1"?"0":"1"); applyHdrCompact(); }
+function toggleHdrCompact(){
+  var cur=document.body.classList.contains("hdr-compact");
+  // tapping the chevron while nav auto-collapsed it means "give it back" — drop the auto flag
+  if(cur && document.body.dataset.hdrAuto==="1") delete document.body.dataset.hdrAuto;
+  _setPref("cw_hdr_compact", cur?"0":"1");
+  applyHdrCompact();
+}
+
+// ── tool menu style: "drawer" (grid above the dots) or "radial" (fan around the dots)
+function toolsStyle(){ return _pref("cw_tools","drawer")==="radial" ? "radial" : "drawer"; }
+function applyToolsStyle(){
+  var v=toolsStyle();
+  try{ document.body.setAttribute("data-tools",v);
+       document.querySelectorAll("#toolsChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.tools===v); });
+  }catch(e){}
+  try{ closeTools(); }catch(e){}     // never leave a half-laid-out tray behind a style switch
+}
+function setToolsStyle(v){ _setPref("cw_tools",v); applyToolsStyle(); toast("Tool menu: "+(v==="radial"?"Radial":"Drawer"),1200); }
+
+/* Radial layout is measured, not hard-coded: the dots button moves with FAB size, safe-area
+   and the short-screen media query, so we read its box at open time and fan from its centre.
+   Eight buttons on one arc would collide, so they ride two arcs of four. */
+function _radialGeom(){
+  var anchor=$("fabMore"); if(!anchor) return null;
+  var a=anchor.getBoundingClientRect();
+  var kid=$("moreFabs")&&$("moreFabs").children[0];
+  var sz=kid?(kid.getBoundingClientRect().width||50):50;
+  return {cx:a.left+a.width/2, cy:a.top+a.height/2, sz:sz};
+}
+function layoutRadial(animate){
+  var tray=$("moreFabs"); if(!tray) return;
+  var g=_radialGeom(); if(!g) return;
+  var kids=Array.prototype.slice.call(tray.children);
+  var angs=[104,131,158,185];                       // up-and-left quarter, away from the thumb rail
+  var r1=g.sz*1.95, r2=g.sz*3.30;
+  var top=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160)+10;
+  var scrim=$("radialScrim");
+  if(scrim){ scrim.style.setProperty("--rx",g.cx+"px"); scrim.style.setProperty("--ry",g.cy+"px"); scrim.classList.add("on"); }
+  kids.forEach(function(el,i){
+    var r=(i<4?r1:r2), ang=angs[i%4]*Math.PI/180;
+    var x=g.cx+r*Math.cos(ang), y=g.cy-r*Math.sin(ang);
+    if(y<top+g.sz/2) y=top+g.sz/2;                  // never tuck a button under the header
+    el.style.left=(g.cx-g.sz/2)+"px";
+    el.style.top=(g.cy-g.sz/2)+"px";
+    el.style.margin="0";
+    if(animate){
+      el.style.transition="none";
+      el.style.transform="translate(0,0) scale(.4)";
+      el.style.opacity="0";
+      (function(el2,dx,dy,d){
+        requestAnimationFrame(function(){ requestAnimationFrame(function(){
+          el2.style.transition="transform .26s cubic-bezier(.2,.9,.25,1.25) "+d+"ms, opacity .16s linear "+d+"ms";
+          el2.style.transform="translate("+dx+"px,"+dy+"px) scale(1)";
+          el2.style.opacity="1";
+        }); });
+      })(el, x-g.cx, y-g.cy, i*22);
+    }else{
+      el.style.transition="transform .16s ease-out";
+      el.style.transform="translate("+(x-g.cx)+"px,"+(y-g.cy)+"px) scale(1)";
+      el.style.opacity="1";
+    }
+  });
+}
+function clearRadial(){
+  var tray=$("moreFabs"); if(!tray) return;
+  Array.prototype.slice.call(tray.children).forEach(function(el){
+    el.style.left=el.style.top=el.style.transform=el.style.opacity=el.style.transition=el.style.margin="";
+  });
+  var scrim=$("radialScrim"); if(scrim) scrim.classList.remove("on");
+}
+function toolsAreOpen(){ var t=$("moreFabs"); return !!(t&&t.classList.contains("open")); }
+function openTools(){
+  var tray=$("moreFabs"); if(!tray) return;
+  tray.classList.add("open");
+  if(toolsStyle()==="radial") layoutRadial(true); else clearRadial();
+}
+function closeTools(){
+  var tray=$("moreFabs"); if(!tray) return;
+  tray.classList.remove("open");
+  clearRadial();
+}
+function toggleTools(){ toolsAreOpen()?closeTools():openTools(); }
+try{
+  window.addEventListener("resize",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") layoutRadial(false); });
+  window.addEventListener("orientationchange",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") setTimeout(function(){layoutRadial(false);},250); });
+}catch(e){}
 
 // ── button size
 function applyFabSize(){
@@ -2619,13 +2706,15 @@ document.querySelectorAll(".sheet").forEach(s=>{
   x.onclick=(e)=>{e.stopPropagation();closeSheets();};
   s.appendChild(x);
 });
-function closeSheets(){document.querySelectorAll(".sheet").forEach(s=>s.classList.remove("open"));$("moreFabs").classList.remove("open");}
+function closeSheets(){document.querySelectorAll(".sheet").forEach(s=>s.classList.remove("open"));try{closeTools();}catch(e){$("moreFabs").classList.remove("open");}}
 $("fabReport").onclick=()=>openSheet("reportSheet");
 $("fabRoadside").onclick=()=>openSheet("roadsideSheet");
 $("fabSettings").onclick=()=>openSheet("settingsSheet");
 $("fabDiscover").onclick=()=>openSheet("discoverSheet");
 $("fabFeedback").onclick=()=>openSheet("feedbackSheet");
-$("fabMore").onclick=()=>$("moreFabs").classList.toggle("open");
+$("fabMore").onclick=()=>toggleTools();
+// tapping the scrim behind an open fan closes it, same as any sheet
+$("radialScrim")&&($("radialScrim").onclick=()=>closeTools());
 $("fabLocate").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();if(S.pos)map.easeTo({center:[S.pos.lng,S.pos.lat],zoom:16});else{startGPS();toast("Acquiring GPS…");}};
 document.querySelectorAll(".grabber").forEach(g=>g.onclick=closeSheets);
 function updateFollowUI(){$("fabLocate").classList.toggle("active",S.follow);$("followState").textContent=S.follow?"On — map recenters as you drive":"Off — tap ◎ to re-center";}
@@ -2638,12 +2727,13 @@ $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 $("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
 document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
 document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
+document.querySelectorAll("#toolsChips .chip").forEach(function(c){ c.onclick=function(){ setToolsStyle(c.dataset.tools); }; });
 $("hdrToggle")&&($("hdrToggle").onclick=function(ev){ ev.stopPropagation(); toggleHdrCompact(); });
 $("toggleFilters")&&($("toggleFilters").onclick=function(){
   buildHzFilters();
   var b=$("hzFilters"); if(b) b.style.display = (b.style.display==="none"||!b.style.display) ? "flex" : "none";
 });
-try{ applyHdrCompact(); applyFabSize(); applyHzFilters(); }catch(e){}
+try{ applyHdrCompact(); applyFabSize(); applyToolsStyle(); applyHzFilters(); }catch(e){}
 try{ var _mk=markerSizeKey();
   document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===_mk); });
 }catch(e){}
@@ -2760,7 +2850,15 @@ function setDrivingChrome(on){
     if(on){ if(el.style.display!=="none"){ el.dataset._prevDisp=el.style.display||""; el.style.display="none"; } }
     else  { el.style.display=el.dataset._prevDisp!==undefined?el.dataset._prevDisp:""; }
   });
-  try{ if(on) $("moreFabs")&&$("moreFabs").classList.remove("open"); }catch(e){}
+  try{ if(on) closeTools(); }catch(e){}
+  // Hand the top third of the screen back to the map once a route is live: the header
+  // collapses to the search row and the nav card carries the turn. Restored when nav ends,
+  // unless the driver had already pinned it compact themselves.
+  try{
+    if(on) document.body.dataset.hdrAuto="1";
+    else delete document.body.dataset.hdrAuto;
+    applyHdrCompact();
+  }catch(e){}
 }
 
 let _relockT=null;
@@ -3236,12 +3334,14 @@ try{QK=Object.assign(QK,JSON.parse(localStorage.getItem("cw_quick")||"{}"));}cat
 function saveQK(){try{localStorage.setItem("cw_quick",JSON.stringify(QK));}catch{}}
 function renderQuick(){
   const q=$("quick");q.innerHTML="";
-  const chip=(label,fn)=>{const b=document.createElement("button");b.className="chip";b.style.padding="5px 11px";b.style.fontSize="11px";b.textContent=label;b.onclick=fn;q.appendChild(b);};
+  // hard slicing produced things like "IO Godfrey Rooft" — clip on a word edge and mark it
+  const clip=(t,n)=>{t=(t||"").trim();if(t.length<=n)return t;let c=t.slice(0,n);const sp=c.lastIndexOf(" ");if(sp>n*0.6)c=c.slice(0,sp);return c.replace(/[\s,.\-]+$/,"")+"\u2026";};
+  const chip=(label,fn,full)=>{const b=document.createElement("button");b.className="chip";b.style.padding="5px 11px";b.style.fontSize="11px";b.textContent=label;if(full)b.title=full;b.onclick=fn;q.appendChild(b);};
   if(QK.home)chip("🏠 Home",()=>setDestination(QK.home,"Home"));
   if(QK.work)chip("💼 Work",()=>setDestination(QK.work,"Work"));
   if(QK.park)chip("🚶 Find my car",()=>walkToCar());
-  (QK.favorites||[]).slice(0,4).forEach(f=>chip("⭐ "+f.name.slice(0,14),()=>setDestination({lat:f.lat,lng:f.lng},f.name)));
-  (QK.recents||[]).slice(0,3).forEach(r=>chip("🕘 "+r.name.slice(0,16),()=>setDestination({lat:r.lat,lng:r.lng},r.name)));
+  (QK.favorites||[]).slice(0,4).forEach(f=>chip("⭐ "+clip(f.name,16),()=>setDestination({lat:f.lat,lng:f.lng},f.name),f.name));
+  (QK.recents||[]).slice(0,3).forEach(r=>chip("🕘 "+clip(r.name,18),()=>setDestination({lat:r.lat,lng:r.lng},r.name),r.name));
   q.style.display=q.children.length?"flex":"none";
   layout();
 }

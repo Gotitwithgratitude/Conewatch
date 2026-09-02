@@ -275,8 +275,25 @@
   .fr-input:focus{outline:none}
   .fr-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
   #moreFabs{display:none}
-  /* opened tools lay out as a compact grid so a tall column can't run off the top of the screen */
-  #moreFabs.open{display:grid;grid-template-columns:repeat(2,auto);gap:9px;justify-items:end}
+  /* ═══════════ tool tray: drawer (default) or radial ═══════════
+     Drawer = the two-column grid, stacked above the dots. Predictable, thumb-reachable,
+     safest while moving. Radial = the same eight buttons fan out on an arc around the dots.
+     Chosen in Settings; the layout math for radial lives in app.js (it measures the dots
+     button so it stays correct at any FAB size). */
+  #moreFabs.open{display:grid;grid-template-columns:repeat(2,auto);gap:9px;justify-items:end;
+    animation:trayIn .2s cubic-bezier(.2,.8,.2,1)}
+  @keyframes trayIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+  /* radial: the tray itself collapses to nothing and each button is positioned fixed by JS */
+  body[data-tools="radial"] #moreFabs.open{display:block;width:0;height:0;margin:0;
+    overflow:visible;animation:none}
+  body[data-tools="radial"] #moreFabs.open .fab{position:fixed;z-index:999}
+  /* a soft scrim behind the fan so the icons stay readable over a busy map */
+  #radialScrim{position:fixed;inset:0;z-index:997;display:none;background:radial-gradient(circle at var(--rx,90%) var(--ry,72%),rgba(6,8,12,.55) 0,rgba(6,8,12,.28) 34%,transparent 62%);
+    -webkit-backdrop-filter:blur(1.5px);backdrop-filter:blur(1.5px)}
+  body[data-tools="radial"] #radialScrim.on{display:block}
+  @media (prefers-reduced-motion:reduce){#moreFabs.open{animation:none}}
+  /* saved + recent destination chips: truncate with an ellipsis instead of a hard cut */
+  #quick .chip{max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   @media (max-height:620px){
     #moreFabs.open{grid-template-columns:repeat(4,auto)}
     .fab{width:44px;height:44px;font-size:17px}
@@ -488,6 +505,8 @@
   <div id="compass" title="Toggle heading-up"><span id="needle">▲</span><small id="compDeg">N</small></div>
 </div>
 
+<div id="radialScrim"></div>
+
 <div id="fabs">
   <button class="fab sos" id="fab911" aria-label="Emergency 911">911</button>
   <div id="moreFabs">
@@ -645,6 +664,9 @@
     <button class="chip" data-fab="s">S</button>
     <button class="chip on" data-fab="m">M</button>
     <button class="chip" data-fab="l">L</button></span></div>
+  <div class="kv"><span>Tool menu</span><span id="toolsChips" style="display:flex;gap:6px">
+    <button class="chip on" data-tools="drawer">Drawer</button>
+    <button class="chip" data-tools="radial">Radial</button></span></div>
   <div class="kv"><span>Marker size</span><span id="sizeChips" style="display:flex;gap:6px">
     <button class="chip" data-size="s">S</button>
     <button class="chip on" data-size="m">M</button>
