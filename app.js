@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v131";
+const APP_VERSION="v132";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -28,7 +28,18 @@ const APP_VERSION="v131";
    recognition time on the alerts that matter. Only 'animal' changes (🦌→🦇 still reads
    "creature in the road") plus the destination flag and the map's own chrome.
    Mode: "auto" (Oct 1–Nov 1), "on", or "off" — stored in localStorage. */
-const SEASON_SWAP = { animal:"🦇" };
+const SEASON_SWAP = {
+  animal:"🦇",           // creature in the road — still reads correctly
+  debris:"🕸",           // something in your lane
+  speed_bump:"⚰️",       // a bump you feel
+  camera:"👁",           // being watched
+  camera_flock:"🦇",
+  traffic:"🧟",          // a crawl
+  construction_cones:"🎃" // the cone IS the brand — pumpkin is the one wink we get
+};
+/* Untouched year-round, deliberately: pothole 🕳, accident 🚨, police 👮, road_closure ⛔,
+   emergency 🚑, flooding 🌊, ice ❄️, stalled 🚗, alert 📢. A driver reads these by shape
+   and color before they read anything else — a seasonal skin isn't worth that half-second. */
 const _hzEmojiBase = {};
 Object.keys(HZ_META).forEach(function(k){ _hzEmojiBase[k]=HZ_META[k].emoji; });
 
@@ -56,8 +67,19 @@ function applySeason(){
   try{ (S.hazards||[]).forEach(function(h){
     if(h._marker && SEASON_SWAP[h.type]){ var e2=h._marker.getElement(); if(e2) e2.textContent=HZ_META[h.type].emoji; }
   }); }catch(e){}
-  try{ var tile=document.querySelector('#reportSheet [data-type="animal"] .ic');
-       if(tile) tile.textContent=HZ_META.animal.emoji; }catch(e){}
+  try{ Object.keys(SEASON_SWAP).forEach(function(k){
+    var tile=document.querySelector('#reportSheet [data-type="'+k+'"] .ic');
+    if(tile) tile.textContent=HZ_META[k].emoji;
+  }); }catch(e){}
+  // the pumpkin badge is the interactive bit: tap it to cycle the theme
+  try{ var vb=$("verBadge"); if(vb){ vb.style.cursor="pointer"; vb.onclick=function(ev){ ev.stopPropagation(); cycleSeason(); }; } }catch(e){}
+  // one-time announcement so the update is obvious rather than something you might miss
+  if(on){ try{
+    if(localStorage.getItem("cw_season_seen")!==String(new Date().getFullYear())){
+      localStorage.setItem("cw_season_seen",String(new Date().getFullYear()));
+      setTimeout(function(){ toast("🎃 ConeWatch is haunted for Halloween — tap the pumpkin badge",4200); },1800);
+    }
+  }catch(e){} }
   var st=$("seasonState");
   if(st) st.textContent = seasonMode()==="auto" ? (on?"Auto — on now (Oct 1–Nov 1)":"Auto — on Oct 1–Nov 1")
         : (seasonMode()==="on" ? "On — forced" : "Off");
@@ -233,16 +255,30 @@ function restyleHazMarker(h){
   const isPot=h.type==="pothole";
   const col=isPot?potColor(h):m.color;
   const sc=isPot?potScale(h):hazScale(h);
-  const px=Math.round(30*sc);
+  const px=Math.round(23*sc);
   el.style.background=col;
   el.style.width=px+"px"; el.style.height=px+"px";
-  el.style.fontSize=Math.round(15*sc)+"px";
+  el.style.fontSize=Math.round(12*sc)+"px";
   el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+col+"33";
   el.dataset.basePx=px;
 }
 // gone/fixed: temporary needs 1 vote, permanent needs 2 (avoids accidental removal of a real pothole)
+/* Cleared hazards used to come straight back: cwGone only spliced the local array, but
+   loadSharedHazards does a full `S.hazards = rows` replace from Supabase, so the next sync
+   re-added whatever you just dismissed. Keep a device-local dismiss list and filter every
+   load through it. (A shared server-side "gone" vote is the eventual fix — needs a column.) */
+const CW_DISMISS_KEY="cw_dismissed";
+function _dismissed(){ try{ return JSON.parse(localStorage.getItem(CW_DISMISS_KEY)||"{}"); }catch(e){ return {}; } }
+function _dismiss(id){
+  try{ var d=_dismissed(); d[id]=Date.now();
+    // keep the list from growing forever — drop entries older than 30 days
+    var cut=Date.now()-30*864e5; Object.keys(d).forEach(function(k){ if(d[k]<cut) delete d[k]; });
+    localStorage.setItem(CW_DISMISS_KEY,JSON.stringify(d));
+  }catch(e){}
+}
+function notDismissed(h){ var d=_dismissed(); return !(h && h.id && d[h.id]); }
 window.cwGone=function(id){ const i=S.hazards.findIndex(x=>x.id===id); if(i<0)return; const h=S.hazards[i]; h.gone=(h.gone||0)+1; const need=HAZ_TTL[h.type]===0?2:1;
-  if(h.gone>=need){ try{if(h._marker)h._marker.remove();}catch(e){} S.hazards.splice(i,1); toast("Cleared — thanks for the update"); }
+  if(h.gone>=need){ try{if(h._marker)h._marker.remove();}catch(e){} S.hazards.splice(i,1); _dismiss(id); toast("Cleared — thanks for the update"); }
   else { toast("Noted — one more confirmation will clear it"); }
   if(navigator.vibrate)navigator.vibrate(30);
 };
@@ -1753,9 +1789,9 @@ function addHazardMarker(h){
     const sc=potScale(h);
     // Size via width/height — MapLibre writes `transform` on this element to position it,
     // so scaling with transform detached the marker and made it drift on zoom.
-    const base=30, px=Math.round(base*sc);
+    const base=23, px=Math.round(base*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(15*sc)+"px";
+    el.style.fontSize=Math.round(12*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
     el.dataset.basePx=px;
   } else if(h.type==="ice"){
@@ -1764,9 +1800,9 @@ function addHazardMarker(h){
     el.classList.add("hz-ice");
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(30*sc);
+    const px=Math.round(23*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(15*sc)+"px";
+    el.style.fontSize=Math.round(12*sc)+"px";
     el.dataset.basePx=px;
   } else if(h.type==="police"){
     // Police gets the red↔blue cruiser cross-fade (glow only). Leave box-shadow to the
@@ -1774,17 +1810,17 @@ function addHazardMarker(h){
     el.classList.add("hz-police");
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(30*sc);
+    const px=Math.round(23*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(15*sc)+"px";
+    el.style.fontSize=Math.round(12*sc)+"px";
     el.dataset.basePx=px;
   } else {
     // Every other hazard: sized by how much it matters, with a matching solid glow ring.
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(30*sc);
+    const px=Math.round(23*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(15*sc)+"px";
+    el.style.fontSize=Math.round(12*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+m.color+"33";
     el.dataset.basePx=px;
   }
@@ -1941,7 +1977,7 @@ async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=rows;S.alerted.clear();rows.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${rows.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=rows.filter(notDismissed);hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;S.alerted.clear();keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 

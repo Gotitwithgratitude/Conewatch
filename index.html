@@ -61,6 +61,15 @@
   [data-season="halloween"] #stripe{
     background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,#1A0F06 13px 26px)}
   [data-season="halloween"] #brand{text-shadow:0 0 20px rgba(255,122,18,.45)}
+  /* gentle flicker on the wordmark — slow and low-contrast so it reads as atmosphere,
+     not as a broken screen. Respects reduced-motion. */
+  @keyframes cwFlicker{0%,100%{opacity:1}92%{opacity:1}94%{opacity:.72}96%{opacity:1}97%{opacity:.85}98%{opacity:1}}
+  [data-season="halloween"] #brand b{animation:cwFlicker 7s infinite}
+  [data-season="halloween"] #verBadge{animation:cwPulse 2.6s ease-in-out infinite}
+  @keyframes cwPulse{0%,100%{box-shadow:0 0 10px rgba(181,101,255,.5)}50%{box-shadow:0 0 18px rgba(255,122,18,.75)}}
+  @media (prefers-reduced-motion:reduce){
+    [data-season="halloween"] #brand b,[data-season="halloween"] #verBadge{animation:none}
+  }
   [data-season="halloween"] #verBadge{
     background:linear-gradient(135deg,#B565FF,#FF7A12);
     box-shadow:0 0 10px rgba(181,101,255,.55),inset 0 1px 0 rgba(255,255,255,.3)}
@@ -168,7 +177,7 @@
   #compass small{font-family:var(--tech);font-size:8px;color:var(--mute)}
   #compass.hup{border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
 
-  #fabs{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;gap:9px;align-items:flex-end;max-height:calc(100dvh - 190px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+  #fabs{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;gap:9px;align-items:flex-end;max-height:calc(100dvh - var(--hdrH,190px) - 34px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
   #fabs::-webkit-scrollbar{display:none}
   .fab{width:50px;height:50px;border-radius:50%;border:1px solid var(--edge);background:rgba(28,30,35,.55);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);color:var(--text);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--hair),0 6px 20px rgba(0,0,0,.35);transition:transform .12s cubic-bezier(.2,.8,.2,1)}
   .fab:active{box-shadow:var(--btn-pressed);transform:translateY(2px)}
