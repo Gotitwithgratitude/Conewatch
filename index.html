@@ -417,6 +417,23 @@
   .report-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
   .rtile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:92px;padding:14px 4px;background:var(--btn-face);border:1px solid var(--edge);border-radius:16px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--hair);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);transition:transform .07s ease}
   .rtile:active{transform:scale(.93);background:rgba(255,255,255,.12);border-color:var(--cone)}
+  /* ═══════════ slide-to-browse feedback ═══════════
+     Dragging a finger across the grid lights each tile as it passes, but never confirms —
+     a moved touch doesn't produce a click, so the report only fires on a real tap. This is
+     visual only: no preventDefault, no intercepting, so the existing tap path is untouched. */
+  .rtile{transition:transform .11s cubic-bezier(.2,.8,.2,1),box-shadow .14s ease,border-color .14s ease,background .14s ease}
+  .rtile.lit{transform:scale(1.07);border-color:var(--cone);background:var(--panel-hi);
+    box-shadow:0 0 0 2px var(--cone),0 10px 28px rgba(255,106,31,.34);z-index:1}
+  .rtile.lit .ic{transform:scale(1.12);transition:transform .14s cubic-bezier(.2,.8,.2,1)}
+  .rtile .ic{transition:transform .14s ease}
+  /* a tap that actually files a report gets a distinctly stronger confirmation pulse */
+  .rtile.fired{animation:rtileFire .42s cubic-bezier(.2,.8,.2,1)}
+  @keyframes rtileFire{
+    0%{transform:scale(.93);box-shadow:0 0 0 2px var(--cone)}
+    45%{transform:scale(1.1);box-shadow:0 0 0 5px var(--cone),0 0 34px rgba(255,106,31,.75)}
+    100%{transform:scale(1);box-shadow:var(--hair)}}
+  @media (prefers-reduced-motion:reduce){
+    .rtile.lit{transform:none}.rtile.lit .ic{transform:none}.rtile.fired{animation:none}}
   .rtile .ic{font-size:30px;line-height:1}
 </style>
   <link rel="apple-touch-icon" href="apple-touch-icon.png">

@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v148";
+const APP_VERSION="v149";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2219,9 +2219,49 @@ async function reportHazard(type,note,psev,skipPick,lanes){
 }
 document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
   try{if(navigator.vibrate)navigator.vibrate(40);}catch(e){}
+  // confirmation pulse — visually distinct from the slide highlight so a fired report
+  // never looks like a tile you merely passed over
+  try{ b.classList.remove("fired"); void b.offsetWidth; b.classList.add("fired");
+       setTimeout(function(){ b.classList.remove("fired"); },460); }catch(e){}
   if(b.dataset.closure){ closeSheets(); try{reportClosure();}catch(e){ reportHazard("road_closure"); } return; }
   reportHazard(b.dataset.type);
 });
+
+/* ═══════════ slide across the report grid ═══════════
+   Drag a finger over the tiles and each lights as you reach it. Deliberately does NOT select:
+   a touch that moves doesn't generate a click, so only a real tap files a report. Everything
+   here is presentation — no preventDefault, no stopPropagation, no interference with the tap
+   path above — so if any of it fails the grid still works exactly as it did. */
+(function(){
+  var grid=document.getElementById("reportSheet"); if(!grid) return;
+  var lit=null;
+  function light(el){
+    if(el===lit) return;
+    if(lit) lit.classList.remove("lit");
+    lit=el;
+    if(lit){
+      lit.classList.add("lit");
+      try{ if(navigator.vibrate) navigator.vibrate(8); }catch(e){}   // faint tick per tile
+    }
+  }
+  function tileAt(t){
+    if(!t) return null;
+    var el=document.elementFromPoint(t.clientX,t.clientY);
+    return el ? el.closest("#reportSheet [data-type]") : null;
+  }
+  grid.addEventListener("touchstart",function(e){ light(tileAt(e.touches[0])); },{passive:true});
+  grid.addEventListener("touchmove", function(e){ light(tileAt(e.touches[0])); },{passive:true});
+  ["touchend","touchcancel"].forEach(function(ev){
+    grid.addEventListener(ev,function(){ light(null); },{passive:true});
+  });
+  // pointer devices get the same treatment on hover, without the haptic
+  grid.addEventListener("pointermove",function(e){
+    if(e.pointerType==="touch") return;
+    var el=e.target&&e.target.closest?e.target.closest("#reportSheet [data-type]"):null;
+    if(el!==lit){ if(lit)lit.classList.remove("lit"); lit=el; if(lit)lit.classList.add("lit"); }
+  });
+  grid.addEventListener("pointerleave",function(){ if(lit){lit.classList.remove("lit");lit=null;} });
+})();
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
