@@ -177,7 +177,8 @@
   #compass small{font-family:var(--tech);font-size:8px;color:var(--mute)}
   #compass.hup{border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
 
-  #fabs{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;gap:9px;align-items:flex-end;max-height:calc(100dvh - var(--hdrH,190px) - 62px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+  #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
+  #fabs>*{pointer-events:auto;flex-shrink:0}
   #fabs::-webkit-scrollbar{display:none}
   .fab{width:50px;height:50px;border-radius:50%;border:1px solid var(--edge);background:rgba(28,30,35,.55);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);color:var(--text);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--hair),0 6px 20px rgba(0,0,0,.35);transition:transform .12s cubic-bezier(.2,.8,.2,1)}
   .fab:active{box-shadow:var(--btn-pressed);transform:translateY(2px)}
@@ -307,7 +308,7 @@
   #confirmBar #confAddr{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   #confirmBar .cb-btns{display:flex;gap:6px;flex:0 0 auto}
   body.driving #cluster{bottom:calc(94px + env(safe-area-inset-bottom))}
-  body.driving #fabs{bottom:calc(94px + env(safe-area-inset-bottom))}
+  body.driving #fabs{bottom:calc(94px + env(safe-area-inset-bottom));top:calc(var(--hdrH,190px) + 12px)}
   body.driving #fabLocate{margin-bottom:0}
   #toast{position:fixed;bottom:calc(126px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:2500;background:var(--panel-solid);border:1px solid var(--line);color:var(--text);font-size:13px;padding:10px 16px;border-radius:22px;max-width:86vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .25s;box-shadow:0 8px 24px rgba(0,0,0,.4)}
   #toast.show{opacity:1}
