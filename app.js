@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v139";
+const APP_VERSION="v140";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2179,7 +2179,7 @@ async function radarOn(){
   try{
     if(map.getLayer("cw-radar")) map.removeLayer("cw-radar");
     if(map.getSource("cw-radar")) map.removeSource("cw-radar");
-    map.addSource("cw-radar",{type:"raster",tiles:["https://tilecache.rainviewer.com"+path+"/256/{z}/{x}/{y}/2/1_1.png"],tileSize:256});
+    map.addSource("cw-radar",{type:"raster",tiles:["https://tilecache.rainviewer.com"+path+"/256/{z}/{x}/{y}/2/1_1.png"],tileSize:256,maxzoom:10});
     // insert BENEATH the route line so navigation is never obscured by weather
     var before=null; try{ if(map.getLayer("route-line")) before="route-line"; }catch(e){}
     map.addLayer({id:"cw-radar",type:"raster",source:"cw-radar",paint:{"raster-opacity":0.55}}, before||undefined);
