@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v142";
+const APP_VERSION="v143";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -987,6 +987,21 @@ function fetchT(url,ms){
   return fetch(url,{signal:ac.signal}).finally(()=>clearTimeout(t));
 }
 // race several url->json fetches; resolve with the FIRST that passes `ok(json)`
+/* Resolve with the BEST result rather than the first. Waits for the first success, then gives
+   the remaining requests a short grace period, and returns the lowest-duration route among
+   whatever arrived. Falls back to first-wins behaviour if nothing else lands in time. */
+async function raceBestRoute(urls,ok,ms,graceMs){
+  ok=ok||(()=>true); graceMs=graceMs||1200;
+  const results=[];
+  const tasks=urls.map(u=>fetchT(u,ms).then(r=>r.json()).then(d=>{ if(!ok(d)) throw new Error("reject"); results.push(d); return d; }));
+  const settled=Promise.allSettled(tasks);
+  const first=await Promise.any(tasks);                    // throws only if every request failed
+  await Promise.race([settled,new Promise(r=>setTimeout(r,graceMs))]);
+  const dur=d=>{ try{ return d.routes[0].duration; }catch(e){ return Infinity; } };
+  let best=first;
+  results.forEach(function(d){ if(dur(d)<dur(best)) best=d; });
+  return best;
+}
 async function raceJSON(urls,ok,ms){
   ok=ok||(()=>true);
   const tasks=urls.map(u=>fetchT(u,ms).then(r=>r.json()).then(d=>{ if(ok(d))return d; throw new Error("reject"); }));
@@ -1003,7 +1018,7 @@ async function osrmFetch(coordsStr,alt){
   // car mode: race both public servers, take whichever answers first
   if(S.mode==="car"){
     const backup=`https://router.project-osrm.org/route/v1/driving/${q}`;
-    try{ return await raceJSON([primary,backup],isOk,6000); }
+    try{ return await raceBestRoute([primary,backup],isOk,6000,1200); }
     catch{ /* both failed/timed out — one last try on primary, longer window */
       try{ return await (await fetchT(primary,9000)).json(); }catch{ return {code:"Error"}; }
     }
@@ -1197,7 +1212,7 @@ async function routeFetch(ptsArr){
     }
     toast("Couldn't apply avoidance — showing the normal route.",3000);
   }
-  return await osrmFetch(coordsStr);
+  return await osrmFetch(coordsStr,true);   // always request alternatives so the route picker has something to show
 }
 // toll/highway toggle chips in the route sheet (car mode only)
 function renderRouteOpts(){
@@ -1242,9 +1257,10 @@ async function fetchRoute(silent){
     // We already ask OSRM for alternatives=3 but only ever used routes[0] (the extras were
     // consumed internally for avoid-highway/tolls and otherwise thrown away). Keep them so
     // the driver can pick the corridor, the way Google does and Apple doesn't.
-    S.routeAlts = (data.routes||[]).slice(0,3);
+    var _sorted=(data.routes||[]).slice().sort(function(a,b){ return (a.duration||0)-(b.duration||0); });
+    S.routeAlts = _sorted.slice(0,3);
     S.routeAltIdx = 0;
-    const r=data.routes[0];
+    const r=S.routeAlts[0]||data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
