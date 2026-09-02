@@ -282,11 +282,12 @@
      button so it stays correct at any FAB size). */
   #moreFabs.open{display:grid;grid-template-columns:repeat(2,auto);gap:9px;justify-items:end;
     animation:trayIn .2s cubic-bezier(.2,.8,.2,1);
-    /* the drawer scrolls itself rather than pushing 911, report and re-centre off the rail */
-    max-height:calc(100dvh - var(--hdrH,190px) - 268px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+    /* the drawer is the only child allowed to shrink, so it absorbs whatever space is left
+       and 911 / report / re-centre can never be pushed off the rail */
+    flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
   #moreFabs.open::-webkit-scrollbar{display:none}
   /* radial mode positions each button itself — no bound, no scroll */
-  body[data-tools="radial"] #moreFabs.open{max-height:none;overflow:visible}
+  body[data-tools="radial"] #moreFabs.open{flex:0 0 auto;overflow:visible}
   @keyframes trayIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
   /* radial: the tray itself collapses to nothing and each button is positioned fixed by JS */
   body[data-tools="radial"] #moreFabs.open{display:block;width:0;height:0;margin:0;
