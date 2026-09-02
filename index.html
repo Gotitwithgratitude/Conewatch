@@ -129,6 +129,10 @@
   .go{background:var(--cone);color:#141619}
   .addstop{background:var(--panel-hi);color:var(--text);border:1px solid var(--line)!important}
   #modes{display:flex;gap:6px;margin-top:8px}
+  /* route alternatives: horizontally scrollable, each chip shows time + corridor */
+  #routeAlts::-webkit-scrollbar{display:none}
+  #routeAlts .chip{flex:0 0 auto;text-align:left;line-height:1.25;padding:7px 11px;white-space:nowrap}
+  #routeAlts .chip small{opacity:.7;font-size:10px}
   /* ═══════════ compact header ═══════════
      The header was eating the top third of the screen. Compact hides the mode chips and
      saved destinations (still reachable — tap the chevron) and slims the stripe, handing
@@ -505,6 +509,7 @@
     <div class="rs-sep"></div>
     <div class="rs-stat"><b id="rsDist">—</b><small id="rsDistU">mi</small></div>
   </div>
+  <div id="routeAlts" style="display:none;gap:6px;margin:2px 0 10px;overflow-x:auto;scrollbar-width:none"></div>
   <div id="routeEnds">
     <div class="re-row" id="reFrom">
       <span class="re-ic re-start"></span>
@@ -626,6 +631,7 @@
     <button class="chip" data-size="l">L</button>
     <button class="chip" data-size="xl">XL</button></span></div>
   <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
+  <button class="row-btn" id="toggleRadar"><span class="ic">🌧</span><span>Weather radar<small id="radarState">Off — tap to show rain &amp; snow</small></span></button>
   <button class="row-btn" id="toggleFilters"><span class="ic">👁</span><span>Show on map<small id="filterState">All hazard types visible</small></span></button>
   <div id="hzFilters" style="display:none;flex-wrap:wrap;gap:6px;margin:8px 0 2px"></div>
   <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>

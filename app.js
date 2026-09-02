@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v137";
+const APP_VERSION="v139";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1239,6 +1239,11 @@ async function fetchRoute(silent){
     ]);
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
     if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
+    // We already ask OSRM for alternatives=3 but only ever used routes[0] (the extras were
+    // consumed internally for avoid-highway/tolls and otherwise thrown away). Keep them so
+    // the driver can pick the corridor, the way Google does and Apple doesn't.
+    S.routeAlts = (data.routes||[]).slice(0,3);
+    S.routeAltIdx = 0;
     const r=data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
@@ -1254,10 +1259,57 @@ async function fetchRoute(silent){
   }catch(e){ toast("Routing failed — check connection.",2600); }
   finally{ S.rerouting=false; }
 }
+/* ═══════════ route alternatives ═══════════
+   Name a route by a distinctive road it uses, so "via I-75" beats "Route 2". Pulled from the
+   step names OSRM already returns — prefer a numbered highway, else the longest-used street. */
+function routeAltName(rt){
+  try{
+    var steps=(rt.legs||[]).flatMap(function(l){ return l.steps||[]; });
+    var byName={};
+    steps.forEach(function(st){
+      var n=(st.name||"").trim(); if(!n) return;
+      byName[n]=(byName[n]||0)+(st.distance||0);
+    });
+    var names=Object.keys(byName);
+    if(!names.length) return "Alternate";
+    var hwy=names.filter(function(n){ return /\b(I-|US-|M-|SR-|Hwy|Fwy|Freeway|Expressway)\b/i.test(n); })
+                 .sort(function(a,b){ return byName[b]-byName[a]; })[0];
+    var best=hwy||names.sort(function(a,b){ return byName[b]-byName[a]; })[0];
+    return "via "+best;
+  }catch(e){ return "Alternate"; }
+}
+function selectRouteAlt(i){
+  var alts=S.routeAlts||[]; if(!alts[i]) return;
+  S.routeAltIdx=i;
+  var r=alts[i];
+  S.route=r; S.steps=r.legs.flatMap(function(l){ return l.steps; });
+  S.stepIdx=0; S.peekIdx=null; S.offRouteCount=0; S.alerted.clear();
+  S._ri=undefined; S._riT=0;
+  try{ map.getSource("route").setData({type:"Feature",geometry:r.geometry}); }catch(e){}
+  try{ refreshRouteCondition(); }catch(e){}
+  try{ renderRouteSheet(r); }catch(e){}
+  try{ loadElevation(r); }catch(e){}
+}
+function renderRouteAlts(){
+  var box=$("routeAlts"); if(!box) return;
+  var alts=S.routeAlts||[];
+  if(alts.length<2){ box.style.display="none"; box.innerHTML=""; return; }
+  box.style.display="flex"; box.innerHTML="";
+  alts.forEach(function(rt,i){
+    var mins=Math.max(1,Math.round(rt.duration*rushFactor()/60));
+    var km=S.units==="km", dv=km?(rt.distance/1000):(rt.distance/1609.34);
+    var b=document.createElement("button");
+    b.className="chip"+(i===S.routeAltIdx?" on":"");
+    b.innerHTML="<b>"+mins+" min</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+"</small>";
+    b.onclick=function(){ selectRouteAlt(i); renderRouteAlts(); };
+    box.appendChild(b);
+  });
+}
 function renderRouteSheet(r){
   const el=(id)=>{ try{ return $(id); }catch(e){ return null; } };
   const setTxt=(id,v)=>{ const e=el(id); if(e) e.textContent=v; };
   setTxt("rsTitle",S.destName);
+  try{ renderRouteAlts(); }catch(e){}
   const rush=rushFactor()>1?" · rush-hour adjusted":"";
   const secs=r.duration*rushFactor();
   const arrClock=new Date(Date.now()+secs*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
@@ -1390,7 +1442,13 @@ async function startNavigation(){
   // actually on it.
   S.remoteStart = !!S.origin;
   if(S.remoteStart) toast("Following the planned route — guidance starts when you reach it.",4200);
-  S.navigating=true;S.follow=true;S.headingUp=true;updateFollowUI();updateCompassUI();
+  // Navigation used to force heading-up every time, silently overriding a driver who had
+  // deliberately chosen north-up. Respect the stored preference instead — this is the exact
+  // thing Apple gets asked for and doesn't do.
+  var _nu=false; try{ _nu=localStorage.getItem("cw_north_up")==="1"; }catch(e){}
+  S.navigating=true;S.follow=true;S.headingUp=!_nu;
+  if(_nu){ try{ map.easeTo({bearing:0}); }catch(e){} }
+  updateFollowUI();updateCompassUI();
   try{$("confirmBar").style.display="none";}catch(e){}   // clean hand-off — no overlapping cards
   closeSheets();
   $("navbanner").style.display="block";
@@ -1404,7 +1462,12 @@ async function startNavigation(){
   document.body.classList.add("driving"); layout();
   try{if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});}catch{}
   requestWakeLock(); requestMotion();
-  pollLimit(); clearInterval(limitTimer); limitTimer=setInterval(pollLimit,18000);
+  pollLimit(); clearInterval(limitTimer);
+  limitTimer=setInterval(function(){
+    if(document.hidden) return;                       // no map on screen — nothing to update
+    if(S.limit && (S.speedMph||0) < 3) return;        // stopped and we already know the limit
+    pollLimit();
+  },18000);
   speak("Starting navigation to "+S.destName+".");
   toast("Navigation started — drive safe. Screen will stay awake.");
 }
@@ -2096,6 +2159,57 @@ function placeLabelMarker(lat,lng,text,color,emoji){
     return new maplibregl.Marker({element:el,anchor:"top"}).setLngLat([lng,lat]).addTo(map);
   }catch(e){return null;}
 }
+/* ═══════════ weather radar overlay ═══════════
+   RainViewer public tiles: free, no key, ~10 min refresh. Nobody in the navigation space
+   ships live precipitation on the driving map — it pairs naturally with the flooding and
+   ice hazard types already here. Off by default; a raster layer under no circumstances
+   goes above the route line or the hazard markers. */
+var _radarTs=null, _radarTimer=null;
+async function radarFrame(){
+  try{
+    var d=await (await fetch("https://api.rainviewer.com/public/weather-maps.json")).json();
+    var past=(d&&d.radar&&d.radar.past)||[];
+    return past.length ? past[past.length-1].path : null;
+  }catch(e){ return null; }
+}
+async function radarOn(){
+  var path=await radarFrame();
+  if(!path){ toast("Radar unavailable right now",2200); return false; }
+  _radarTs=path;
+  try{
+    if(map.getLayer("cw-radar")) map.removeLayer("cw-radar");
+    if(map.getSource("cw-radar")) map.removeSource("cw-radar");
+    map.addSource("cw-radar",{type:"raster",tiles:["https://tilecache.rainviewer.com"+path+"/256/{z}/{x}/{y}/2/1_1.png"],tileSize:256});
+    // insert BENEATH the route line so navigation is never obscured by weather
+    var before=null; try{ if(map.getLayer("route-line")) before="route-line"; }catch(e){}
+    map.addLayer({id:"cw-radar",type:"raster",source:"cw-radar",paint:{"raster-opacity":0.55}}, before||undefined);
+  }catch(e){ return false; }
+  return true;
+}
+function radarOff(){
+  try{ if(map.getLayer("cw-radar")) map.removeLayer("cw-radar"); }catch(e){}
+  try{ if(map.getSource("cw-radar")) map.removeSource("cw-radar"); }catch(e){}
+  if(_radarTimer){ clearInterval(_radarTimer); _radarTimer=null; }
+}
+document.addEventListener("visibilitychange",function(){
+  if(!document.hidden && S.radarOn){ radarFrame().then(function(p){ if(p&&p!==_radarTs) radarOn(); }); }
+});
+async function toggleRadar(){
+  var on=!(S.radarOn);
+  if(on){
+    var ok=await radarOn(); if(!ok) return;
+    S.radarOn=true;
+    _radarTimer=setInterval(function(){
+      if(document.hidden) return;                     // don't pull tiles for a screen nobody sees
+      radarFrame().then(function(p){ if(p&&p!==_radarTs) radarOn(); });
+    },600000);
+    toast("Weather radar on — precipitation, refreshes every 10 min",2600);
+  } else {
+    S.radarOn=false; radarOff(); toast("Weather radar off",1400);
+  }
+  try{ localStorage.setItem("cw_radar",S.radarOn?"1":"0"); }catch(e){}
+  var st=$("radarState"); if(st) st.textContent=S.radarOn?"On — live precipitation":"Off — tap to show rain & snow";
+}
 function openCategorySearch(cat){ curCat=cat; curRadius=8000; openSheet("discoverSheet"); var t=$("discoverTitle"); if(t)t.textContent=cat.emoji+" "+cat.label+" — nearest first"; runCategory(); }
 function discoverByPoi(tag){ var cat=POI_TAGS[tag]; if(cat){ cat=Object.assign({key:tag},cat); openCategorySearch(cat); } }
 async function runCategory(){
@@ -2151,7 +2265,8 @@ function updateCompassUI(){
 $("compass").onclick=async()=>{
   await requestMotion();
   S.headingUp=!S.headingUp;
-  toast(S.headingUp?"Heading-up — map rotates with you":"North-up");
+  try{ localStorage.setItem("cw_north_up", S.headingUp?"0":"1"); }catch(e){}   // remembered across trips
+  toast(S.headingUp?"Heading-up — map rotates with you":"North-up — locked, stays north while navigating");
   if(!S.headingUp)map.easeTo({bearing:0});
   cameraFollow();updateCompassUI();
 };
@@ -2499,6 +2614,7 @@ $("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").text
 $("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bumpOn?"On — hard bumps prompt a pothole report":"Off";saveSettings();};
 $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
+$("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
 document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
 document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
 $("hdrToggle")&&($("hdrToggle").onclick=function(ev){ ev.stopPropagation(); toggleHdrCompact(); });
