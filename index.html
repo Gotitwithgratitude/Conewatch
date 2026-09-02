@@ -177,7 +177,7 @@
   #compass small{font-family:var(--tech);font-size:8px;color:var(--mute)}
   #compass.hup{border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
 
-  #fabs{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;gap:9px;align-items:flex-end;max-height:calc(100dvh - var(--hdrH,190px) - 34px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+  #fabs{position:fixed;right:12px;bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;gap:9px;align-items:flex-end;max-height:calc(100dvh - var(--hdrH,190px) - 62px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
   #fabs::-webkit-scrollbar{display:none}
   .fab{width:50px;height:50px;border-radius:50%;border:1px solid var(--edge);background:rgba(28,30,35,.55);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);color:var(--text);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--hair),0 6px 20px rgba(0,0,0,.35);transition:transform .12s cubic-bezier(.2,.8,.2,1)}
   .fab:active{box-shadow:var(--btn-pressed);transform:translateY(2px)}
@@ -599,6 +599,11 @@
     <button class="chip on" data-theme-set="auto">Auto</button>
     <button class="chip" data-theme-set="light">Light</button>
     <button class="chip" data-theme-set="dark">Dark</button></span></div>
+  <div class="kv"><span>Marker size</span><span id="sizeChips" style="display:flex;gap:6px">
+    <button class="chip" data-size="s">S</button>
+    <button class="chip on" data-size="m">M</button>
+    <button class="chip" data-size="l">L</button>
+    <button class="chip" data-size="xl">XL</button></span></div>
   <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
   <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>
   <div class="kv"><span>Vehicle economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>

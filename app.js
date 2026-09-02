@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v133";
+const APP_VERSION="v134";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -255,10 +255,10 @@ function restyleHazMarker(h){
   const isPot=h.type==="pothole";
   const col=isPot?potColor(h):m.color;
   const sc=isPot?potScale(h):hazScale(h);
-  const px=Math.round(23*sc);
+  const px=Math.round(markerBase()*sc);
   el.style.background=col;
   el.style.width=px+"px"; el.style.height=px+"px";
-  el.style.fontSize=Math.round(12*sc)+"px";
+  el.style.fontSize=Math.round(markerBase()*0.52*sc)+"px";
   el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+col+"33";
   el.dataset.basePx=px;
 }
@@ -1775,6 +1775,27 @@ function cwInjectFX(){
   }catch(e){}
 }
 try{ cwInjectFX(); }catch(e){}   // inject at load so the banner fix applies before any hazard renders
+/* ═══════════ user-adjustable marker size ═══════════
+   Map density varies enormously — downtown at night is nothing like a highway at rush hour,
+   and what reads as "clear" depends on the phone, the mount distance, and the eyes. So this
+   is a preference, not a constant. Base px per step; every marker path multiplies through it.
+   Stored per-device; changes apply live to markers already on the map. */
+const MARKER_SIZES = { s:17, m:23, l:30, xl:38 };
+function markerBase(){
+  try{ var v=localStorage.getItem("cw_marker_size"); if(v&&MARKER_SIZES[v]) return MARKER_SIZES[v]; }catch(e){}
+  return MARKER_SIZES.m;
+}
+function markerSizeKey(){
+  try{ var v=localStorage.getItem("cw_marker_size"); if(v&&MARKER_SIZES[v]) return v; }catch(e){}
+  return "m";
+}
+function setMarkerSize(k){
+  if(!MARKER_SIZES[k]) return;
+  try{ localStorage.setItem("cw_marker_size",k); }catch(e){}
+  try{ (S.hazards||[]).forEach(restyleHazMarker); }catch(e){}
+  try{ document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===k); }); }catch(e){}
+  toast("Marker size: "+({s:"Small",m:"Medium",l:"Large",xl:"Extra large"}[k]),1300);
+}
 function addHazardMarker(h){
   cwInjectFX();
   if(!h.id)h.id="h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -1789,9 +1810,9 @@ function addHazardMarker(h){
     const sc=potScale(h);
     // Size via width/height — MapLibre writes `transform` on this element to position it,
     // so scaling with transform detached the marker and made it drift on zoom.
-    const base=23, px=Math.round(base*sc);
+    const base=markerBase(), px=Math.round(base*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(12*sc)+"px";
+    el.style.fontSize=Math.round(markerBase()*0.52*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+potColor(h)+"33";
     el.dataset.basePx=px;
   } else if(h.type==="ice"){
@@ -1800,9 +1821,9 @@ function addHazardMarker(h){
     el.classList.add("hz-ice");
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(23*sc);
+    const px=Math.round(markerBase()*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(12*sc)+"px";
+    el.style.fontSize=Math.round(markerBase()*0.52*sc)+"px";
     el.dataset.basePx=px;
   } else if(h.type==="police"){
     // Police gets the red↔blue cruiser cross-fade (glow only). Leave box-shadow to the
@@ -1810,17 +1831,17 @@ function addHazardMarker(h){
     el.classList.add("hz-police");
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(23*sc);
+    const px=Math.round(markerBase()*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(12*sc)+"px";
+    el.style.fontSize=Math.round(markerBase()*0.52*sc)+"px";
     el.dataset.basePx=px;
   } else {
     // Every other hazard: sized by how much it matters, with a matching solid glow ring.
     el.style.background=m.color;
     const sc=hazScale(h);
-    const px=Math.round(23*sc);
+    const px=Math.round(markerBase()*sc);
     el.style.width=px+"px"; el.style.height=px+"px";
-    el.style.fontSize=Math.round(12*sc)+"px";
+    el.style.fontSize=Math.round(markerBase()*0.52*sc)+"px";
     el.style.boxShadow="0 0 0 "+(2+sc*2).toFixed(0)+"px "+m.color+"33";
     el.dataset.basePx=px;
   }
@@ -2421,6 +2442,10 @@ $("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").text
 $("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bumpOn?"On — hard bumps prompt a pothole report":"Off";saveSettings();};
 $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
+document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
+try{ var _mk=markerSizeKey();
+  document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===_mk); });
+}catch(e){}
 try{ applySeason(); }catch(e){}
 document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll("#themeChips .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");
