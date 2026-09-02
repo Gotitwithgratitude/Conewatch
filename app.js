@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v136";
+const APP_VERSION="v137";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -77,7 +77,7 @@ function applySeason(){
   if(on){ try{
     if(localStorage.getItem("cw_season_seen")!==String(new Date().getFullYear())){
       localStorage.setItem("cw_season_seen",String(new Date().getFullYear()));
-      setTimeout(function(){ toast("🎃 ConeWatch is haunted for Halloween — tap the pumpkin badge",4200); },1800);
+      setTimeout(function(){ toast("🎃 ConeWatch is haunted for Halloween — tap the version badge to switch it off",4600); },1800);
     }
   }catch(e){} }
   var st=$("seasonState");
