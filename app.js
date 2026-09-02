@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v141";
+const APP_VERSION="v142";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2904,6 +2904,55 @@ function _tourDist(m){ if(S.units==="km"){return m>=1000?(m/1000).toFixed(1)+" k
 function _posAt(co,cum,d){ if(d<=0)return co[0]; const tot=cum[cum.length-1]; if(d>=tot)return co[co.length-1]; let i=1; while(i<cum.length&&cum[i]<d)i++; const t=(d-cum[i-1])/((cum[i]-cum[i-1])||1); return [co[i-1][0]+(co[i][0]-co[i-1][0])*t, co[i-1][1]+(co[i][1]-co[i-1][1])*t]; }
 function _brgAt(co,cum,d){ let i=1; while(i<cum.length&&cum[i]<d)i++; const a=co[Math.max(0,i-1)],b=co[Math.min(co.length-1,i)]; return _brg(a,b); }
 
+/* ═══════════ aerial view of a destination ═══════════
+   Public photo coverage is thin outside landmarks, and for a driver an overhead is often the
+   more useful picture anyway: which building, where the lot is, which side the entrance is on.
+   Built from the satellite tiles the app already uses (keyless Esri, or the user's MapTiler
+   key if set) as a 3x3 mosaic centred on the point — no new provider, no key required. */
+function _lon2tile(lon,z){ return (lon+180)/360*Math.pow(2,z); }
+function _lat2tile(lat,z){ var r=lat*Math.PI/180; return (1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*Math.pow(2,z); }
+function aerialMosaic(lat,lng,z,label){
+  var tiles=satTiles(), meta=satMeta();
+  var xf=_lon2tile(lng,z), yf=_lat2tile(lat,z);
+  var x0=Math.floor(xf), y0=Math.floor(yf);
+  var wrap=document.createElement("div");
+  wrap.style.cssText="grid-column:1/-1;margin-bottom:10px";
+  var cap=document.createElement("div");
+  cap.className="sub";
+  cap.style.cssText="margin:0 0 5px;font-size:12px";
+  cap.textContent=label;
+  wrap.appendChild(cap);
+  var grid=document.createElement("div");
+  grid.style.cssText="position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-radius:12px;overflow:hidden;background:#111;aspect-ratio:1/1";
+  for(var dy=-1;dy<=1;dy++){
+    for(var dx=-1;dx<=1;dx++){
+      var url=tiles[0].replace("{z}",z).replace("{x}",x0+dx).replace("{y}",y0+dy);
+      var im=document.createElement("img");
+      im.src=url; im.loading="lazy"; im.referrerPolicy="no-referrer";
+      im.style.cssText="width:100%;height:100%;object-fit:cover;display:block";
+      im.onerror=function(){ this.style.opacity=".15"; };
+      grid.appendChild(im);
+    }
+  }
+  // crosshair on the exact point — it sits at a fraction across the CENTRE tile of the 3x3
+  var fx=(1+(xf-x0))/3*100, fy=(1+(yf-y0))/3*100;
+  var pin=document.createElement("div");
+  pin.style.cssText="position:absolute;left:"+fx.toFixed(2)+"%;top:"+fy.toFixed(2)+"%;width:18px;height:18px;"+
+    "margin:-9px 0 0 -9px;border:2.5px solid #FF6A1F;border-radius:50%;box-shadow:0 0 0 2px rgba(0,0,0,.55),0 0 12px rgba(255,106,31,.9);pointer-events:none";
+  grid.appendChild(pin);
+  wrap.appendChild(grid);
+  var att=document.createElement("div");
+  att.className="sub"; att.style.cssText="margin:4px 0 0;font-size:9px;opacity:.6";
+  att.textContent=meta.attr;
+  wrap.appendChild(att);
+  return wrap;
+}
+function showAerial(lat,lng){
+  var g=$("photoGrid"); if(!g) return;
+  g.appendChild(aerialMosaic(lat,lng,18,"Overhead — building level"));
+  g.appendChild(aerialMosaic(lat,lng,16,"Overhead — surrounding block"));
+}
+
 /* v33: keyless place photos via Wikimedia (landmarks/known places have best coverage) */
 async function loadPlacePhotos(lat,lng,name){
   $("photoSheet").style.display="block";
@@ -2925,8 +2974,15 @@ async function loadPlacePhotos(lat,lng,name){
       .then(r=>r.json()).then(d=>{ const p=(d.query&&d.query.pages)||{}; add(Object.values(p).map(x=>x.imageinfo&&x.imageinfo[0]&&x.imageinfo[0].thumburl)); }).catch(()=>{}));
   });
   await Promise.all(jobs);
-  if(!imgs.length){ $("photoGrid").innerHTML='<p class="sub" style="grid-column:1/-1">No public photos found nearby. Well-known spots have the best coverage.</p>'; return; }
   $("photoGrid").innerHTML="";
+  try{ showAerial(lat,lng); }catch(e){}
+  if(!imgs.length){
+    var n=document.createElement("p");
+    n.className="sub"; n.style.cssText="grid-column:1/-1;margin:2px 0 0";
+    n.textContent="No public street-level photos here — showing the overhead instead.";
+    $("photoGrid").appendChild(n);
+    return;
+  }
   imgs.slice(0,12).forEach(src=>{ const im=document.createElement("img"); im.src=src; im.loading="lazy"; im.referrerPolicy="no-referrer"; im.onerror=function(){this.style.display="none";}; im.style.cssText="width:100%;height:120px;object-fit:cover;border-radius:10px;display:block;background:#eee"; $("photoGrid").appendChild(im); });
 }
 $("placePhotos")&&($("placePhotos").onclick=()=>{ if(!S.dest)return toast("Pick a destination first."); loadPlacePhotos(S.dest.lat,S.dest.lng,S.destName); });
