@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v143";
+const APP_VERSION="v144";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -356,6 +356,7 @@ function applyMapMode(){
   // Discover POI markers: hidden in minimal
   try{ poiMarkers.forEach(m=>{ const el=m.getElement&&m.getElement(); if(el) el.style.display=(mode==="minimal")?"none":""; }); }catch(e){}
   const btn=$("fabMapMode"); if(btn){ btn.classList.toggle("active",mode!=="full"); btn.textContent=(mode==="minimal")?"▁":(mode==="clean")?"◐":"◑"; }
+  try{ layout(); }catch(e){}   // header shrinks in minimal — re-measure --hdrH so the FAB rail follows
 }
 function cycleMapMode(){
   const i=MAP_MODES.indexOf(S.mapMode||"full");
