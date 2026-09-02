@@ -46,6 +46,29 @@
     --btn-shadow:0 6px 16px rgba(20,30,45,.18), inset 0 1px 0 rgba(255,255,255,.9), inset 0 -2px 4px rgba(20,30,45,.12);
     --btn-pressed:0 2px 5px rgba(20,30,45,.15), inset 0 2px 6px rgba(20,30,45,.2);
   }
+  /* ═══════════ seasonal: Halloween ═══════════
+     Palette-only override. Deepens the background toward warm black, pushes the existing
+     cone orange to amber, and swaps the teal nav accent for the purple already in the
+     palette. Hazard marker colors are NOT touched — those stay constant year-round so
+     drivers recognize them by color at speed. Gated Oct 1–Nov 1 (see _seasonActive). */
+  [data-season="halloween"]{
+    --bg:#0B0704; --panel:rgba(38,28,18,.55); --panel-solid:rgba(28,20,13,.86);
+    --panel-hi:rgba(255,180,90,.06);
+    --line:rgba(255,170,80,.15); --edge:rgba(255,170,80,.08);
+    --cone:#FF7A12; --yellow:#FFB627;
+    --nav-accent:#B565FF; --glow:rgba(181,101,255,.4);
+  }
+  [data-season="halloween"] #stripe{
+    background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,#1A0F06 13px 26px)}
+  [data-season="halloween"] #brand{text-shadow:0 0 20px rgba(255,122,18,.45)}
+  [data-season="halloween"] #verBadge{
+    background:linear-gradient(135deg,#B565FF,#FF7A12);
+    box-shadow:0 0 10px rgba(181,101,255,.55),inset 0 1px 0 rgba(255,255,255,.3)}
+  [data-season="halloween"][data-theme="light"]{
+    --bg:#F5EFE6; --panel:rgba(255,255,255,.82); --panel-solid:#FFFDFA;
+    --line:rgba(90,50,10,.14); --edge:rgba(90,50,10,.07);
+    --text:#1F1509; --mute:#6B5A45; --nav-accent:#7B3FBF; --glow:rgba(123,63,191,.4);
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html{background:#000}
   body{background:var(--bg)}
@@ -567,6 +590,7 @@
     <button class="chip on" data-theme-set="auto">Auto</button>
     <button class="chip" data-theme-set="light">Light</button>
     <button class="chip" data-theme-set="dark">Dark</button></span></div>
+  <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
   <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>
   <div class="kv"><span>Vehicle economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
   <div class="kv"><span>Gas price ($/gal)</span><input class="field" id="gasPrice" value="2.89" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>

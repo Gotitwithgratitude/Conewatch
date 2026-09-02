@@ -19,7 +19,55 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v129";
+const APP_VERSION="v131";
+
+/* ═══════════ seasonal theme (Halloween) ═══════════
+   Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
+   hazard marker keeps its year-round emoji and color: a driver at speed recognizes 🚨 and
+   🕳 by shape and color before reading anything, and a seasonal skin is not worth costing
+   recognition time on the alerts that matter. Only 'animal' changes (🦌→🦇 still reads
+   "creature in the road") plus the destination flag and the map's own chrome.
+   Mode: "auto" (Oct 1–Nov 1), "on", or "off" — stored in localStorage. */
+const SEASON_SWAP = { animal:"🦇" };
+const _hzEmojiBase = {};
+Object.keys(HZ_META).forEach(function(k){ _hzEmojiBase[k]=HZ_META[k].emoji; });
+
+function seasonMode(){ try{ return localStorage.getItem("cw_season")||"auto"; }catch(e){ return "auto"; } }
+function _inSeasonWindow(){
+  var d=new Date(), m=d.getMonth(), day=d.getDate();
+  return (m===9) || (m===10 && day===1);          // Oct 1 – Nov 1 inclusive
+}
+function seasonActive(){
+  var mode=seasonMode();
+  return mode==="on" || (mode==="auto" && _inSeasonWindow());
+}
+function applySeason(){
+  var on=seasonActive();
+  try{
+    if(on) document.documentElement.setAttribute("data-season","halloween");
+    else document.documentElement.removeAttribute("data-season");
+  }catch(e){}
+  // swap the safe glyphs in place so every consumer (markers, popups, report grid, toasts) follows
+  Object.keys(_hzEmojiBase).forEach(function(k){
+    HZ_META[k].emoji = (on && SEASON_SWAP[k]) ? SEASON_SWAP[k] : _hzEmojiBase[k];
+  });
+  try{ if(destMarker){ var de=destMarker.getElement(); if(de) de.textContent = on?"🎃":"🏁"; } }catch(e){}
+  // repaint any live hazard markers + the report-sheet tile so the swap shows without a reload
+  try{ (S.hazards||[]).forEach(function(h){
+    if(h._marker && SEASON_SWAP[h.type]){ var e2=h._marker.getElement(); if(e2) e2.textContent=HZ_META[h.type].emoji; }
+  }); }catch(e){}
+  try{ var tile=document.querySelector('#reportSheet [data-type="animal"] .ic');
+       if(tile) tile.textContent=HZ_META.animal.emoji; }catch(e){}
+  var st=$("seasonState");
+  if(st) st.textContent = seasonMode()==="auto" ? (on?"Auto — on now (Oct 1–Nov 1)":"Auto — on Oct 1–Nov 1")
+        : (seasonMode()==="on" ? "On — forced" : "Off");
+}
+function cycleSeason(){
+  var next={auto:"on",on:"off",off:"auto"}[seasonMode()]||"auto";
+  try{ localStorage.setItem("cw_season",next); }catch(e){}
+  applySeason();
+  toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
+}
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -887,7 +935,7 @@ try{if($("tripCount")&&TRIPS.length)$("tripCount").textContent=TRIPS.length+" dr
   }
   try{ learnVisit(name,latlng); }catch(e){}   // on-device pattern learning (frequency + time of day)
   if(destMarker)destMarker.remove();
-  const el=document.createElement("div");el.className="dest-flag";el.textContent="🏁";
+  const el=document.createElement("div");el.className="dest-flag";el.textContent=(typeof seasonActive==="function"&&seasonActive())?"🎃":"🏁";
   destMarker=new maplibregl.Marker({element:el,anchor:"bottom"}).setLngLat([latlng.lng,latlng.lat]).addTo(map);
   if(!S.pos){toast("Waiting for GPS… if stuck, allow Location in browser settings…");map.easeTo({center:[latlng.lng,latlng.lat],zoom:15});return;}
   fetchRoute();
@@ -2336,6 +2384,8 @@ $("toggleSaver").onclick=()=>{S.saver=!S.saver;$("saverState").textContent=S.sav
 $("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").textContent=S.audioAlerts?"On — beeps near hazards while navigating":"Off — visual alerts only";};
 $("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bumpOn?"On — hard bumps prompt a pothole report":"Off";saveSettings();};
 $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
+$("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
+try{ applySeason(); }catch(e){}
 document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll("#themeChips .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");
   S.themeMode=c.dataset.themeSet;applyTheme(true);
@@ -3443,12 +3493,30 @@ function lookupCachedGeocode(typed){
   try{const c=JSON.parse(localStorage.getItem("cw_geo")||"{}");return c[typed.trim().toLowerCase()]||null;}catch{return null;}
 }
 function _milesFrom(lat,lng){ if(!S.pos)return ""; try{ var d=distM(S.pos,{lat:lat,lng:lng})/1609.34; return d<0.1?"":("≈ "+(d<10?d.toFixed(1):Math.round(d))+" mi away"); }catch(e){ return ""; } }
+/* Does this candidate contain everything the driver typed? "flower bowl" matches
+   "The Flower Bowl" but NOT "Seaviche Tacos & Bowls" (no "flower"). Used to tier the
+   picker so a real name match can't be pushed down by a closer partial match. */
+function _matchesAllWords(label,typed){
+  var norm=function(s){ return String(s||"").toLowerCase().replace(/['\u2019]/g,"").replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim(); };
+  var hay=norm(label), toks=norm(typed).split(" ").filter(Boolean);
+  if(!hay||!toks.length) return false;
+  return toks.every(function(t){ return hay.indexOf(t)>-1; });
+}
 function showGeoPicker(cands,typed){
   pushUI();
-  // sort nearest → furthest so the list reads by distance
-  if(S.pos){ try{ cands=cands.slice().sort((a,b)=>distM(S.pos,{lat:a.lat,lng:a.lng})-distM(S.pos,{lat:b.lat,lng:b.lng})); }catch(e){} }
+  // Sort in two tiers: places matching every word typed come first, then everything else —
+  // nearest-first WITHIN each tier. Pure distance sorting put "Seaviche Tacos & Bowls" (0.6mi,
+  // matches only "bowl") above "The Flower Bowl" (2.6mi, the actual thing searched for).
+  if(S.pos){ try{
+    var _d=function(c){ return distM(S.pos,{lat:c.lat,lng:c.lng}); };
+    cands=cands.slice().sort(function(a,b){
+      var am=_matchesAllWords(a.label,typed)?0:1, bm=_matchesAllWords(b.label,typed)?0:1;
+      if(am!==bm) return am-bm;
+      return _d(a)-_d(b);
+    });
+  }catch(e){} }
   var list=$("geoPickerList"); list.innerHTML="";
-  $("geoPickerSub").textContent=cands.length>3?"Nearest first — tap the right one for \u201C"+typed+"\u201D":"Tap the correct address for \u201C"+typed+"\u201D";
+  $("geoPickerSub").textContent=cands.length>3?"Best matches first — tap the right one for \u201C"+typed+"\u201D":"Tap the correct address for \u201C"+typed+"\u201D";
   cands.forEach(function(c){
     var row=document.createElement("button");
     row.className="btn ghost";
