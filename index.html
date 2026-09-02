@@ -129,6 +129,21 @@
   .go{background:var(--cone);color:#141619}
   .addstop{background:var(--panel-hi);color:var(--text);border:1px solid var(--line)!important}
   #modes{display:flex;gap:6px;margin-top:8px}
+  /* ═══════════ compact header ═══════════
+     The header was eating the top third of the screen. Compact hides the mode chips and
+     saved destinations (still reachable — tap the chevron) and slims the stripe, handing
+     that space back to the map. Purely visual; nothing is removed from the DOM. */
+  body.hdr-compact #modes,body.hdr-compact #quick{display:none!important}
+  body.hdr-compact #stripe{height:4px;margin-bottom:6px}
+  body.hdr-compact #hdr{padding-bottom:7px}
+  #hdrToggle{position:absolute;right:8px;bottom:-1px;width:34px;height:18px;border:none;
+    background:transparent;color:var(--mute);font-size:12px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;opacity:.75}
+  #hdrToggle:active{opacity:1}
+  #hdr{position:relative}
+  /* ═══════════ FAB size ═══════════ */
+  body[data-fab="s"] .fab{width:42px;height:42px;font-size:16px}
+  body[data-fab="l"] .fab{width:58px;height:58px;font-size:22px}
   .mode{flex:1;background:var(--btn-face);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);border:1px solid var(--edge);color:var(--mute);border-radius:12px;padding:8px 0;font-size:15px;cursor:pointer;text-align:center;box-shadow:var(--hair)}
   .mode:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
   .mode.on{color:var(--text);border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
@@ -410,6 +425,7 @@
     <button class="mode" data-mode="hike" aria-label="Mountain / trail">⛰️</button>
   </div>
   <div id="quick" style="display:none;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
+  <button id="hdrToggle" aria-label="Collapse header">▲</button>
 </header>
 
 <div id="navbanner" role="status">
@@ -600,12 +616,18 @@
     <button class="chip on" data-theme-set="auto">Auto</button>
     <button class="chip" data-theme-set="light">Light</button>
     <button class="chip" data-theme-set="dark">Dark</button></span></div>
+  <div class="kv"><span>Button size</span><span id="fabChips" style="display:flex;gap:6px">
+    <button class="chip" data-fab="s">S</button>
+    <button class="chip on" data-fab="m">M</button>
+    <button class="chip" data-fab="l">L</button></span></div>
   <div class="kv"><span>Marker size</span><span id="sizeChips" style="display:flex;gap:6px">
     <button class="chip" data-size="s">S</button>
     <button class="chip on" data-size="m">M</button>
     <button class="chip" data-size="l">L</button>
     <button class="chip" data-size="xl">XL</button></span></div>
   <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
+  <button class="row-btn" id="toggleFilters"><span class="ic">👁</span><span>Show on map<small id="filterState">All hazard types visible</small></span></button>
+  <div id="hzFilters" style="display:none;flex-wrap:wrap;gap:6px;margin:8px 0 2px"></div>
   <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>
   <div class="kv"><span>Vehicle economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
   <div class="kv"><span>Gas price ($/gal)</span><input class="field" id="gasPrice" value="2.89" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>

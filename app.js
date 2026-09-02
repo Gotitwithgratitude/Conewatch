@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v135";
+const APP_VERSION="v136";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1796,12 +1796,69 @@ function setMarkerSize(k){
   try{ document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===k); }); }catch(e){}
   toast("Marker size: "+({s:"Small",m:"Medium",l:"Large",xl:"Extra large"}[k]),1300);
 }
+/* ═══════════ personalization: header, buttons, hazard filters ═══════════
+   All three follow the same shape as marker size: a localStorage key, an apply() that can
+   run at boot or live, and a control in Settings. Nothing here is destructive — filters
+   hide markers, they never drop the underlying report. */
+function _pref(k,d){ try{ return localStorage.getItem(k)||d; }catch(e){ return d; } }
+function _setPref(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+// ── compact header
+function applyHdrCompact(){
+  var on=_pref("cw_hdr_compact","0")==="1";
+  try{ document.body.classList.toggle("hdr-compact",on);
+       var t=$("hdrToggle"); if(t){ t.textContent = on?"\u25bc":"\u25b2";
+         t.setAttribute("aria-label", on?"Expand header":"Collapse header"); }
+  }catch(e){}
+  try{ layout(); }catch(e){}          // re-measure --hdrH so the FAB rail follows
+}
+function toggleHdrCompact(){ _setPref("cw_hdr_compact", _pref("cw_hdr_compact","0")==="1"?"0":"1"); applyHdrCompact(); }
+
+// ── button size
+function applyFabSize(){
+  var v=_pref("cw_fab_size","m");
+  try{ document.body.setAttribute("data-fab",v);
+       document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.fab===v); });
+  }catch(e){}
+}
+function setFabSize(v){ _setPref("cw_fab_size",v); applyFabSize(); toast("Button size: "+({s:"Small",m:"Medium",l:"Large"}[v]),1200); }
+
+// ── hazard type filters
+function hiddenTypes(){ try{ return JSON.parse(_pref("cw_hidden_types","[]"))||[]; }catch(e){ return []; } }
+function typeVisible(t){ return hiddenTypes().indexOf(t)<0; }
+function applyHzFilters(){
+  var hid=hiddenTypes();
+  try{ (S.hazards||[]).forEach(function(h){
+    if(!h._marker) return; var e2=h._marker.getElement(); if(!e2) return;
+    e2.style.display = hid.indexOf(h.type)>-1 ? "none" : "";
+  }); }catch(e){}
+  var st=$("filterState");
+  if(st) st.textContent = hid.length ? (hid.length+" type"+(hid.length>1?"s":"")+" hidden") : "All hazard types visible";
+  try{ document.querySelectorAll("#hzFilters .chip").forEach(function(c){ c.classList.toggle("on",hid.indexOf(c.dataset.hz)<0); }); }catch(e){}
+}
+function toggleType(t){
+  var hid=hiddenTypes(), i=hid.indexOf(t);
+  if(i>-1) hid.splice(i,1); else hid.push(t);
+  _setPref("cw_hidden_types",JSON.stringify(hid)); applyHzFilters();
+}
+function buildHzFilters(){
+  var box=$("hzFilters"); if(!box||box.dataset.built) return; box.dataset.built="1";
+  Object.keys(HZ_META).forEach(function(k){
+    var b=document.createElement("button");
+    b.className="chip"; b.dataset.hz=k;
+    b.textContent=HZ_META[k].emoji+" "+HZ_META[k].label;
+    b.onclick=function(){ toggleType(k); };
+    box.appendChild(b);
+  });
+  applyHzFilters();
+}
 function addHazardMarker(h){
   cwInjectFX();
   if(!h.id)h.id="h"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   if(!h.ts)h.ts=h.created_at?Date.parse(h.created_at)||Date.now():Date.now();
   const m=HZ_META[h.type]||HZ_META.debris;
   const el=document.createElement("div");el.className="hz";
+  try{ if(!typeVisible(h.type)) el.style.display="none"; }catch(e){}
   if(h.type==="pothole"){
     if(!h.psev && /size:\s*Large/i.test(h.note||"")) h.psev=3;
     else if(!h.psev && /size:\s*Medium/i.test(h.note||"")) h.psev=2;
@@ -2443,6 +2500,13 @@ $("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bum
 $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
+document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
+$("hdrToggle")&&($("hdrToggle").onclick=function(ev){ ev.stopPropagation(); toggleHdrCompact(); });
+$("toggleFilters")&&($("toggleFilters").onclick=function(){
+  buildHzFilters();
+  var b=$("hzFilters"); if(b) b.style.display = (b.style.display==="none"||!b.style.display) ? "flex" : "none";
+});
+try{ applyHdrCompact(); applyFabSize(); applyHzFilters(); }catch(e){}
 try{ var _mk=markerSizeKey();
   document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===_mk); });
 }catch(e){}
