@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v140";
+const APP_VERSION="v141";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1597,8 +1597,12 @@ function navTick(){
       }
     }catch(e){}
     if(!onPath) return;
-    const k1="w1_"+i, k2="w2_"+i;
+    const hid=h.id||("idx"+i);          // stable across syncs — index is not
+    const k1="w1_"+hid, k2="w2_"+hid;
     if(d<70) notePassed(h);
+    // Hazard warnings are for hazards you're APPROACHING. Parked or crawling, you aren't
+    // closing on anything, and re-announcing is just noise.
+    if((S.speedMph||0) < 5) return;
     if(d<160 && !S.alerted.has(k2)){
       S.alerted.add(k2); S.alerted.add(k1);
       hazardAlert(h,2);
@@ -2118,7 +2122,7 @@ async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){const keep=rows.filter(notDismissed);hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;S.alerted.clear();keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=rows.filter(notDismissed);hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 
