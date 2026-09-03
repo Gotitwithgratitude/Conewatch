@@ -416,7 +416,9 @@
   .tl-bulb.on-grn{background:#34c759!important;box-shadow:0 0 30px 8px rgba(52,199,89,.9)}
   .report-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
   .rtile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:92px;padding:14px 4px;background:var(--btn-face);border:1px solid var(--edge);border-radius:16px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--hair);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);transition:transform .07s ease}
-  .rtile:active{transform:scale(.93);background:rgba(255,255,255,.12);border-color:var(--cone)}
+  @media (hover:hover){
+    .rtile:active{transform:scale(.93);background:rgba(255,255,255,.12);border-color:var(--cone)}
+  }
   /* ═══════════ slide-to-browse feedback ═══════════
      Dragging a finger across the grid lights each tile as it passes, but never confirms —
      a moved touch doesn't produce a click, so the report only fires on a real tap. This is

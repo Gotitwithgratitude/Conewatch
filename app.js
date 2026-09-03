@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v151";
+const APP_VERSION="v152";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -596,7 +596,52 @@ function onPosErr(e){
 let lastFollow=0,lastFixT=0;
 let _lastCamPos=null, _reCenterT=null;
 // speed-based zoom: highway pulls back to see ahead, city tightens in — automatic, no control
-function speedZoom(){ const mph=S.speedMph||0; if(mph>65)return 15.2; if(mph>45)return 15.8; if(mph>25)return 16.4; return 17.0; }
+/* Hard thresholds made the zoom ping-pong: GPS speed noise around 25/45/65 flipped the zoom
+   every fix, and each flip restarted a fresh easeTo — that was the stutter. Hysteresis means
+   a boundary has to be crossed by 4mph before the zoom moves, so noise can't trigger it. */
+var _zoomStep=3;                                     // 0 fastest … 3 slowest
+const _ZOOM_LEVELS=[15.2,15.8,16.4,17.0], _ZOOM_UP=[65,45,25,-1], _ZOOM_HYST=4;
+function speedZoom(){
+  var mph=S.speedMph||0;
+  if(_zoomStep>0 && mph > _ZOOM_UP[_zoomStep-1]+_ZOOM_HYST) _zoomStep--;        // speeding up
+  else if(_zoomStep<3 && mph < _ZOOM_UP[_zoomStep]-_ZOOM_HYST) _zoomStep++;     // slowing down
+  return _ZOOM_LEVELS[_zoomStep];
+}
+/* ═══════════ thermal safeguard ═══════════
+   The web has no temperature API, so this can't read the device directly. What it can see is
+   the symptom: when iOS throttles a hot phone, sustained frame rate collapses. Watch for that
+   and drop into saver (flat 2D, relaxed GPS cadence, no radar tiles) automatically, which cuts
+   the GPU work that's generating the heat. GPS accuracy and hazard alerts are untouched —
+   overheating is a reason to render less, never a reason to warn less. */
+var _fpsRing=[], _thermalOn=false, _thermalLast=0;
+(function watchFrames(){
+  var last=performance.now(), frames=0;
+  function tick(now){
+    frames++;
+    if(now-last>=1000){
+      var fps=frames*1000/(now-last); frames=0; last=now;
+      _fpsRing.push(fps); if(_fpsRing.length>8) _fpsRing.shift();
+      if(_fpsRing.length===8 && Date.now()-_thermalLast>60000){
+        var avg=_fpsRing.reduce(function(a,b){return a+b;},0)/8;
+        // 8 consecutive seconds under 22fps while driving = sustained throttling, not a blip
+        if(!_thermalOn && !S.saver && avg<22 && S.navigating){
+          _thermalOn=true; _thermalLast=Date.now();
+          try{ S.saver=true; startGPS(); }catch(e){}
+          try{ var ss=$("saverState"); if(ss) ss.textContent="On — auto (device hot)"; }catch(e){}
+          try{ if(S.radarOn){ S.radarOn=false; radarOff();
+                var rs=$("radarState"); if(rs) rs.textContent="Off — paused, device hot"; } }catch(e){}
+          try{ map.easeTo({pitch:0,duration:400}); }catch(e){}
+          toast("Device running hot — Power Saver on automatically: flat 2D map to cool things down.",6000);
+        } else if(_thermalOn && avg>40){
+          _thermalOn=false; _thermalLast=Date.now();   // recovered; leave saver for the user to undo
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+var _camDur=0;
 function cameraFollow(){
   if(!S.follow||!S.pos||!S.mapReady||S.touching) return;
   const now=Date.now();
@@ -605,7 +650,9 @@ function cameraFollow(){
     // stationary (light/traffic) → skip re-centering; nothing moved, so don't repaint
     if(S.speedMph<1.2 && _lastCamPos && distM(_lastCamPos,cp)<3){ return; }
     _lastCamPos={lat:cp.lat,lng:cp.lng};
-    const dur=Math.min(1600,Math.max(300,lastFixT?now-lastFixT:800));
+    var raw=Math.min(1600,Math.max(300,lastFixT?now-lastFixT:800));
+    _camDur = _camDur ? (_camDur*0.7 + raw*0.3) : raw;    // rolling average — steady velocity
+    const dur=Math.round(_camDur);
     lastFixT=now;
     map.easeTo({center:[cp.lng,cp.lat],
       zoom:speedZoom(),pitch:S.saver?0:60,   // auto speed-zoom; saver = flat 2D
