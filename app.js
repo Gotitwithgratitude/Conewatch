@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v157";
+const APP_VERSION="v158";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -330,7 +330,7 @@ let mapStyleTheme="dark";
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
-    if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
+    if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
     else $("welcome").style.display="flex"; });
   const mc=map.getCanvasContainer();
   ["touchstart","mousedown"].forEach(ev=>mc.addEventListener(ev,()=>{S.touching=true;},{passive:true}));
@@ -2405,11 +2405,68 @@ async function syncHazards(){
     if(added) toast(added===1?"1 new report nearby":added+" new reports nearby",1800);
   }catch(e){}
 }
+/* ═══════════ realtime hazard push ═══════════
+   Polling every 60s meant a report could sit unseen for most of a minute. Supabase Realtime
+   pushes the change the instant it's written, so it lands in about a second.
+   Implemented as a raw websocket rather than pulling in supabase-js: the app is offline-first
+   with a precaching service worker, and a 40kb dependency for one socket isn't worth the
+   cache churn. Entirely additive — if the socket never connects, or the table isn't in the
+   publication, polling carries on exactly as before and nothing breaks. */
+var _rtSock=null, _rtRef=0, _rtHeart=null, _rtRetry=0, _rtLive=false;
+function _rtSend(o){ try{ _rtSock&&_rtSock.readyState===1&&_rtSock.send(JSON.stringify(o)); }catch(e){} }
+function stopRealtime(){
+  _rtLive=false;
+  if(_rtHeart){ clearInterval(_rtHeart); _rtHeart=null; }
+  try{ if(_rtSock){ _rtSock.onclose=null; _rtSock.close(); } }catch(e){}
+  _rtSock=null;
+}
+function startRealtime(){
+  if(!S.sb.url||!S.sb.key) return;
+  if(_rtSock) return;
+  var host;
+  try{ host=new URL(S.sb.url).host; }catch(e){ return; }
+  var url="wss://"+host+"/realtime/v1/websocket?apikey="+encodeURIComponent(S.sb.key)+"&vsn=1.0.0";
+  try{ _rtSock=new WebSocket(url); }catch(e){ return; }
+
+  _rtSock.onopen=function(){
+    _rtRetry=0;
+    _rtSend({topic:"realtime:public:hazards",event:"phx_join",ref:String(++_rtRef),
+      payload:{config:{postgres_changes:[{event:"*",schema:"public",table:"hazards"}]}}});
+    _rtHeart=setInterval(function(){
+      _rtSend({topic:"phoenix",event:"heartbeat",payload:{},ref:String(++_rtRef)});
+    },30000);
+  };
+  _rtSock.onmessage=function(ev){
+    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
+    if(m.event==="phx_reply" && m.payload && m.payload.status==="ok" && m.topic.indexOf("hazards")>-1){
+      _rtLive=true; startHazardSync();          // socket is up — relax the poll to a safety net
+      return;
+    }
+    if(m.event==="postgres_changes" || m.event==="INSERT" || m.event==="UPDATE" || m.event==="DELETE"){
+      // Refetch rather than applying the delta: the row still has to pass the cleared_at,
+      // expiry and dismissal filters, and one small request is simpler than duplicating that.
+      try{ syncHazards(); }catch(e){}
+    }
+  };
+  _rtSock.onclose=function(){
+    _rtSock=null; _rtLive=false;
+    if(_rtHeart){ clearInterval(_rtHeart); _rtHeart=null; }
+    startHazardSync();                          // back to the faster poll while disconnected
+    var wait=Math.min(30000,1000*Math.pow(2,Math.min(5,_rtRetry++)));   // 1s,2s,4s… capped 30s
+    setTimeout(function(){ if(!document.hidden&&navigator.onLine) startRealtime(); },wait);
+  };
+  _rtSock.onerror=function(){ try{ _rtSock&&_rtSock.close(); }catch(e){} };
+}
 function startHazardSync(){
   if(_syncTimer) clearInterval(_syncTimer);
-  _syncTimer=setInterval(syncHazards,60000);        // once a minute while open and visible
+  // 60s normally; once realtime is pushing, drop to a 5-minute safety net that only exists to
+  // catch anything the socket missed while the tab was backgrounded
+  _syncTimer=setInterval(syncHazards,_rtLive?300000:60000);
 }
-document.addEventListener("visibilitychange",function(){ if(!document.hidden) syncHazards(); });
+document.addEventListener("visibilitychange",function(){
+  if(document.hidden){ stopRealtime(); }               // no socket held open in the background
+  else { syncHazards(); startRealtime(); }
+});
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
@@ -2931,7 +2988,7 @@ document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll("#themeChips .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");
   S.themeMode=c.dataset.themeSet;applyTheme(true);
 });
-$("sbSave").onclick=()=>{S.sb.url=$("sbUrl").value.trim().replace(/\/$/,"");S.sb.key=$("sbKey").value.trim();if(S.sb.url&&S.sb.key){toast("Supabase connected.");loadSharedHazards();startHazardSync();}else toast("Cleared — reports stay on this device.");};
+$("sbSave").onclick=()=>{S.sb.url=$("sbUrl").value.trim().replace(/\/$/,"");S.sb.key=$("sbKey").value.trim();if(S.sb.url&&S.sb.key){toast("Supabase connected.");loadSharedHazards();startHazardSync();startRealtime();}else toast("Cleared — reports stay on this device.");};
 $("sbTest").onclick=loadSharedHazards;
 $("dlOffline").onclick=downloadOfflineArea;
 $("viewTrips").onclick=()=>{
@@ -3017,7 +3074,7 @@ $("welcomeGo").onclick=async()=>{
   try{localStorage.setItem("cw_welcome","1");}catch{}
   $("welcome").style.display="none";
   await requestMotion(); startGPS();
-  if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); }
+  if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); }
   if(!tutSeen()) setTimeout(startTutorial,600);
   else toast("You're set — search a destination or tap ⚠️ to report.");
 };
