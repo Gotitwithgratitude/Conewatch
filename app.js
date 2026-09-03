@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v155";
+const APP_VERSION="v156";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -330,7 +330,7 @@ let mapStyleTheme="dark";
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
-    if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key) loadSharedHazards(); if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
+    if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
     else $("welcome").style.display="flex"; });
   const mc=map.getCanvasContainer();
   ["touchstart","mousedown"].forEach(ev=>mc.addEventListener(ev,()=>{S.touching=true;},{passive:true}));
@@ -2363,6 +2363,39 @@ document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
   });
   grid.addEventListener("pointerleave",function(){ clearLit(); });
 })();
+/* ═══════════ live sync ═══════════
+   Shared hazards were only ever fetched at boot, on saving Supabase settings, and from the
+   welcome screen — so a phone open on the passenger seat never saw a report filed thirty
+   seconds ago on another device, and a cleared hazard never disappeared until reload. For a
+   live hazard network that's the whole point, so poll while the app is actually in use.
+   Quiet by design: skipped when the tab is hidden, when offline, and silent on success — the
+   "Loaded N shared reports" toast stays on the manual/boot path only. */
+var _syncTimer=null;
+async function syncHazards(){
+  if(document.hidden || !navigator.onLine) return;
+  if(!S.sb.url || !S.sb.key) return;
+  try{
+    const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
+    if(!Array.isArray(rows)) return;
+    const keep=rows.filter(function(r){ return !r.cleared_at && notDismissed(r); });
+    const before=new Set((S.hazards||[]).map(function(h){ return h.id; }));
+    const after=new Set(keep.map(function(r){ return r.id; }));
+    var added=0, removed=0;
+    after.forEach(function(id){ if(!before.has(id)) added++; });
+    before.forEach(function(id){ if(!after.has(id)) removed++; });
+    if(!added && !removed) return;                  // nothing changed — don't touch the map
+    hzMarkers.forEach(function(m){ m.remove(); }); hzMarkers.length=0;
+    S.hazards=keep; keep.forEach(addHazardMarker);
+    try{ if(S.heatOn) refreshHeat(); }catch(e){}
+    try{ applyHzFilters(); }catch(e){}
+    if(added) toast(added===1?"1 new report nearby":added+" new reports nearby",1800);
+  }catch(e){}
+}
+function startHazardSync(){
+  if(_syncTimer) clearInterval(_syncTimer);
+  _syncTimer=setInterval(syncHazards,60000);        // once a minute while open and visible
+}
+document.addEventListener("visibilitychange",function(){ if(!document.hidden) syncHazards(); });
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
@@ -2884,7 +2917,7 @@ document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll("#themeChips .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");
   S.themeMode=c.dataset.themeSet;applyTheme(true);
 });
-$("sbSave").onclick=()=>{S.sb.url=$("sbUrl").value.trim().replace(/\/$/,"");S.sb.key=$("sbKey").value.trim();if(S.sb.url&&S.sb.key){toast("Supabase connected.");loadSharedHazards();}else toast("Cleared — reports stay on this device.");};
+$("sbSave").onclick=()=>{S.sb.url=$("sbUrl").value.trim().replace(/\/$/,"");S.sb.key=$("sbKey").value.trim();if(S.sb.url&&S.sb.key){toast("Supabase connected.");loadSharedHazards();startHazardSync();}else toast("Cleared — reports stay on this device.");};
 $("sbTest").onclick=loadSharedHazards;
 $("dlOffline").onclick=downloadOfflineArea;
 $("viewTrips").onclick=()=>{
@@ -2970,7 +3003,7 @@ $("welcomeGo").onclick=async()=>{
   try{localStorage.setItem("cw_welcome","1");}catch{}
   $("welcome").style.display="none";
   await requestMotion(); startGPS();
-  if(S.sb.url&&S.sb.key)loadSharedHazards();
+  if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); }
   if(!tutSeen()) setTimeout(startTutorial,600);
   else toast("You're set — search a destination or tap ⚠️ to report.");
 };
