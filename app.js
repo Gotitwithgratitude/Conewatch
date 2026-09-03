@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v152";
+const APP_VERSION="v153";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4380,63 +4380,90 @@ function spPick(r){
   $("search").value=r.name||"";
   confirmDestination({lat:r.lat,lng:r.lng,label:[r.name,r.label].filter(Boolean).join(", ")}, r.name||"Destination");
 }
+/* ═══════════ suggestions ═══════════
+   Was strictly sequential: await Photon → maybe await a Photon retry → maybe await Nominatim →
+   then await Overture and Foursquare → then render once. Nothing appeared until the SLOWEST
+   provider finished, and the Nominatim fallback fired off Photon's result alone, before
+   Overture/Foursquare were even awaited, so it often made a third call that wasn't needed.
+   Now all three primaries run in parallel and the list paints as each one lands. Same final
+   result set, same ranking — just visible sooner. Fallbacks run only if all three come back
+   empty, which is also what stops the unnecessary Nominatim call. */
+function _photonMap(d){
+  return ((d&&d.features)||[]).map(function(f){
+    var p=f.properties, co=f.geometry.coordinates;
+    var name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
+    var label=[p.street&&p.name&&p.name!==p.street?p.street:null,p.city||p.town||p.village,p.state].filter(Boolean).join(", ");
+    return {name:name,label:label,lat:co[1],lng:co[0]};
+  });
+}
+function _photonURL(q){
+  var u="https://photon.komoot.io/api/?q="+encodeURIComponent(q)+"&limit=10&lang=en";
+  if(S.pos) u+="&lat="+S.pos.lat+"&lon="+S.pos.lng;
+  return u;
+}
 async function spSearch(q){
   if(_spAbort){ try{_spAbort.abort();}catch(e){} }
   _spAbort=new AbortController();
+  var sig=_spAbort.signal;
   if(!navigator.onLine){ spRender(offlineMatches(q)); return; }
   if(acCache.has(q)){ spRender(acCache.get(q)); return; }
   spRender([], "Searching…");
-  const ovP=overtureSuggest(q,_spAbort.signal);   // Overture POIs run alongside OSM
-  const fqP=fsqSuggest(q,_spAbort.signal);       // Foursquare fills fresh-business gaps
-  let items=[];
-  try{
-    let u="https://photon.komoot.io/api/?q="+encodeURIComponent(q)+"&limit=10&lang=en";
-    if(S.pos) u+="&lat="+S.pos.lat+"&lon="+S.pos.lng;
-    const d=await (await fetch(u,{signal:_spAbort.signal})).json();
-    items=(d.features||[]).map(f=>{
-      const p=f.properties,co=f.geometry.coordinates;
-      const name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
-      const label=[p.street&&p.name&&p.name!==p.street?p.street:null,p.city||p.town||p.village,p.state].filter(Boolean).join(", ");
-      return {name,label,lat:co[1],lng:co[0]};
+
+  var pool=[], painted=false;
+  var toks=q.toLowerCase().replace(/['\u2019]/g,"").split(/\s+/).filter(function(w){return w.length>1;});
+  var typedPlace=(function(){ try{ var p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
+
+  function rank(list){
+    var out=dedupeSuggest(list).map(function(r){
+      var withD=Object.assign({},r,{_d:S.pos?distM(S.pos,r):undefined});
+      return Object.assign({},withD,{_sc:_placeScore(withD,toks,typedPlace)});
     });
-  }catch(e){ if(e.name==="AbortError")return; }
-  // Still nothing? Retry with just the distinctive words. "Godfrey rooftop" misses because the
-  // place is indexed as "I|O Godfrey Rooftop Lounge"; searching "godfrey" alone finds it.
-  if(!items.length){
-    const strongToks=q.split(/\s+/).filter(w=>w.length>2 && !GENERIC_WORDS.test(w));
-    if(strongToks.length && strongToks.join(" ")!==q.trim()){
+    out.sort(function(a,b){ return b._sc-a._sc; });
+    return out;
+  }
+  function paint(rows){
+    if(sig.aborted) return;                       // a newer keystroke owns the panel now
+    if(rows&&rows.length) pool=pool.concat(rows);
+    if(!pool.length) return;                      // nothing yet — leave "Searching…" up
+    painted=true;
+    spRender(rank(pool), null);
+  }
+
+  // all three primaries in flight at once; each paints the moment it lands
+  var jobs=[
+    fetch(_photonURL(q),{signal:sig}).then(function(r){return r.json();}).then(function(d){ paint(_photonMap(d)); }),
+    overtureSuggest(q,sig).then(paint),
+    fsqSuggest(q,sig).then(paint)
+  ].map(function(p){ return p.catch(function(e){ if(e&&e.name==="AbortError") throw e; }); });
+
+  try{ await Promise.all(jobs); }catch(e){ if(e&&e.name==="AbortError") return; }
+  if(sig.aborted) return;
+
+  // Every primary came back empty — now, and only now, spend a request on the fallbacks.
+  if(!pool.length){
+    var strong=q.split(/\s+/).filter(function(w){ return w.length>2 && !GENERIC_WORDS.test(w); });
+    if(strong.length && strong.join(" ")!==q.trim()){
       try{
-        let u2="https://photon.komoot.io/api/?q="+encodeURIComponent(strongToks.join(" "))+"&limit=10&lang=en";
-        if(S.pos) u2+="&lat="+S.pos.lat+"&lon="+S.pos.lng;
-        const d2=await (await fetch(u2,{signal:_spAbort.signal})).json();
-        items=(d2.features||[]).map(f=>{
-          const p=f.properties,co=f.geometry.coordinates;
-          const name=[p.name||p.street,p.housenumber].filter(Boolean).join(" ")||p.street||p.city||"Unnamed place";
-          const label=[p.street&&p.name&&p.name!==p.street?p.street:null,p.city||p.town||p.village,p.state].filter(Boolean).join(", ");
-          return {name,label,lat:co[1],lng:co[0]};
-        });
-      }catch(e){ if(e.name==="AbortError")return; }
+        var d2=await (await fetch(_photonURL(strong.join(" ")),{signal:sig})).json();
+        paint(_photonMap(d2));
+      }catch(e){ if(e&&e.name==="AbortError") return; }
     }
   }
-  if(!items.length){
+  if(!pool.length){
     try{
-      let url="https://nominatim.openstreetmap.org/search?format=json&limit=10&q="+encodeURIComponent(q);
-      if(S.pos){const dd=0.15;url+="&viewbox="+(S.pos.lng-dd)+","+(S.pos.lat+dd)+","+(S.pos.lng+dd)+","+(S.pos.lat-dd)+"&bounded=0";}
-      const list=await (await fetch(url,{signal:_spAbort.signal,headers:{Accept:"application/json"}})).json();
-      items=(list||[]).map(r=>({name:r.display_name.split(",")[0],label:r.display_name.split(",").slice(1,4).join(",").trim(),lat:+r.lat,lng:+r.lon}));
-    }catch(e){ if(e.name==="AbortError")return; }
+      var url="https://nominatim.openstreetmap.org/search?format=json&limit=10&q="+encodeURIComponent(q);
+      if(S.pos){ var dd=0.15; url+="&viewbox="+(S.pos.lng-dd)+","+(S.pos.lat+dd)+","+(S.pos.lng+dd)+","+(S.pos.lat-dd)+"&bounded=0"; }
+      var list=await (await fetch(url,{signal:sig,headers:{Accept:"application/json"}})).json();
+      paint((list||[]).map(function(r){
+        return {name:r.display_name.split(",")[0],label:r.display_name.split(",").slice(1,4).join(",").trim(),lat:+r.lat,lng:+r.lon};
+      }));
+    }catch(e){ if(e&&e.name==="AbortError") return; }
   }
-  // Merge Overture POIs (finds local businesses OSM lacks) ahead of OSM, collapse duplicates.
-  let ov=[]; try{ ov=await ovP; }catch(e){ if(e.name==="AbortError")return; }
-  try{ const fq=await fqP; if(fq&&fq.length) ov=ov.concat(fq); }catch(e){ if(e.name==="AbortError")return; }
-  items=dedupeSuggest(ov.concat(items));
-  const toks=q.toLowerCase().replace(/['\u2019]/g,"").split(/\s+/).filter(w=>w.length>1);
-  const typedPlace=(()=>{ try{ const p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
-  items=items.map(r=>{ const withD={...r,_d:S.pos?distM(S.pos,r):undefined};
-    return {...withD,_sc:_placeScore(withD,toks,typedPlace)}; })
-    .sort((a,b)=>b._sc-a._sc);
-  if(S.pos) acCache.set(q,items);   // don't cache pre-GPS-lock (Overture-less) results
-  spRender(items, items.length?null:"No matches — try adding a city or ZIP.");
+  if(sig.aborted) return;
+  var final=rank(pool);
+  if(S.pos && final.length) acCache.set(q,final);   // don't cache pre-GPS-lock results
+  if(!final.length) spRender([], "No matches — try adding a city or ZIP.");
+  else if(!painted) spRender(final,null);
 }
 $("spInput")&&($("spInput").addEventListener("input",()=>{
   const q=$("spInput").value.trim();
