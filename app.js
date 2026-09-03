@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v154";
+const APP_VERSION="v155";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -277,7 +277,41 @@ function _dismiss(id){
   }catch(e){}
 }
 function notDismissed(h){ var d=_dismissed(); return !(h && h.id && d[h.id]); }
+/* ═══════════ anonymous device id ═══════════
+   A random string in localStorage. Not an account, not tied to a person, never sent anywhere
+   except as a column on the reports this device files. Keeps the "no login, no download"
+   promise while making a per-user count and a future leaderboard possible. */
+function deviceId(){
+  try{
+    var d=localStorage.getItem("cw_device_id");
+    if(!d){
+      d=(crypto&&crypto.randomUUID)?crypto.randomUUID()
+        :("dev-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10));
+      localStorage.setItem("cw_device_id",d);
+    }
+    return d;
+  }catch(e){ return null; }
+}
+function myReportCount(){ try{ return parseInt(localStorage.getItem("cw_my_reports")||"0",10)||0; }catch(e){ return 0; } }
+function bumpReportCount(){
+  try{ var n=myReportCount()+1; localStorage.setItem("cw_my_reports",String(n));
+       var el=$("myReports"); if(el) el.textContent=n+(n===1?" report":" reports");
+       return n; }catch(e){ return 0; }
+}
 window.cwGone=function(id){ const i=S.hazards.findIndex(x=>x.id===id); if(i<0)return; const h=S.hazards[i]; h.gone=(h.gone||0)+1; const need=HAZ_TTL[h.type]===0?2:1;
+  // Tell the server too, so a clear reaches every driver instead of just this device. The
+  // increment happens inside Postgres (cw_vote_gone) because two people clearing the same
+  // pothole at once would both read the old count and both write the same new one.
+  // Local dismissal still applies immediately either way — the network is never in the path
+  // between tapping Gone and the marker disappearing.
+  if(S.sb.url && S.sb.key && id && String(id).indexOf("-")>0){
+    try{
+      fetch(`${S.sb.url}/rest/v1/rpc/cw_vote_gone`,{
+        method:"POST", headers:sbH({"Content-Type":"application/json"}),
+        body:JSON.stringify({hazard_id:id, threshold:need})
+      }).catch(function(){});
+    }catch(e){}
+  }
   if(h.gone>=need){ try{if(h._marker)h._marker.remove();}catch(e){} S.hazards.splice(i,1); _dismiss(id); toast("Cleared — thanks for the update"); }
   else { toast("Noted — one more confirmation will clear it"); }
   if(navigator.vibrate)navigator.vibrate(30);
@@ -2254,7 +2288,7 @@ async function reportHazard(type,note,psev,skipPick,lanes){
     near.reports=(near.reports||1)+1; near.ts=Date.now(); refreshHazPopup(near);
     if(type==="pothole"&&near._marker){try{near._marker.getElement().style.background=(near.reports>=5?"#E5484D":(near.reports>=2?"#FF8A1E":"#FFC72C"));}catch(e){}}
     toast(`${HZ_META[type].label} confirmed ✓ · ${near.reports} reports`);
-    if(S.sb.url&&S.sb.key){ try{ await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json"}),body:JSON.stringify({type,lat:S.pos.lat,lng:S.pos.lng,note:note||"confirm",sev:2,reports:1})}); }catch(e){} }
+    if(S.sb.url&&S.sb.key){ try{ await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json"}),body:JSON.stringify({type,lat:S.pos.lat,lng:S.pos.lng,note:note||"confirm",sev:2,reports:1,device_id:deviceId()})}); }catch(e){} }
     return;
   }
   const _p=((type==="pothole"||type==="debris")&&S.course!=null&&!isNaN(S.course))?(function(){const rad=(S.course+90)*Math.PI/180,dM=4;return{lat:S.pos.lat+(dM*Math.cos(rad))/111111,lng:S.pos.lng+(dM*Math.sin(rad))/(111111*Math.cos(S.pos.lat*Math.PI/180))};})():{lat:S.pos.lat,lng:S.pos.lng};
@@ -2265,7 +2299,8 @@ async function reportHazard(type,note,psev,skipPick,lanes){
   if(S.sb.url&&S.sb.key){
     try{
       const _ln=laneText(h.lanes);
-      const payload={type:h.type,lat:h.lat,lng:h.lng,note:(h.psev?("size:"+POT_SEV[h.psev].label+(h.note?" · "+h.note:"")):(h.note||""))+(_ln?" · "+_ln:""),sev:h.psev||h.sev||2,reports:h.reports||1};
+      const payload={type:h.type,lat:h.lat,lng:h.lng,note:(h.psev?("size:"+POT_SEV[h.psev].label+(h.note?" · "+h.note:"")):(h.note||""))+(_ln?" · "+_ln:""),sev:h.psev||h.sev||2,reports:h.reports||1,device_id:deviceId()};
+      try{ bumpReportCount(); }catch(e){}
       const r=await fetch(`${S.sb.url}/rest/v1/hazards`,{method:"POST",headers:sbH({"Content-Type":"application/json",Prefer:"return=minimal"}),body:JSON.stringify(payload)});
       if(!r.ok)toast("Saved on your map — cloud sync failed ("+r.status+")");
     }catch(e){ toast("Saved on your map — offline, will show for you"); }
@@ -2332,7 +2367,7 @@ async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){const keep=rows.filter(notDismissed);hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=rows.filter(function(r){ return !r.cleared_at && notDismissed(r); });hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 
@@ -2840,6 +2875,7 @@ $("toggleFilters")&&($("toggleFilters").onclick=function(){
   var b=$("hzFilters"); if(b) b.style.display = (b.style.display==="none"||!b.style.display) ? "flex" : "none";
 });
 try{ applyHdrCompact(); applyFabSize(); applyToolsStyle(); applyHzFilters(); }catch(e){}
+try{ var _mr=$("myReports"); if(_mr){ var n=myReportCount(); _mr.textContent=n+(n===1?" report":" reports"); } }catch(e){}
 try{ var _mk=markerSizeKey();
   document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===_mk); });
 }catch(e){}
