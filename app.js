@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v153";
+const APP_VERSION="v154";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -826,18 +826,25 @@ async function suggest(q){
   if(S.pos){ acCache.set(q,all); if(acCache.size>60) acCache.delete(acCache.keys().next().value); }
   renderResults(all);
 }
+/* Every test here was a bare substring, so brand and category words matched inside unrelated
+   names: "mobil" inside T-Mobile (the reported bug), "gas" inside Vegas, "inn" inside Dinner
+   and Winner, "mall" inside Small, "bp" inside anything. Word boundaries throughout, and
+   phone carriers get their own category since that's what T-Mobile actually is. Order still
+   matters — the most specific test has to come first. */
 function poiIcon(r){
   const s=((r.name||"")+" "+(r.label||"")).toLowerCase();
   if(/\bhome\b/.test(s))return["🏠","#3AA0FF"];
-  if(/\bwork|office\b/.test(s))return["💼","#2B6FE0"];
-  if(/coffee|cafe|starbucks|dunkin/.test(s))return["☕","#B5651D"];
-  if(/gas|fuel|shell|marathon|bp|sunoco|mobil/.test(s))return["⛽","#E8A020"];
-  if(/restaurant|grill|pizza|food|kitchen|diner/.test(s))return["🍽","#E0602B"];
-  if(/hotel|motel|inn|suites/.test(s))return["🛎","#8A5CF6"];
-  if(/hospital|clinic|medical|pharmacy/.test(s))return["➕","#E5484D"];
-  if(/park|trail|garden/.test(s))return["🌳","#2F9E5B"];
-  if(/store|shop|mall|market|target|walmart/.test(s))return["🛍","#D0459B"];
-  if(/school|college|university/.test(s))return["🎓","#3B82F6"];
+  if(/\b(work|office)\b/.test(s))return["💼","#2B6FE0"];
+  if(/\b(t-?mobile|verizon|at&t|sprint|cricket wireless|boost mobile|xfinity|phone|wireless)\b/.test(s))return["📱","#E0219A"];
+  if(/\b(coffee|cafe|caf\u00e9|starbucks|dunkin|espresso)\b/.test(s))return["☕","#B5651D"];
+  if(/\b(gas|fuel|shell|marathon|bp|sunoco|mobil|exxon|chevron|citgo|speedway)\b/.test(s))return["⛽","#E8A020"];
+  if(/\b(restaurant|grill|pizza|food|kitchen|diner|bbq|taco|sushi|deli)\b/.test(s))return["🍽","#E0602B"];
+  if(/\b(hotel|motel|inn|suites|lodge|hostel)\b/.test(s))return["🛎","#8A5CF6"];
+  if(/\b(hospital|clinic|medical|pharmacy|urgent care|dentist)\b/.test(s))return["➕","#E5484D"];
+  if(/\b(park|trail|garden|greenway|preserve)\b/.test(s))return["🌳","#2F9E5B"];
+  if(/\b(store|shop|mall|market|target|walmart|kroger|meijer|costco)\b/.test(s))return["🛍","#D0459B"];
+  if(/\b(school|college|university|academy|library)\b/.test(s))return["🎓","#3B82F6"];
+  if(/\b(bank|credit union|atm)\b/.test(s))return["🏦","#2FA37A"];
   return["📍","#FF4B6E"];
 }
 function renderResults(list){
