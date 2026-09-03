@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v150";
+const APP_VERSION="v151";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2235,9 +2235,16 @@ document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
 (function(){
   var grid=document.getElementById("reportSheet"); if(!grid) return;
   var lit=null;
+  // Sweep every tile rather than trusting a single stored reference: a missed touchend —
+  // finger lifted outside the sheet, a second finger landing, the sheet re-rendering — used
+  // to strand the class on a tile the variable had already moved past, leaving two lit.
+  function clearLit(){
+    try{ grid.querySelectorAll(".rtile.lit").forEach(function(n){ n.classList.remove("lit"); }); }catch(e){}
+    lit=null;
+  }
   function light(el){
-    if(el===lit) return;
-    if(lit) lit.classList.remove("lit");
+    if(el===lit && el && el.classList.contains("lit")) return;
+    clearLit();
     lit=el;
     if(lit){
       lit.classList.add("lit");
@@ -2251,16 +2258,21 @@ document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
   }
   grid.addEventListener("touchstart",function(e){ light(tileAt(e.touches[0])); },{passive:true});
   grid.addEventListener("touchmove", function(e){ light(tileAt(e.touches[0])); },{passive:true});
+  // listen on document, not the grid: a finger that lifts outside the sheet still ends the
+  // gesture, and that was one of the ways a tile got stranded lit
   ["touchend","touchcancel"].forEach(function(ev){
-    grid.addEventListener(ev,function(){ light(null); },{passive:true});
+    document.addEventListener(ev,function(){ clearLit(); },{passive:true});
   });
+  // belt and braces — reopening the sheet always starts clean
+  try{ var fr=document.getElementById("fabReport");
+       if(fr) fr.addEventListener("click",function(){ setTimeout(clearLit,0); }); }catch(e){}
   // pointer devices get the same treatment on hover, without the haptic
   grid.addEventListener("pointermove",function(e){
     if(e.pointerType==="touch") return;
     var el=e.target&&e.target.closest?e.target.closest("#reportSheet [data-type]"):null;
-    if(el!==lit){ if(lit)lit.classList.remove("lit"); lit=el; if(lit)lit.classList.add("lit"); }
+    if(el!==lit){ clearLit(); lit=el; if(lit)lit.classList.add("lit"); }
   });
-  grid.addEventListener("pointerleave",function(){ if(lit){lit.classList.remove("lit");lit=null;} });
+  grid.addEventListener("pointerleave",function(){ clearLit(); });
 })();
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
