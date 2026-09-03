@@ -19,7 +19,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v156";
+const APP_VERSION="v157";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2363,6 +2363,20 @@ document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
   });
   grid.addEventListener("pointerleave",function(){ clearLit(); });
 })();
+/* A hazard past its TTL should never come back from the server. Without this, sweepHazards
+   removed an expired row locally and the next sync fetched it straight back — a police report
+   from two weeks ago (TTL 20 minutes) reappearing every 60 seconds forever, which looked
+   exactly like clearing was broken. Permanent types (TTL 0 — potholes, cones, cameras) never
+   expire and are unaffected. */
+function notExpired(r){
+  try{
+    var ttl=HAZ_TTL[r.type];
+    if(!ttl) return true;                                  // 0 or undefined = permanent
+    var t=r.created_at?Date.parse(r.created_at):NaN;
+    if(!isFinite(t)) return true;                          // no timestamp — don't discard it
+    return (Date.now()-t) <= ttl*60000;
+  }catch(e){ return true; }
+}
 /* ═══════════ live sync ═══════════
    Shared hazards were only ever fetched at boot, on saving Supabase settings, and from the
    welcome screen — so a phone open on the passenger seat never saw a report filed thirty
@@ -2377,7 +2391,7 @@ async function syncHazards(){
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
     if(!Array.isArray(rows)) return;
-    const keep=rows.filter(function(r){ return !r.cleared_at && notDismissed(r); });
+    const keep=rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); });
     const before=new Set((S.hazards||[]).map(function(h){ return h.id; }));
     const after=new Set(keep.map(function(r){ return r.id; }));
     var added=0, removed=0;
@@ -2400,7 +2414,7 @@ async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){const keep=rows.filter(function(r){ return !r.cleared_at && notDismissed(r); });hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); });hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 
