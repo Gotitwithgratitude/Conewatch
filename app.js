@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v165";
+const APP_VERSION="v166";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4715,6 +4715,7 @@ async function spSearch(q){
   var sig=_spAbort.signal;
   if(!navigator.onLine){ spRender(offlineMatches(q)); return; }
   if(acCache.has(q)){ spRender(acCache.get(q)); return; }
+  try{ closeTurnList(); }catch(e){}
   spRender([], "Searching…");
 
   var pool=[], painted=false;
