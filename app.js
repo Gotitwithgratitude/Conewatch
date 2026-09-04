@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v180";
+const APP_VERSION="v181";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -123,27 +123,13 @@ function cycleSeason(){
     _seasonPainted = (typeof seasonActive==="function") ? seasonActive() : null;
     paintSeasonTint();          // direct paint — no style rebuild, so nothing to race
   }catch(e){}
-  /* TEMPORARY DIAGNOSTIC — four attempts have failed on theory alone, so read the truth back
-     off the live map instead of guessing. Reports what the map ACTUALLY has applied. */
-  try{
-    var d=[];
-    d.push("want="+((typeof seasonActive==="function")?seasonActive():"?"));
-    var lyr=null; try{ lyr=map&&map.getLayer&&map.getLayer("basemap"); }catch(e){}
-    d.push("basemapLayer="+(lyr?"yes":"NO"));
-    if(lyr){
-      var hr=null,br=null;
-      try{ hr=map.getPaintProperty("basemap","raster-hue-rotate"); }catch(e){ hr="err"; }
-      try{ br=map.getPaintProperty("basemap","raster-brightness-max"); }catch(e){ br="err"; }
-      d.push("hue="+String(hr));
-      d.push("brightMax="+String(br));
-    }
-    var ids=[]; try{ ids=(map.getStyle().layers||[]).map(function(l){return l.id;}); }catch(e){}
-    d.push("layers="+ids.slice(0,6).join(","));
-    d.push("set="+(window.__tintSet===undefined?"never ran":window.__tintSet));
-    if(window.__tintErr) d.push("ERR "+window.__tintErr);
-    d.push("themeNow="+S.themeNow);
-    toast(d.join(" | "),9000);
-  }catch(e){ toast("diag failed: "+e.message,6000); }
+  toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
+  /* The diagnostic proved paintSeasonTint works — it applied all six properties — but a later
+     async caller (a style-swap callback firing after the toggle) re-ran it with stale state and
+     overwrote the correct paint. Last writer wins, so make sure the last writer is a fresh read.
+     The function is idempotent and reads live state, so re-asserting after everything settles
+     always lands on the truth, whatever ran in between. */
+  [60,300,900].forEach(function(ms){ setTimeout(function(){ try{ paintSeasonTint(); }catch(e){} },ms); });
 }
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
