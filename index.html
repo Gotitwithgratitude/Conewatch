@@ -67,8 +67,33 @@
   [data-season="halloween"] #brand b{animation:cwFlicker 7s infinite}
   [data-season="halloween"] #verBadge{animation:cwPulse 2.6s ease-in-out infinite}
   @keyframes cwPulse{0%,100%{box-shadow:0 0 10px rgba(181,101,255,.5)}50%{box-shadow:0 0 18px rgba(255,122,18,.75)}}
+  /* ── fog vignette ──
+     A soft darkening at the screen edges. Sits above the map but below every control, and is
+     pointer-events:none so it can never intercept a tap. Pure atmosphere — nothing that
+     matters is ever behind it, because the centre stays completely clear. */
+  [data-season="halloween"] #map::after{
+    content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(ellipse 120% 80% at 50% 45%,transparent 42%,rgba(20,8,0,.30) 78%,rgba(12,4,0,.52) 100%);
+    animation:cwFog 14s ease-in-out infinite alternate}
+  [data-season="halloween"][data-theme="light"] #map::after{
+    background:radial-gradient(ellipse 120% 80% at 50% 45%,transparent 46%,rgba(120,70,20,.13) 80%,rgba(90,50,10,.22) 100%)}
+  @keyframes cwFog{0%{opacity:.82}100%{opacity:1}}
+
+  /* ── the driver's own marker gets a lantern glow ── */
+  [data-season="halloween"] .me-dot,[data-season="halloween"] #meMarker{
+    filter:drop-shadow(0 0 10px rgba(255,140,30,.65))}
+
+  /* ── report tiles pulse pumpkin-orange instead of cone-orange ── */
+  [data-season="halloween"] .rtile.fired{animation:rtileFireHW .5s cubic-bezier(.2,.8,.2,1)}
+  @keyframes rtileFireHW{
+    0%{transform:scale(.93);box-shadow:0 0 0 2px #FF7A12}
+    45%{transform:scale(1.12);box-shadow:0 0 0 6px #FF7A12,0 0 40px rgba(181,101,255,.8)}
+    100%{transform:scale(1);box-shadow:var(--hair)}}
+
   @media (prefers-reduced-motion:reduce){
     [data-season="halloween"] #brand b,[data-season="halloween"] #verBadge{animation:none}
+    [data-season="halloween"] #map::after{animation:none;opacity:.9}
+    [data-season="halloween"] .rtile.fired{animation:none}
   }
   [data-season="halloween"] #verBadge{
     background:linear-gradient(135deg,#B565FF,#FF7A12);
@@ -633,6 +658,7 @@
     <button class="rtile" data-type="debris"><span class="ic">🪵</span><span>Debris</span></button>
     <button class="rtile" data-type="animal"><span class="ic">🦌</span><span>Animal</span></button>
     <button class="rtile" data-type="flooding"><span class="ic">🌊</span><span>Flood</span></button>
+    <button class="rtile" data-type="power_lines"><span class="ic">⚡</span><span>Power lines</span></button>
     <button class="rtile" data-type="ice"><span class="ic">❄️</span><span>Ice</span></button>
     <button class="rtile" data-type="emergency"><span class="ic">🚑</span><span>Emergency</span></button>
     <button class="rtile" data-type="alert"><span class="ic">📢</span><span>Alert</span></button>

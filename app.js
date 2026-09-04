@@ -4,6 +4,7 @@
 const HZ_META = {
   construction_cones:{emoji:"🚧",color:"#FF6B1A",label:"Construction"},
   pothole:{emoji:"🕳",color:"#E5484D",label:"Pothole"},
+  power_lines:{emoji:"\u26A1",color:"#FFD24A",label:"Power lines down"},
   accident:{emoji:"🚨",color:"#FF4D6D",label:"Accident"},
   police:{emoji:"👮",color:"#5B9CF6",label:"Police"},
   camera:{emoji:"📸",color:"#A78BFA",label:"Speed camera"},
@@ -19,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v158";
+const APP_VERSION="v160";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -73,6 +74,10 @@ function applySeason(){
   }); }catch(e){}
   // the pumpkin badge is the interactive bit: tap it to cycle the theme
   try{ var vb=$("verBadge"); if(vb){ vb.style.cursor="pointer"; vb.onclick=function(ev){ ev.stopPropagation(); cycleSeason(); }; } }catch(e){}
+  // the basemap tint lives in the style object, so the style has to be rebuilt to show it
+  try{ if(_seasonPainted!==on && typeof swapMapStyle==="function" && map && S.mapReady){
+    _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark");
+  } }catch(e){}
   // one-time announcement so the update is obvious rather than something you might miss
   if(on){ try{
     if(localStorage.getItem("cw_season_seen")!==String(new Date().getFullYear())){
@@ -173,12 +178,26 @@ try{
 /* ═══════════ map boot (MapLibre v5) with per-theme styles ═══════════ */
 function rasterStyle(dark){
   const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
-  const paint = dark
+  let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
     : {};
+  let bg = dark?"#101215":"#E9ECEF";
+  /* The theme only ever touched the chrome, leaving the map — most of the screen — untouched,
+     which is why it read as a skin rather than a season. Shifting the raster hue toward amber
+     and dropping the brightness turns the whole world dusk-lit. Road geometry, labels and
+     hazard markers are unaffected: this only recolours the basemap tiles underneath them. */
+  try{
+    if(typeof seasonActive==="function" && seasonActive()){
+      paint = dark
+        ? {"raster-brightness-max":0.36,"raster-brightness-min":0.01,"raster-saturation":-0.15,
+           "raster-contrast":0.20,"raster-hue-rotate":-18}
+        : {"raster-saturation":-0.10,"raster-contrast":0.06,"raster-hue-rotate":-14,"raster-brightness-max":0.94};
+      bg = dark?"#0B0704":"#F0E7D9";
+    }
+  }catch(e){}
   return { version:8,
     sources:{ basemap:{ type:"raster", tiles:[url], tileSize:256, maxzoom:19, attribution:"© Esri, © OpenStreetMap contributors" }},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#101215":"#E9ECEF"}},{id:"basemap",type:"raster",source:"basemap",paint:paint}] };
+    layers:[{id:"bg",type:"background",paint:{"background-color":bg}},{id:"basemap",type:"raster",source:"basemap",paint:paint}] };
 }
 function rasterStyleObj(dark){
   // CARTO began requiring an API key (unauthenticated tiles get an "API KEY REQUIRED" watermark)
@@ -210,7 +229,7 @@ let map, meMarker, destMarker;
 const stopMarkers=[]; const hzMarkers=[];
 // time-to-live in minutes, grounded in real incident-clearance data (urban avg ~25-30 min, 45 = short/long threshold, rural/major longer).
 // 0 = permanent infrastructure — stays until a driver confirms it's fixed/gone. User confirms FRESHEN the timer (self-correcting).
-const HAZ_TTL={ pothole:0, construction_cones:0, camera:0, road_closure:120, accident:45, police:20, emergency:15, traffic:30, stalled:45, debris:60, animal:30, flooding:180, ice:180, alert:60 };
+const HAZ_TTL={ power_lines:360, pothole:0, construction_cones:0, camera:0, road_closure:120, accident:45, police:20, emergency:15, traffic:30, stalled:45, debris:60, animal:30, flooding:180, ice:180, alert:60 };
 function _ago(ts){ const m=Math.floor((Date.now()-(ts||Date.now()))/60000); return m<1?"just now":m<60?m+"m ago":Math.floor(m/60)+"h "+ (m%60) +"m ago"; }
 function hazPopupHTML(h){
   const m=HZ_META[h.type]||HZ_META.debris;
@@ -1692,6 +1711,12 @@ function navTick(){
   S.hazards.forEach((h,i)=>{
     const d=distM(S.pos,h);
     if(d<450)near++;
+    /* Which hazards count as "ahead of me".
+       With a route, match against the route line — that's exact.
+       Without one, the old code matched NOTHING and alerted on everything within 520m,
+       so a pothole on the freeway you're passing under fired while you were on the surface
+       street below. Fall back to heading: a hazard you're actually approaching lies in a
+       cone in front of you, not off to the side and not overhead. */
     let onPath=true;
     try{
       if(S.route&&S.route.geometry){
@@ -1699,6 +1724,12 @@ function navTick(){
         let best=Infinity;
         for(let k=0;k<co.length;k+=2){ const dd=distM({lat:co[k][1],lng:co[k][0]},h); if(dd<best)best=dd; if(best<25)break; }
         onPath = best<45;
+      } else if(isFinite(S.heading) && (S.speedMph||0) >= 8){
+        const φ1=S.pos.lat*Math.PI/180, φ2=h.lat*Math.PI/180, Δλ=(h.lng-S.pos.lng)*Math.PI/180;
+        const brg=(Math.atan2(Math.sin(Δλ)*Math.cos(φ2),
+                   Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ))*180/Math.PI+360)%360;
+        const off=Math.abs(((brg-S.heading+540)%360)-180);
+        onPath = off<=42;                    // ±42° cone ahead of travel
       }
     }catch(e){}
     if(!onPath) return;
@@ -2368,6 +2399,22 @@ document.querySelectorAll("#reportSheet [data-type]").forEach(b=>b.onclick=()=>{
    from two weeks ago (TTL 20 minutes) reappearing every 60 seconds forever, which looked
    exactly like clearing was broken. Permanent types (TTL 0 — potholes, cones, cameras) never
    expire and are unaffected. */
+function clusterHazards(rows){
+  var out=[];
+  rows.forEach(function(r){
+    for(var i=0;i<out.length;i++){
+      var k=out[i];
+      if(k.type===r.type && distM({lat:r.lat,lng:r.lng},{lat:k.lat,lng:k.lng})<=25){
+        k.reports=(k.reports||1)+(r.reports||1);
+        if((r.sev||0)>(k.sev||0)) k.sev=r.sev;          // keep the worst severity reported
+        if(r.created_at>k.created_at) k.created_at=r.created_at;
+        return;
+      }
+    }
+    out.push(Object.assign({},r));
+  });
+  return out;
+}
 function notExpired(r){
   try{
     var ttl=HAZ_TTL[r.type];
@@ -2391,7 +2438,7 @@ async function syncHazards(){
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
     if(!Array.isArray(rows)) return;
-    const keep=rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); });
+    const keep=clusterHazards(rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); }));
     const before=new Set((S.hazards||[]).map(function(h){ return h.id; }));
     const after=new Set(keep.map(function(r){ return r.id; }));
     var added=0, removed=0;
@@ -2471,7 +2518,7 @@ async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){const keep=rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); });hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=clusterHazards(rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); }));hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 
