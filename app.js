@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v168";
+const APP_VERSION="v170";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -388,7 +388,14 @@ let mapStyleTheme="dark";
      A bigger cache keeps recent tiles in memory, no fade removes the "loading" shimmer that
      reads as lag, and not re-validating expired tiles stops needless refetches mid-drive. */
   map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0,
-    attributionControl:true, maxTileCacheSize:400, fadeDuration:0, refreshExpiredTiles:false });
+    attributionControl:true, maxTileCacheSize:400, fadeDuration:0, refreshExpiredTiles:false,
+    /* Full freedom to explore. The main map was on MapLibre's default 60° cap while the
+       preview maps already went to 85, and nothing here should stop someone flying out to
+       world view and back in. Rotation and pitch gestures explicitly on. */
+    maxPitch:85, minZoom:0, maxZoom:22, dragRotate:true, pitchWithRotate:true,
+    touchZoomRotate:true, touchPitch:true, doubleClickZoom:true, keyboard:true });
+  try{ map.touchZoomRotate.enableRotation(); }catch(e){}
+  try{ map.dragRotate.enable(); }catch(e){}
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
@@ -3560,10 +3567,19 @@ function openDriveTour(){
         dem:{type:"raster-dem",tiles:["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],encoding:"terrarium",tileSize:256,maxzoom:14}
       },
       layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat","paint":{"raster-fade-duration":0}}]},
-    center:co[0],zoom:18,pitch:85,bearing:_brg(co[0],co[1]),maxPitch:85,attributionControl:true,interactive:true});
+    /* Was 85° pitch with terrain on satellite tiles — at that angle the horizon runs on
+       almost forever, so MapLibre requests a huge tile set every frame and the DEM gets
+       overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
+       seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
+       ground already flown over, and no fade removes the shimmer that reads as stutter. */
+    center:co[0],zoom:18,pitch:80,bearing:_brg(co[0],co[1]),maxPitch:85,attributionControl:true,
+    interactive:true,maxTileCacheSize:500,fadeDuration:0,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     try{ tourMap.setTerrain({source:"dem",exaggeration:0.9}); }catch(e){}
-    try{ tourMap.setSky&&tourMap.setSky({"sky-color":"#8ec9ff","horizon-color":"#dbeeff","fog-color":"#eef6ff","fog-ground-blend":0.5,"sky-horizon-blend":0.65,"horizon-fog-blend":0.5,"atmosphere-blend":0.7}); }catch(e){}
+    // denser ground fog = shorter visible horizon = far fewer tiles to fetch and draw
+    try{ tourMap.setSky&&tourMap.setSky({"sky-color":"#8ec9ff","horizon-color":"#dbeeff","fog-color":"#eef6ff","fog-ground-blend":0.78,"sky-horizon-blend":0.8,"horizon-fog-blend":0.75,"atmosphere-blend":0.85}); }catch(e){}
+    // terrain is the single most expensive thing here; ease it back without flattening the view
+    try{ tourMap.setTerrain({source:"dem",exaggeration:0.65}); }catch(e){}
     tourMap.addSource("tl",{type:"geojson",data:{type:"Feature",geometry:S.route.geometry}});
     tourMap.addLayer({id:"tl-cas",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#06283d","line-width":10,"line-opacity":.92}});
     tourMap.addLayer({id:"tl-ln",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#22d3aa","line-width":5.5}});

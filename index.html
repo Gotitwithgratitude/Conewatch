@@ -79,6 +79,53 @@
     background:radial-gradient(ellipse 120% 80% at 50% 45%,transparent 46%,rgba(120,70,20,.13) 80%,rgba(90,50,10,.22) 100%)}
   @keyframes cwFog{0%{opacity:.82}100%{opacity:1}}
 
+  /* ── cobwebs in the corners of every sheet ──
+     Drawn in CSS, no images. Only the top corners, only on panels, never over content. */
+  [data-season="halloween"] .sheet::before,[data-season="halloween"] .sheet::after,
+  [data-season="halloween"] #turnSheet::before{
+    content:"";position:absolute;top:0;width:74px;height:74px;pointer-events:none;z-index:3;opacity:.5;
+    background:
+      radial-gradient(circle at 0 0,transparent 12px,rgba(255,214,170,.30) 12.5px,transparent 13.5px),
+      radial-gradient(circle at 0 0,transparent 26px,rgba(255,214,170,.26) 26.5px,transparent 27.5px),
+      radial-gradient(circle at 0 0,transparent 42px,rgba(255,214,170,.20) 42.5px,transparent 43.5px),
+      linear-gradient(45deg,transparent 49%,rgba(255,214,170,.26) 49.6%,transparent 50.2%),
+      linear-gradient(80deg,transparent 49%,rgba(255,214,170,.20) 49.6%,transparent 50.2%),
+      linear-gradient(10deg,transparent 49%,rgba(255,214,170,.20) 49.6%,transparent 50.2%)}
+  [data-season="halloween"] .sheet::before,[data-season="halloween"] #turnSheet::before{left:0}
+  [data-season="halloween"] .sheet::after{right:0;transform:scaleX(-1)}
+
+  /* ── speedometer becomes a lantern ── */
+  [data-season="halloween"] #speed{
+    box-shadow:0 0 0 2px rgba(255,122,18,.55),0 0 34px rgba(255,122,18,.42),inset 0 0 26px rgba(255,122,18,.14);
+    animation:cwLantern 3.4s ease-in-out infinite}
+  @keyframes cwLantern{
+    0%,100%{box-shadow:0 0 0 2px rgba(255,122,18,.5),0 0 26px rgba(255,122,18,.34),inset 0 0 22px rgba(255,122,18,.12)}
+    50%{box-shadow:0 0 0 2px rgba(255,150,40,.72),0 0 44px rgba(255,122,18,.55),inset 0 0 30px rgba(255,122,18,.2)}}
+
+  /* ── bats drifting across the map ──
+     Three of them, long slow loops, well above the route and never near the centre where
+     the driver looks. Pure decoration: pointer-events off, and gone under reduced-motion. */
+  #cwBats{position:fixed;inset:0;pointer-events:none;z-index:2;display:none;overflow:hidden}
+  [data-season="halloween"] #cwBats{display:block}
+  .cw-bat{position:absolute;font-size:17px;opacity:.32;will-change:transform;
+    filter:drop-shadow(0 0 6px rgba(0,0,0,.6))}
+  .cw-bat.b1{top:11%;animation:batFly1 34s linear infinite}
+  .cw-bat.b2{top:19%;font-size:13px;opacity:.24;animation:batFly2 47s linear infinite}
+  .cw-bat.b3{bottom:15%;font-size:15px;opacity:.22;animation:batFly3 41s linear infinite}
+  @keyframes batFly1{0%{transform:translateX(-8vw) translateY(0) scaleX(1)}
+    25%{transform:translateX(30vw) translateY(-16px) scaleX(1)}
+    50%{transform:translateX(108vw) translateY(10px) scaleX(1)}
+    50.1%{transform:translateX(108vw) translateY(10px) scaleX(-1)}
+    100%{transform:translateX(-8vw) translateY(-6px) scaleX(-1)}}
+  @keyframes batFly2{0%{transform:translateX(104vw) translateY(0) scaleX(-1)}
+    100%{transform:translateX(-10vw) translateY(22px) scaleX(-1)}}
+  @keyframes batFly3{0%{transform:translateX(-10vw) translateY(0)}
+    45%{transform:translateX(52vw) translateY(-20px)}
+    100%{transform:translateX(106vw) translateY(6px)}}
+  @media (prefers-reduced-motion:reduce){
+    [data-season="halloween"] #cwBats{display:none}
+    [data-season="halloween"] #speed{animation:none}}
+
   /* ── the driver's own marker gets a lantern glow ── */
   [data-season="halloween"] .me-dot,[data-season="halloween"] #meMarker{
     filter:drop-shadow(0 0 10px rgba(255,140,30,.65))}
@@ -568,6 +615,7 @@
 
 <!-- Full turn list, Apple-style: current maneuver pinned at the top, remaining turns
      scrollable beneath, chevron to collapse. Opened by tapping the nav banner instruction. -->
+<div id="cwBats" aria-hidden="true"><span class="cw-bat b1">🦇</span><span class="cw-bat b2">🦇</span><span class="cw-bat b3">🦇</span></div>
 <div id="turnSheet" aria-hidden="true">
   <div id="turnHead"><span id="turnHeadIcon"></span><span id="turnHeadText"></span></div>
   <div id="turnList"></div>
