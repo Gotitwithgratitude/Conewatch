@@ -127,6 +127,9 @@
     [data-season="halloween"] #speed{animation:none}}
 
   /* ── the driver's own marker gets a lantern glow ── */
+  [data-season="halloween"] #meArrow{background:#FF7A12;
+    box-shadow:0 3px 14px rgba(0,0,0,.5),0 0 0 6px rgba(255,122,18,.28),0 0 22px rgba(255,122,18,.55)}
+  [data-season="halloween"] #meArrow::after{border-bottom-color:#2B0A45}
   [data-season="halloween"] .me-dot,[data-season="halloween"] #meMarker{
     filter:drop-shadow(0 0 10px rgba(255,140,30,.65))}
 
@@ -576,15 +579,14 @@
 <header id="hdr">
   <div id="stripe"></div>
   <div id="brandrow">
-    <div id="brand">Cone<b>Watch</b><span id="verBadge">v—</span></div>
+    <div id="brand">Cone<b>Watch</b><span id="seasonPill" style="display:none;align-items:center;gap:4px;font-size:9px;font-weight:800;padding:2px 7px;border-radius:999px;background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;margin-right:5px;vertical-align:middle;white-space:nowrap"></span><span id="verBadge">v—</span></div>
     <div id="searchwrap">
       <input id="search" type="text" placeholder="Where to?" autocomplete="off" enterkeyhint="search" />
       <button id="searchClear" aria-label="Clear">✕</button>
       <button id="searchbtn" aria-label="Search">→</button>
       <div id="results" role="listbox"></div>
     </div>
-    <span id="seasonPill" style="display:none;align-items:center;gap:4px;position:absolute;right:8px;top:calc(env(safe-area-inset-top) + 2px);font-size:10px;font-weight:800;padding:3px 9px;border-radius:999px;background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;box-shadow:0 0 12px rgba(255,122,18,.5);z-index:5;white-space:nowrap"></span>
-<div id="clock"><span id="clockTime">--:--</span><br><span id="clockTheme">AUTO</span><br><span id="netDot" style="font-size:9px">●&nbsp;live</span></div>
+    <div id="clock"><span id="clockTime">--:--</span><br><span id="clockTheme">AUTO</span><br><span id="netDot" style="font-size:9px">●&nbsp;live</span></div>
   </div>
   <div id="modes">
     <button class="mode on" data-mode="car" aria-label="Drive">🚗</button>

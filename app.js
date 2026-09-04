@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v174";
+const APP_VERSION="v175";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -79,17 +79,24 @@ function applySeason(){
   /* This ran at boot BEFORE map.on("load") sets S.mapReady, so the swap was skipped and never
      retried — which is why the seasonal basemap never actually appeared. Retry once the map
      is genuinely ready, and only record _seasonPainted when a swap really happened. */
+  /* Turning the season OFF has to actively restore the map, not merely stop applying the
+     season — the tint lives in the style object, so the style must be rebuilt either way. */
   try{
     if(_seasonPainted!==on && typeof swapMapStyle==="function" && map){
-      if(S.mapReady){ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark",true); }
-      else { map.once("load",function(){ try{ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark",true); }catch(e){} }); }
+      var _go=function(){ try{ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark",true); }catch(e){} };
+      if(S.mapReady) _go(); else map.once("load",_go);
+    }
+    if(!on){
+      // tear down every seasonal map layer explicitly
+      try{ stopRouteFlow(); if(map&&map.getLayer&&map.getLayer("route-flow")) map.removeLayer("route-flow"); }catch(e){}
+      try{ applySeasonSky(); }catch(e){}
     }
   }catch(e){}
   // state pill so it's never a guess whether the season is live
   try{
     var sp=$("seasonPill");
     if(sp){
-      sp.style.display = on ? "inline-flex" : (seasonMode()==="off" ? "none" : "none");
+      sp.style.display = on ? "inline-flex" : "none";
       sp.textContent = "\uD83C\uDF83 Halloween";
     }
   }catch(e){}
@@ -261,7 +268,7 @@ function rasterStyleObj(dark){
            "raster-contrast":0.42,"raster-hue-rotate":-34,"raster-opacity":1}
         : {"raster-brightness-max":0.46,"raster-brightness-min":0.00,"raster-saturation":0.35,
            "raster-contrast":0.40,"raster-hue-rotate":-34,"raster-opacity":1};
-      bgc = "#0A0503";
+      bgc = dark ? "#1A0E06" : "#6B4A2A";   // warm, matches the tinted tiles so gaps blend
     }
   }catch(e){}
   return {version:8,
