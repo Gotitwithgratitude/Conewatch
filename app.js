@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v179";
+const APP_VERSION="v180";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -139,7 +139,9 @@ function cycleSeason(){
     }
     var ids=[]; try{ ids=(map.getStyle().layers||[]).map(function(l){return l.id;}); }catch(e){}
     d.push("layers="+ids.slice(0,6).join(","));
-    d.push("swapping="+(typeof styleSwapping!=="undefined"?styleSwapping:"?"));
+    d.push("set="+(window.__tintSet===undefined?"never ran":window.__tintSet));
+    if(window.__tintErr) d.push("ERR "+window.__tintErr);
+    d.push("themeNow="+S.themeNow);
     toast(d.join(" | "),9000);
   }catch(e){ toast("diag failed: "+e.message,6000); }
 }
@@ -4603,7 +4605,11 @@ function paintSeasonTint(){
           "raster-contrast":0.12,"raster-hue-rotate":0,"raster-opacity":1}
        : {"raster-brightness-max":1,"raster-brightness-min":0,"raster-saturation":0,
           "raster-contrast":0,"raster-hue-rotate":0,"raster-opacity":1});
-  try{ Object.keys(P).forEach(function(k){ map.setPaintProperty("basemap",k,P[k]); }); }catch(e){}
+  window.__tintErr=null; window.__tintSet=0;
+  Object.keys(P).forEach(function(k){
+    try{ map.setPaintProperty("basemap",k,P[k]); window.__tintSet++; }
+    catch(e){ if(!window.__tintErr) window.__tintErr=k+": "+e.message; }
+  });
   try{ map.setPaintProperty("bg","background-color", on?(dark?"#1A0E06":"#6B4A2A"):(dark?"#0E1013":"#EAE6DF")); }catch(e){}
 }
 function applySeasonSky(){
