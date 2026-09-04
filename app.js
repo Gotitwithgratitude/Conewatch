@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v166";
+const APP_VERSION="v167";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3077,6 +3077,10 @@ $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 $("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
 $("shareApp")&&($("shareApp").onclick=function(){ shareApp(); });
+try{ var _ct=$("clockTheme"); if(_ct){ _ct.style.cursor="pointer"; _ct.style.textDecoration="underline";
+  _ct.style.textDecorationStyle="dotted"; _ct.style.textUnderlineOffset="3px";
+  _ct.title="Tap to switch theme";
+  _ct.onclick=function(ev){ ev.stopPropagation(); cycleThemeLabel(); }; } }catch(e){}
 document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
 document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
 document.querySelectorAll("#toolsChips .chip").forEach(function(c){ c.onclick=function(){ setToolsStyle(c.dataset.tools); }; });
@@ -4355,6 +4359,19 @@ function showGeoPicker(cands,typed){
   });
   $("geoPicker").style.display="block";
 }
+/* The DARK/LIGHT/AUTO label sat right next to the live dot doing nothing but reporting state.
+   Making it the control removes a trip into Settings for the most-changed setting in the app. */
+function cycleThemeLabel(){
+  var order=["auto","dark","light"];
+  var i=order.indexOf(S.themeMode||"auto");
+  var next=order[(i+1)%order.length];
+  S.themeMode=next;
+  try{ document.querySelectorAll("#themeChips .chip").forEach(function(c){
+    c.classList.toggle("on",c.dataset.themeSet===next); }); }catch(e){}
+  try{ applyTheme(true); }catch(e){}
+  try{ saveSettings(); }catch(e){}
+  toast("Theme: "+next.charAt(0).toUpperCase()+next.slice(1),1200);
+}
 async function confirmDestination(res,typed){
   S.destLabel=res.label||"";
   setDestination({lat:res.lat,lng:res.lng,_keepLabel:true},typed);
@@ -4366,7 +4383,12 @@ async function confirmDestination(res,typed){
     if(mi>150){toast("⚠ Match is "+Math.round(mi)+" mi away — if that's wrong, add the ZIP code.",4500);}}
   var d=S.pos?distM(S.pos,{lat:res.lat,lng:res.lng}):null;
   $("confMeta").textContent=d!==null?fmtDist(d)+" away — calculating drive time…":"Location found";
-  $("confirmBar").style.display="flex";
+  /* The route card opens immediately after a destination is set and explicitly hides this
+     bar, so Correct/Wrong was never reachable — it appeared and vanished in the same beat.
+     The route card already names the destination and offers Change, which covers the same
+     need properly. crowdSave() above still records the match, so the learning is unaffected;
+     only the explicit thumbs-down signal is lost, and it was never actually collectable. */
+  $("confirmBar").style.display="none";
   // always-available way into navigation, even if the route card has trouble rendering
   try{
     const cb=$("confirmBar");
