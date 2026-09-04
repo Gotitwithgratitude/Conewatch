@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v173";
+const APP_VERSION="v174";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -81,8 +81,8 @@ function applySeason(){
      is genuinely ready, and only record _seasonPainted when a swap really happened. */
   try{
     if(_seasonPainted!==on && typeof swapMapStyle==="function" && map){
-      if(S.mapReady){ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark"); }
-      else { map.once("load",function(){ try{ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark"); }catch(e){} }); }
+      if(S.mapReady){ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark",true); }
+      else { map.once("load",function(){ try{ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark",true); }catch(e){} }); }
     }
   }catch(e){}
   // state pill so it's never a guess whether the season is live
@@ -246,12 +246,27 @@ function rasterStyleObj(dark){
   // The dark canvas basemap tops out ~z16, which produced "Map data not yet available" while driving.
   // Night mode is rendered by darkening these tiles instead of swapping to a shallower source.
   const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
-  const paint = dark
+  let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12,"raster-opacity":1}
     : {"raster-opacity":1};
+  let bgc = dark?"#0E1013":"#EAE6DF";
+  /* THIS is the function styleFor() actually calls. Every seasonal treatment I wrote before
+     went into rasterStyle() instead — a dead twin — which is why none of it ever appeared.
+     Note the comment above: the dark canvas basemap stops around z16 and breaks navigation,
+     so we stay on the street source and push it to dusk with paint properties only. */
+  try{
+    if(typeof seasonActive==="function" && seasonActive()){
+      paint = dark
+        ? {"raster-brightness-max":0.34,"raster-brightness-min":0.00,"raster-saturation":0.30,
+           "raster-contrast":0.42,"raster-hue-rotate":-34,"raster-opacity":1}
+        : {"raster-brightness-max":0.46,"raster-brightness-min":0.00,"raster-saturation":0.35,
+           "raster-contrast":0.40,"raster-hue-rotate":-34,"raster-opacity":1};
+      bgc = "#0A0503";
+    }
+  }catch(e){}
   return {version:8,
     sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
-    layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0E1013":"#EAE6DF"}},
+    layers:[{id:"bg",type:"background",paint:{"background-color":bgc}},
             {id:"basemap",type:"raster",source:"basemap",paint:paint}]};
 }
 async function styleFor(theme){
@@ -548,7 +563,7 @@ function addMapLayers(){
   ensureSat();
 }
 let styleSwapping=false;
-function swapMapStyle(theme){
+function swapMapStyle(theme,force){
   if(styleSwapping)return;
   // NEVER restyle mid-navigation — setStyle wipes every layer (incl. the route line). Defer until the drive ends.
   if(S.navigating){ S.pendingTheme=theme; return; }
