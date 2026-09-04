@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v171";
+const APP_VERSION="v172";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -185,7 +185,15 @@ try{
 
 /* ═══════════ map boot (MapLibre v5) with per-theme styles ═══════════ */
 function rasterStyle(dark){
-  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  /* Everything seasonal until now recoloured the SAME street map, which is why it kept reading
+     as a filter rather than a world. This swaps the basemap outright: Esri's dark canvas draws
+     roads as thin pale lines on near-black with no landuse colour at all, so the city becomes a
+     lit road network in the dark instead of a daylight map wearing orange. Same keyless Esri
+     source family — no new provider, no key, and it reverts the instant the season ends. */
+  var _hw=false; try{ _hw=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  const url = _hw
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
   let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
     : {};
@@ -199,12 +207,10 @@ function rasterStyle(dark){
       // Dusk in both themes: a Halloween map that stays daylight-bright will always read as a
       // sticker on top of a normal map rather than a season. Light mode gets a warm amber
       // twilight rather than full night, so the app is still legible in daylight.
-      paint = dark
-        ? {"raster-brightness-max":0.30,"raster-brightness-min":0.00,"raster-saturation":-0.05,
-           "raster-contrast":0.34,"raster-hue-rotate":-30}
-        : {"raster-brightness-max":0.62,"raster-brightness-min":0.04,"raster-saturation":0.10,
-           "raster-contrast":0.26,"raster-hue-rotate":-28};
-      bg = dark?"#070401":"#2A1608";
+      paint = {"raster-brightness-max":0.86,"raster-brightness-min":0.02,
+               "raster-saturation":0.55,"raster-contrast":0.30,"raster-hue-rotate":-32,
+               "raster-opacity":0.95};
+      bg = "#0A0503";
     }
   }catch(e){}
   return { version:8,
@@ -3584,7 +3590,7 @@ function openDriveTour(){
     style:{version:8,
       sources:{
         sat:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,maxzoom:19,attribution:satMeta().attr},
-        dem:{type:"raster-dem",tiles:["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],encoding:"terrarium",tileSize:256,maxzoom:14}
+        dem:{type:"raster-dem",tiles:["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],encoding:"terrarium",tileSize:512,maxzoom:12,minzoom:6}
       },
       layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat","paint":{"raster-fade-duration":0}}]},
     /* Was 85° pitch with terrain on satellite tiles — at that angle the horizon runs on
@@ -3592,14 +3598,14 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:18,pitch:80,bearing:_brg(co[0],co[1]),maxPitch:85,attributionControl:true,
+    center:co[0],zoom:17.4,pitch:76,bearing:_brg(co[0],co[1]),maxPitch:85,attributionControl:true,
     interactive:true,maxTileCacheSize:500,fadeDuration:0,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     try{ tourMap.setTerrain({source:"dem",exaggeration:0.9}); }catch(e){}
     // denser ground fog = shorter visible horizon = far fewer tiles to fetch and draw
     try{ tourMap.setSky&&tourMap.setSky({"sky-color":"#8ec9ff","horizon-color":"#dbeeff","fog-color":"#eef6ff","fog-ground-blend":0.78,"sky-horizon-blend":0.8,"horizon-fog-blend":0.75,"atmosphere-blend":0.85}); }catch(e){}
     // terrain is the single most expensive thing here; ease it back without flattening the view
-    try{ tourMap.setTerrain({source:"dem",exaggeration:0.65}); }catch(e){}
+    try{ tourMap.setTerrain({source:"dem",exaggeration:0.5}); }catch(e){}   // Detroit is flat; terrain is cost, not view
     tourMap.addSource("tl",{type:"geojson",data:{type:"Feature",geometry:S.route.geometry}});
     tourMap.addLayer({id:"tl-cas",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#06283d","line-width":10,"line-opacity":.92}});
     tourMap.addLayer({id:"tl-ln",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#22d3aa","line-width":5.5}});

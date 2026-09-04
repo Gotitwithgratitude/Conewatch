@@ -167,7 +167,8 @@
   html,body{margin:0;height:100dvh;background:var(--bg);color:var(--text);font-family:var(--body);overflow:hidden;transition:background .5s;position:fixed;inset:0;width:100%;overscroll-behavior:none}
   button,input,textarea,select,.fab,.chip,.mode,.row-btn{touch-action:manipulation}
   input,textarea,select{font-size:16px !important}
-  #map{position:fixed;top:0;left:0;right:0;bottom:0;height:100dvh;background:var(--bg)}
+  #map{position:fixed;top:0;left:0;right:0;bottom:0;height:100dvh;background:var(--bg);touch-action:none;-webkit-user-select:none;user-select:none}
+  #map canvas{touch-action:none}
   .maplibregl-popup-content{background:var(--panel-solid)!important;color:var(--text)!important;border:1px solid var(--line);border-radius:12px;font-family:var(--body)}
   .maplibregl-popup-tip{border-top-color:var(--panel-solid)!important;border-bottom-color:var(--panel-solid)!important}
   .maplibregl-ctrl-attrib{background:var(--panel)!important;font-size:9px}
