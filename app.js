@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v170";
+const APP_VERSION="v171";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -75,6 +75,7 @@ function applySeason(){
   // the pumpkin badge is the interactive bit: tap it to cycle the theme
   try{ var vb=$("verBadge"); if(vb){ vb.style.cursor="pointer"; vb.onclick=function(ev){ ev.stopPropagation(); cycleSeason(); }; } }catch(e){}
   // the basemap tint lives in the style object, so the style has to be rebuilt to show it
+  try{ applySeasonSky(); }catch(e){}
   try{ if(_seasonPainted!==on && typeof swapMapStyle==="function" && map && S.mapReady){
     _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark");
   } }catch(e){}
@@ -388,7 +389,11 @@ let mapStyleTheme="dark";
      A bigger cache keeps recent tiles in memory, no fade removes the "loading" shimmer that
      reads as lag, and not re-validating expired tiles stops needless refetches mid-drive. */
   map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0,
-    attributionControl:true, maxTileCacheSize:400, fadeDuration:0, refreshExpiredTiles:false,
+    /* fadeDuration:0 was my mistake in v164 — I set it to remove what looked like loading
+       shimmer, but without a cross-fade tiles pop in as hard-edged rectangles, which is the
+       blocky patchwork that appears when panning or pitching. A short fade blends them and
+       reads as smooth rather than hesitant. The cache is what actually fixed the lag. */
+    attributionControl:true, maxTileCacheSize:600, fadeDuration:180, refreshExpiredTiles:false,
     /* Full freedom to explore. The main map was on MapLibre's default 60° cap while the
        preview maps already went to 85, and nothing here should stop someone flying out to
        world view and back in. Rotation and pitch gestures explicitly on. */
@@ -481,10 +486,25 @@ function _cwAddMapModeBtn(){
   }catch(e){}
 }
 function addMapLayers(){
+  try{ applySeasonSky(); }catch(e){}   // style swaps reset the sky — reapply every time
   const a=ACCENT[S.themeNow];
   if(!map.getSource("route")) map.addSource("route",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
   if(!map.getLayer("route-casing")) map.addLayer({id:"route-casing",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.casing,"line-width":["interpolate",["linear"],["zoom"],10,7,14,13,18,22],"line-opacity":.95}});
   if(!map.getLayer("route-line")) map.addLayer({id:"route-line",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.route,"line-width":["interpolate",["linear"],["zoom"],10,4.5,14,9,18,15]}});
+  // seasonal flow layer — a pale ember travelling the route, sitting on top of the solid line
+  try{
+    var _hw=false; try{ _hw=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+    if(_hw && !map.getLayer("route-flow")){
+      map.addLayer({id:"route-flow",type:"line",source:"route",
+        layout:{"line-cap":"butt","line-join":"round"},
+        paint:{"line-color":"#FFD24A","line-opacity":.85,
+          "line-width":["interpolate",["linear"],["zoom"],10,2.5,14,5,18,8],
+          "line-dasharray":[0,0,2,6]}});
+      startRouteFlow();
+    } else if(!_hw && map.getLayer("route-flow")){
+      stopRouteFlow(); map.removeLayer("route-flow");
+    }
+  }catch(e){}
   if(!map.getLayer("route-core")) map.addLayer({id:"route-core",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"rgba(255,255,255,.82)","line-width":["interpolate",["linear"],["zoom"],10,1.4,14,2.6,18,4.2]}});
   // 3D buildings from whichever vector source the style ships
   try{
@@ -4460,6 +4480,50 @@ function showGeoPicker(cands,typed){
 }
 /* The DARK/LIGHT/AUTO label sat right next to the live dot doing nothing but reporting state.
    Making it the control removes a trip into Settings for the most-changed setting in the app. */
+/* ═══════════ seasonal sky ═══════════
+   Everything Halloween so far has been decoration layered ON the map. This is the map itself
+   rendering differently: MapLibre's atmosphere, so when the view pitches you get a deep violet
+   sky burning to blood-orange at the horizon, with the ground hazing into it. It's the same
+   machinery that makes the 3D drive preview look like a real place — no stickers, no cartoon,
+   and it only exists when you tilt, which is exactly when there's sky to see. */
+/* A slow flow along the route line during the season. Dash offset only — no extra layers,
+   no per-frame geometry work, and it stops dead when the tab is hidden or motion is reduced. */
+var _flowRAF=null;
+function startRouteFlow(){
+  stopRouteFlow();
+  var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  if(!on) return;
+  try{ if(window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches) return; }catch(e){}
+  var t=0;
+  function step(){
+    if(document.hidden){ _flowRAF=requestAnimationFrame(step); return; }
+    t=(t+0.5)%16;
+    try{ if(map.getLayer("route-flow")) map.setPaintProperty("route-flow","line-dasharray",[0,t/8,2,6-t/8]); }catch(e){}
+    _flowRAF=requestAnimationFrame(step);
+  }
+  _flowRAF=requestAnimationFrame(step);
+}
+function stopRouteFlow(){ if(_flowRAF){ cancelAnimationFrame(_flowRAF); _flowRAF=null; } }
+function applySeasonSky(){
+  if(!map||!map.setSky) return;
+  var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  try{
+    if(on){
+      map.setSky({
+        "sky-color":"#1A0730",            // deep violet overhead
+        "horizon-color":"#FF6A12",        // burning amber at the skyline
+        "fog-color":"#2B0F06",            // ground haze, warm and dark
+        "sky-horizon-blend":0.62,
+        "horizon-fog-blend":0.55,
+        "fog-ground-blend":0.72,
+        "atmosphere-blend":["interpolate",["linear"],["zoom"],0,0,8,0.85,14,0.9]
+      });
+    } else {
+      map.setSky({"sky-color":"#0E1116","horizon-color":"#2A3340","fog-color":"#12161C",
+        "sky-horizon-blend":0.5,"horizon-fog-blend":0.4,"fog-ground-blend":0.4,"atmosphere-blend":0.5});
+    }
+  }catch(e){}
+}
 function cycleThemeLabel(){
   var order=["auto","dark","light"];
   var i=order.indexOf(S.themeMode||"auto");
