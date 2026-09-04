@@ -646,22 +646,25 @@
   <h3>Report</h3>
   <p class="sub">One tap — drops at your GPS and warns drivers behind you.</p>
   <div class="report-grid">
-    <button class="rtile" data-type="police"><span class="ic">👮</span><span>Police</span></button>
+    <!-- 15 tiles = exactly 5 full rows of 3. Keep the count a multiple of 3: an orphan
+         partial row is what made the grid reflow every time a type was added. Ordered by how
+         often a driver actually reaches for each, so positions stay put and muscle memory
+         survives future additions — append to the END, three at a time. -->
     <button class="rtile" data-type="pothole"><span class="ic">🕳</span><span>Pothole</span></button>
-    <button class="rtile" data-type="speed_bump"><span class="ic">🛑</span><span>Speed bump</span></button>
-    <button class="rtile" data-type="construction_cones"><span class="ic">🚧</span><span>Cones</span></button>
+    <button class="rtile" data-type="police"><span class="ic">👮</span><span>Police</span></button>
     <button class="rtile" data-type="accident"><span class="ic">🚨</span><span>Accident</span></button>
-    <button class="rtile" data-type="camera"><span class="ic">📸</span><span>Camera</span></button>
+    <button class="rtile" data-type="construction_cones"><span class="ic">🚧</span><span>Cones</span></button>
     <button class="rtile" data-type="traffic"><span class="ic">🚦</span><span>Traffic</span></button>
     <button class="rtile" data-type="road_closure" data-closure="1"><span class="ic">⛔</span><span>Closed</span></button>
-    <button class="rtile" data-type="stalled"><span class="ic">🚗</span><span>Stalled</span></button>
     <button class="rtile" data-type="debris"><span class="ic">🪵</span><span>Debris</span></button>
-    <button class="rtile" data-type="animal"><span class="ic">🦌</span><span>Animal</span></button>
+    <button class="rtile" data-type="stalled"><span class="ic">🚗</span><span>Stalled</span></button>
+    <button class="rtile" data-type="camera"><span class="ic">📸</span><span>Camera</span></button>
+    <button class="rtile" data-type="speed_bump"><span class="ic">🛑</span><span>Speed bump</span></button>
     <button class="rtile" data-type="flooding"><span class="ic">🌊</span><span>Flood</span></button>
-    <button class="rtile" data-type="power_lines"><span class="ic">⚡</span><span>Power lines</span></button>
     <button class="rtile" data-type="ice"><span class="ic">❄️</span><span>Ice</span></button>
+    <button class="rtile" data-type="animal"><span class="ic">🦌</span><span>Animal</span></button>
+    <button class="rtile" data-type="power_lines"><span class="ic">⚡</span><span>Power lines</span></button>
     <button class="rtile" data-type="emergency"><span class="ic">🚑</span><span>Emergency</span></button>
-    <button class="rtile" data-type="alert"><span class="ic">📢</span><span>Alert</span></button>
   </div>
 </div>
 

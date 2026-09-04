@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v160";
+const APP_VERSION="v163";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -115,7 +115,14 @@ const CW_CONFIG = {
   fsqProxy: "/api/fsq"
 };
 const PROFILES = { car:"routed-car/route/v1/driving", bike:"routed-bike/route/v1/driving", foot:"routed-foot/route/v1/driving", hike:"routed-foot/route/v1/driving" };
-const ACCENT = { dark:{route:"#35E0C8",casing:"#0A3B33"}, light:{route:"#1D6EF2",casing:"#0A2E66"} };
+const ACCENT_BASE = { dark:{route:"#35E0C8",casing:"#0A3B33"}, light:{route:"#1D6EF2",casing:"#0A2E66"} };
+/* The route line is the single most-looked-at element on the screen while driving, so leaving
+   it teal/blue kept the whole thing feeling ordinary no matter what the chrome did. */
+const ACCENT_HW   = { dark:{route:"#FF7A12",casing:"#3B0A5C"}, light:{route:"#E2620A",casing:"#2E0847"} };
+const ACCENT = new Proxy({},{ get:function(_,k){
+  var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  return (on?ACCENT_HW:ACCENT_BASE)[k];
+}});
 
 const S = {
   pos:null, lastPos:null, accuracy:null, course:null, compass:null,
@@ -188,11 +195,15 @@ function rasterStyle(dark){
      hazard markers are unaffected: this only recolours the basemap tiles underneath them. */
   try{
     if(typeof seasonActive==="function" && seasonActive()){
+      // Dusk in both themes: a Halloween map that stays daylight-bright will always read as a
+      // sticker on top of a normal map rather than a season. Light mode gets a warm amber
+      // twilight rather than full night, so the app is still legible in daylight.
       paint = dark
-        ? {"raster-brightness-max":0.36,"raster-brightness-min":0.01,"raster-saturation":-0.15,
-           "raster-contrast":0.20,"raster-hue-rotate":-18}
-        : {"raster-saturation":-0.10,"raster-contrast":0.06,"raster-hue-rotate":-14,"raster-brightness-max":0.94};
-      bg = dark?"#0B0704":"#F0E7D9";
+        ? {"raster-brightness-max":0.30,"raster-brightness-min":0.00,"raster-saturation":-0.05,
+           "raster-contrast":0.34,"raster-hue-rotate":-30}
+        : {"raster-brightness-max":0.62,"raster-brightness-min":0.04,"raster-saturation":0.10,
+           "raster-contrast":0.26,"raster-hue-rotate":-28};
+      bg = dark?"#070401":"#2A1608";
     }
   }catch(e){}
   return { version:8,
@@ -2708,12 +2719,26 @@ function onMotion(e){
     // only genuine rough spots plot, not every joint — this also stops the heatmap flooding.
     roughLog(S.pos.lat,S.pos.lng,Math.min(1,(jolt-7.5)/20));
   }
-  if(jolt>15 && Date.now()-lastBump>15000){         // raised 16→~big hit; cooldown 8s→15s
-    lastBump=Date.now();
-    // strong hit → offer to report a pothole
-    $("bumpBar").style.display="flex";
-    beep(520,.2);if(navigator.vibrate)navigator.vibrate(60);
-    setTimeout(()=>{$("bumpBar").style.display="none";},9000);
+  /* The prompt was firing constantly on Detroit streets. Three changes:
+     - threshold 15 → 22, because a genuine pothole hit is much harder than a bad seam
+     - cooldown 15s → 35s, so one rough block can't produce a run of prompts
+     - and the real fix: don't ask about a pothole that's ALREADY on the map. On a known-bad
+       stretch the answer is already recorded, so asking again is pure noise. */
+  if(jolt>22 && Date.now()-lastBump>35000 && S.pos){
+    var alreadyKnown=false;
+    try{
+      alreadyKnown=(S.hazards||[]).some(function(h){
+        return (h.type==="pothole"||h.type==="speed_bump") && distM(S.pos,h)<45;
+      });
+    }catch(e){}
+    if(!alreadyKnown){
+      lastBump=Date.now();
+      $("bumpBar").style.display="flex";
+      beep(520,.2);if(navigator.vibrate)navigator.vibrate(60);
+      setTimeout(()=>{$("bumpBar").style.display="none";},9000);
+    } else {
+      lastBump=Date.now();                       // still start the cooldown — the hit was real
+    }
   }
 }
 // ── Recurring-slowdown learner ────────────────────────────────────────────────
