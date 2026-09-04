@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v181";
+const APP_VERSION="v182";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -97,7 +97,7 @@ function applySeason(){
     var sp=$("seasonPill");
     if(sp){
       sp.style.display = on ? "inline-flex" : "none";
-      sp.textContent = "\uD83C\uDF83 Halloween";
+      sp.textContent = "\uD83C\uDF83";   // pumpkin alone — the pill was crowding the search field
     }
   }catch(e){}
   // one-time announcement so the update is obvious rather than something you might miss
@@ -737,8 +737,17 @@ function onPos(p){
   if(!_accBad) S.goodFixes=(S.goodFixes||0)+1;
   if(!S.pos && typeof acCache!=="undefined" && acCache.clear) acCache.clear(); // first fix: drop any pre-lock typeahead entries
   S.lastPos=S.pos; S.pos=_new; S.accuracy=accuracy;
-  if(heading!==null && !isNaN(heading)) S.course=heading;
-  else if(S.lastPos && distM(S.lastPos,S.pos)>3) S.course=bearing(S.lastPos,S.pos);
+  /* At a standstill the GPS still reports a heading, but it's noise — consecutive fixes are
+     metres apart in random directions, so the car marker spins to a diagonal while waiting at
+     a light and only straightens once you're moving. Hold the last heading taken while
+     genuinely in motion, and only accept a new one above walking pace. */
+  var _mv = S.lastPos ? distM(S.lastPos,S.pos) : 0;
+  var _movingEnough = (typeof speed==="number" && speed>1.4) || _mv>6;
+  if(_movingEnough){
+    if(heading!==null && !isNaN(heading)) S.course=heading;
+    else if(S.lastPos && _mv>3) S.course=bearing(S.lastPos,S.pos);
+  }
+  // no else: stationary keeps whatever heading the last real movement established
 
   // speed: trust the GPS's own speed; when we must derive it, reject GPS scatter so a parked car never shows motion
   let moved = S.lastPos ? distM(S.lastPos,S.pos) : 0;
