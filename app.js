@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v175";
+const APP_VERSION="v176";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -115,6 +115,16 @@ function cycleSeason(){
   var next={auto:"on",on:"off",off:"auto"}[seasonMode()]||"auto";
   try{ localStorage.setItem("cw_season",next); }catch(e){}
   applySeason();
+  /* applySeason gates its restyle on _seasonPainted, and that flag can desync from what the
+     map is actually showing — which left the map stuck amber after switching the season off
+     even though every other part of the UI reverted. An explicit toggle has no reason to be
+     gated: rebuild the style unconditionally so the map always matches the setting. */
+  try{
+    _seasonPainted = (typeof seasonActive==="function") ? seasonActive() : null;
+    if(map && S.mapReady && !S.navigating && typeof swapMapStyle==="function"){
+      swapMapStyle(S.themeMode==="light"?"light":"dark",true);
+    }
+  }catch(e){}
   toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
 }
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
