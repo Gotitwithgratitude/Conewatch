@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v178";
+const APP_VERSION="v179";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -123,7 +123,25 @@ function cycleSeason(){
     _seasonPainted = (typeof seasonActive==="function") ? seasonActive() : null;
     paintSeasonTint();          // direct paint — no style rebuild, so nothing to race
   }catch(e){}
-  toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
+  /* TEMPORARY DIAGNOSTIC — four attempts have failed on theory alone, so read the truth back
+     off the live map instead of guessing. Reports what the map ACTUALLY has applied. */
+  try{
+    var d=[];
+    d.push("want="+((typeof seasonActive==="function")?seasonActive():"?"));
+    var lyr=null; try{ lyr=map&&map.getLayer&&map.getLayer("basemap"); }catch(e){}
+    d.push("basemapLayer="+(lyr?"yes":"NO"));
+    if(lyr){
+      var hr=null,br=null;
+      try{ hr=map.getPaintProperty("basemap","raster-hue-rotate"); }catch(e){ hr="err"; }
+      try{ br=map.getPaintProperty("basemap","raster-brightness-max"); }catch(e){ br="err"; }
+      d.push("hue="+String(hr));
+      d.push("brightMax="+String(br));
+    }
+    var ids=[]; try{ ids=(map.getStyle().layers||[]).map(function(l){return l.id;}); }catch(e){}
+    d.push("layers="+ids.slice(0,6).join(","));
+    d.push("swapping="+(typeof styleSwapping!=="undefined"?styleSwapping:"?"));
+    toast(d.join(" | "),9000);
+  }catch(e){ toast("diag failed: "+e.message,6000); }
 }
 const GENERIC_WORDS=/^(the|a|an|rooftop|lounge|bar|grill|cafe|coffee|restaurant|kitchen|pub|tavern|club|shop|store|center|centre|co|inc|llc|and)$/i;
 
