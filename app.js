@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v172";
+const APP_VERSION="v173";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -76,9 +76,23 @@ function applySeason(){
   try{ var vb=$("verBadge"); if(vb){ vb.style.cursor="pointer"; vb.onclick=function(ev){ ev.stopPropagation(); cycleSeason(); }; } }catch(e){}
   // the basemap tint lives in the style object, so the style has to be rebuilt to show it
   try{ applySeasonSky(); }catch(e){}
-  try{ if(_seasonPainted!==on && typeof swapMapStyle==="function" && map && S.mapReady){
-    _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark");
-  } }catch(e){}
+  /* This ran at boot BEFORE map.on("load") sets S.mapReady, so the swap was skipped and never
+     retried — which is why the seasonal basemap never actually appeared. Retry once the map
+     is genuinely ready, and only record _seasonPainted when a swap really happened. */
+  try{
+    if(_seasonPainted!==on && typeof swapMapStyle==="function" && map){
+      if(S.mapReady){ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark"); }
+      else { map.once("load",function(){ try{ _seasonPainted=on; swapMapStyle(S.themeMode==="light"?"light":"dark"); }catch(e){} }); }
+    }
+  }catch(e){}
+  // state pill so it's never a guess whether the season is live
+  try{
+    var sp=$("seasonPill");
+    if(sp){
+      sp.style.display = on ? "inline-flex" : (seasonMode()==="off" ? "none" : "none");
+      sp.textContent = "\uD83C\uDF83 Halloween";
+    }
+  }catch(e){}
   // one-time announcement so the update is obvious rather than something you might miss
   if(on){ try{
     if(localStorage.getItem("cw_season_seen")!==String(new Date().getFullYear())){
