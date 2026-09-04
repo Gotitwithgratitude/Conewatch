@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v167";
+const APP_VERSION="v168";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1408,8 +1408,11 @@ async function fetchRoute(silent){
     // We already ask OSRM for alternatives=3 but only ever used routes[0] (the extras were
     // consumed internally for avoid-highway/tolls and otherwise thrown away). Keep them so
     // the driver can pick the corridor, the way Google does and Apple doesn't.
-    var _sorted=(data.routes||[]).slice().sort(function(a,b){ return (a.duration||0)-(b.duration||0); });
-    S.routeAlts = _sorted.slice(0,3);
+    /* Pick by what the drive will actually cost, not just what OSRM predicts. A route two
+       minutes quicker on paper but running through a reported closure is not the better route. */
+    var _scored=(data.routes||[]).slice().map(function(r){ r._sc=scoreRoute(r); return r; });
+    _scored.sort(function(a,b){ return a._sc.total-b._sc.total; });
+    S.routeAlts = _scored.slice(0,3);
     S.routeAltIdx = 0;
     const r=S.routeAlts[0]||data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
@@ -1429,6 +1432,83 @@ async function fetchRoute(silent){
 /* ═══════════ route alternatives ═══════════
    Name a route by a distinctive road it uses, so "via I-75" beats "Route 2". Pulled from the
    step names OSRM already returns — prefer a numbered highway, else the longest-used street. */
+/* ═══════════ hazard-aware route scoring ═══════════
+   Every navigation app picks by predicted duration. ConeWatch knows things they don't: which
+   streets drivers have reported closed, jammed, flooded or torn up in the last hour, plus the
+   road-roughness log this device has been building from its own accelerometer.
+   So instead of picking the nominally-fastest line, score each alternative by
+   duration + what the network says it'll actually cost you, and pick the best composite.
+
+   Penalties are in SECONDS, chosen to reflect real time lost rather than how alarming the
+   icon looks. Nothing disqualifies a route — a driver has to be able to get there even if
+   every option is reported bad, so the worst case is a heavy penalty, never no route.
+
+   Deliberately zero: police and cameras. They cost you nothing but your speed being legal,
+   and routing around law enforcement is not a thing this app should do. Potholes are a light
+   touch too — we warn about those on approach, which is the better answer than a detour. */
+const ROUTE_PENALTY = {
+  road_closure:300, flooding:240, power_lines:200, traffic:180, ice:180,
+  accident:150, emergency:120, construction_cones:90, stalled:60, debris:45,
+  animal:20, pothole:15, speed_bump:10, camera:0, police:0
+};
+function routeHazardCost(rt){
+  var cost=0, hits=[];
+  try{
+    var co=(rt.geometry&&rt.geometry.coordinates)||[];
+    if(!co.length||!S.hazards||!S.hazards.length) return {cost:0,hits:[]};
+    S.hazards.forEach(function(h){
+      var w=ROUTE_PENALTY[h.type];
+      if(!w) return;                                  // zero-weight or unknown type
+      var best=Infinity;
+      for(var k=0;k<co.length;k+=3){                  // every 3rd vertex is plenty at this scale
+        var d=distM({lat:co[k][1],lng:co[k][0]},h);
+        if(d<best) best=d;
+        if(best<30) break;
+      }
+      if(best<40){
+        // a hazard several drivers have confirmed is more likely to be real, and worse
+        var conf=Math.min(2.5,1+((h.reports||1)-1)*0.35);
+        cost += w*conf;
+        hits.push(h.type);
+      }
+    });
+  }catch(e){}
+  return {cost:cost,hits:hits};
+}
+function routeRoughCost(rt){
+  // Road quality this device has measured itself. Capped low: rough pavement is worth
+  // avoiding but never worth a big detour.
+  var cost=0;
+  try{
+    if(!roughPts||!roughPts.length) return 0;
+    var co=(rt.geometry&&rt.geometry.coordinates)||[];
+    var recent=roughPts.filter(function(p){ return Date.now()-p.t < 30*864e5; });
+    var n=0;
+    recent.forEach(function(p){
+      for(var k=0;k<co.length;k+=6){
+        if(distM({lat:co[k][1],lng:co[k][0]},p)<35){ n+=p.s; break; }
+      }
+    });
+    cost=Math.min(90,n*8);
+  }catch(e){}
+  return cost;
+}
+function scoreRoute(rt){
+  var hz=routeHazardCost(rt);
+  var rough=routeRoughCost(rt);
+  return { total:(rt.duration||0)+hz.cost+rough, hazCost:hz.cost, hits:hz.hits, rough:rough };
+}
+function routeAltNote(sc){
+  if(!sc.hits.length && sc.rough<20) return "clear";
+  var counts={};
+  sc.hits.forEach(function(t){ counts[t]=(counts[t]||0)+1; });
+  var parts=Object.keys(counts).map(function(t){
+    var lbl=(HZ_META[t]&&HZ_META[t].label)||t;
+    return counts[t]>1?(counts[t]+" "+lbl.toLowerCase()):lbl.toLowerCase();
+  });
+  if(!parts.length && sc.rough>=20) return "rough surface";
+  return parts.slice(0,2).join(", ");
+}
 function routeAltName(rt){
   try{
     var steps=(rt.legs||[]).flatMap(function(l){ return l.steps||[]; });
@@ -1467,7 +1547,10 @@ function renderRouteAlts(){
     var km=S.units==="km", dv=km?(rt.distance/1000):(rt.distance/1609.34);
     var b=document.createElement("button");
     b.className="chip"+(i===S.routeAltIdx?" on":"");
-    b.innerHTML="<b>"+mins+" min</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+"</small>";
+    var sc=rt._sc||scoreRoute(rt);
+    var note=routeAltNote(sc);
+    b.innerHTML="<b>"+mins+" min</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
+      "</small><br><small style=\"opacity:.75\">"+(note==="clear"?"\u2713 clear":"\u26A0 "+note)+"</small>";
     b.onclick=function(){ selectRouteAlt(i); renderRouteAlts(); };
     box.appendChild(b);
   });
