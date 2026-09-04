@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v163";
+const APP_VERSION="v165";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -311,6 +311,33 @@ function notDismissed(h){ var d=_dismissed(); return !(h && h.id && d[h.id]); }
    A random string in localStorage. Not an account, not tied to a person, never sent anywhere
    except as a column on the reports this device files. Keeps the "no login, no download"
    promise while making a per-user count and a future leaderboard possible. */
+/* ═══════════ share the app ═══════════
+   There was no way to hand ConeWatch to someone else — and a community hazard network is only
+   as good as the number of people in it, so this is closer to a core feature than a nicety.
+   Uses the native share sheet where available, falls back to clipboard. */
+/* Two-finger drag tilts the map — genuinely useful and completely undiscoverable, so nobody
+   was using it. Show it once, the first few times someone drives, then never again. */
+function maybeShowTiltHint(){
+  try{
+    var n=parseInt(localStorage.getItem("cw_tilt_hint")||"0",10);
+    if(n>=3) return;
+    localStorage.setItem("cw_tilt_hint",String(n+1));
+    setTimeout(function(){ toast("Tip: drag with two fingers to tilt the map \u2014 swipe down to look further ahead",5200); },2600);
+  }catch(e){}
+}
+function shareApp(){
+  var url=location.origin+location.pathname;
+  var data={ title:"ConeWatch",
+    text:"ConeWatch — live potholes, cops and road hazards, reported by drivers. No download, no account, free.",
+    url:url };
+  try{
+    if(navigator.share){ navigator.share(data).catch(function(){}); return; }
+  }catch(e){}
+  try{
+    navigator.clipboard.writeText(url);
+    toast("Link copied — paste it anywhere to share ConeWatch",3000);
+  }catch(e){ toast(url,6000); }
+}
 function deviceId(){
   try{
     var d=localStorage.getItem("cw_device_id");
@@ -356,7 +383,12 @@ let mapStyleTheme="dark";
   document.documentElement.dataset.theme=S.themeNow;
   mapStyleTheme=S.themeNow;
   const style=await styleFor(S.themeNow);
-  map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0, attributionControl:true });
+  /* Tiles were dropping out at the horizon when pitched and lagging on zoom. MapLibre's
+     default cache is small, so panning back over ground you just left re-fetches everything.
+     A bigger cache keeps recent tiles in memory, no fade removes the "loading" shimmer that
+     reads as lag, and not re-validating expired tiles stops needless refetches mid-drive. */
+  map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0,
+    attributionControl:true, maxTileCacheSize:400, fadeDuration:0, refreshExpiredTiles:false });
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
@@ -1605,6 +1637,7 @@ async function startNavigation(){
   },18000);
   speak("Starting navigation to "+S.destName+".");
   toast("Navigation started — drive safe. Screen will stay awake.");
+  try{ maybeShowTiltHint(); }catch(e){}
 }
 function endNavigation(){
   S.navigating=false;S.headingUp=false;S.remoteStart=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
@@ -1683,6 +1716,7 @@ function navTick(){
   // If a peeked step has been passed while previewing, drop back to live.
   if(S.peekIdx!=null && S.stepIdx>=S.peekIdx) clearPeek();
   if(S.peekIdx==null) paintManeuver(cur, fmtDist(dNext), S.stepIdx, dNext);
+  try{ if($("turnSheet")&&$("turnSheet").classList.contains("open")) renderTurnList(); }catch(e){}
   $("hudDist").textContent=fmtDist(dNext);
   $("hudInstr").textContent=stepText(cur);
   $("hudSpeed").textContent=Math.round(S.speedMph);
@@ -3042,6 +3076,7 @@ $("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bum
 $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 $("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
+$("shareApp")&&($("shareApp").onclick=function(){ shareApp(); });
 document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
 document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
 document.querySelectorAll("#toolsChips .chip").forEach(function(c){ c.onclick=function(){ setToolsStyle(c.dataset.tools); }; });
@@ -3814,6 +3849,55 @@ function peekStep(dir){
   const base=(S.peekIdx==null)?S.stepIdx:S.peekIdx;
   peekTo(base+dir);
 }
+/* ═══════════ full turn list ═══════════
+   The banner only ever showed one instruction at a time, so there was no way to see the shape
+   of the drive — which lane to be in three turns from now, whether the next exit is the one.
+   This is the whole remaining route: current maneuver pinned at the top, every turn after it
+   scrollable beneath, distance and street per row. Tapping a row peeks the map at that turn,
+   reusing peekTo, so the list and the map stay in step. */
+function turnRowHTML(st,dist,isCur){
+  var badge="";
+  try{
+    var ex=st.exits||(st.maneuver&&st.maneuver.exit);
+    if(ex) badge='<span class="tbadge">Exit '+String(ex).split(";")[0]+'</span>';
+    else if(st.ref) badge='<span class="tbadge">'+String(st.ref).split(";")[0]+'</span>';
+  }catch(e){}
+  var name=st.name||(st.maneuver&&st.maneuver.type==="arrive"?(S.destName||"Destination"):"Continue");
+  return '<span class="tg">'+maneuverGlyph(st)+'</span>'+
+         '<span style="min-width:0"><span class="td">'+dist+'</span>'+
+         '<div class="tn">'+String(name).replace(/</g,"&lt;")+'</div></span>'+badge;
+}
+function renderTurnList(){
+  var head=$("turnHead"), list=$("turnList");
+  if(!list||!S.steps||!S.steps.length) return;
+  var cur=S.steps[S.stepIdx];
+  if(cur){ $("turnHeadIcon").textContent=maneuverGlyph(cur); $("turnHeadText").textContent=stepText(cur); }
+  list.innerHTML="";
+  for(var i=S.stepIdx;i<S.steps.length;i++){
+    var st=S.steps[i];
+    // distance shown is the leg leading INTO this turn, matching how the banner counts down
+    var d=st.distance||0;
+    if(i===S.stepIdx && S.pos && st.maneuver && st.maneuver.location){
+      try{ d=distM(S.pos,{lat:st.maneuver.location[1],lng:st.maneuver.location[0]}); }catch(e){}
+    }
+    var row=document.createElement("div");
+    row.className="turn-row"+(i===S.stepIdx?" cur":"");
+    row.innerHTML=turnRowHTML(st,fmtDist(d),i===S.stepIdx);
+    (function(idx){ row.onclick=function(){ try{ peekTo(idx); }catch(e){} closeTurnList(); }; })(i);
+    list.appendChild(row);
+  }
+}
+function openTurnList(){
+  if(!S.navigating||!S.steps||!S.steps.length){ toast("Start navigation to see the full route",1800); return; }
+  renderTurnList();
+  var el=$("turnSheet"); if(!el) return;
+  el.classList.add("open"); el.setAttribute("aria-hidden","false");
+  try{ pushUI(); }catch(e){}
+}
+function closeTurnList(){
+  var el=$("turnSheet"); if(!el) return;
+  el.classList.remove("open"); el.setAttribute("aria-hidden","true");
+}
 function peekTo(i){
   if(!S.steps||!S.steps.length) return;
   const maxI=S.steps.length-1;
@@ -3855,6 +3939,11 @@ function wireBannerSwipe(){
   },{passive:true});
 }
 try{ wireBannerSwipe(); }catch(e){}
+$("turnClose")&&($("turnClose").onclick=function(){ closeTurnList(); });
+try{
+  var _bi=document.querySelector("#navbanner .nb-instr");
+  if(_bi){ _bi.style.cursor="pointer"; _bi.addEventListener("click",function(){ openTurnList(); }); }
+}catch(e){}
 function maneuverGlyph(st){
   const m=st.maneuver,mod=m.modifier||"";
   if(m.type==="arrive")return "⚑";
