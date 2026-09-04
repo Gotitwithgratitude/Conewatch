@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v177";
+const APP_VERSION="v178";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -121,9 +121,7 @@ function cycleSeason(){
      gated: rebuild the style unconditionally so the map always matches the setting. */
   try{
     _seasonPainted = (typeof seasonActive==="function") ? seasonActive() : null;
-    if(map && S.mapReady && !S.navigating && typeof swapMapStyle==="function"){
-      swapMapStyle(S.themeMode==="light"?"light":"dark",true);
-    }
+    paintSeasonTint();          // direct paint — no style rebuild, so nothing to race
   }catch(e){}
   toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
 }
@@ -538,7 +536,8 @@ function _cwAddMapModeBtn(){
   }catch(e){}
 }
 function addMapLayers(){
-  try{ applySeasonSky(); }catch(e){}   // style swaps reset the sky — reapply every time
+  try{ applySeasonSky(); }catch(e){}
+  setTimeout(function(){ try{ paintSeasonTint(); }catch(e){} },0);   // style swaps reset the sky — reapply every time
   const a=ACCENT[S.themeNow];
   if(!map.getSource("route")) map.addSource("route",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
   if(!map.getLayer("route-casing")) map.addLayer({id:"route-casing",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.casing,"line-width":["interpolate",["linear"],["zoom"],10,7,14,13,18,22],"line-opacity":.95}});
@@ -4568,6 +4567,27 @@ function startRouteFlow(){
   _flowRAF=requestAnimationFrame(step);
 }
 function stopRouteFlow(){ if(_flowRAF){ cancelAnimationFrame(_flowRAF); _flowRAF=null; } }
+/* ═══════════ seasonal tint, applied directly ═══════════
+   Three versions of this were routed through swapMapStyle/setStyle and kept losing to races
+   and style diffing. The tint is nothing but paint properties on one raster layer, so set
+   them on the live map instead. Instant, idempotent, and impossible to get out of sync — call
+   it any number of times and the map matches the setting. */
+function paintSeasonTint(){
+  if(!map||!map.getLayer||!map.getLayer("basemap")) return;
+  var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  var dark=(S.themeNow!=="light");
+  var P = on
+    ? {"raster-brightness-max":dark?0.34:0.46,"raster-brightness-min":0.00,
+       "raster-saturation":dark?0.30:0.35,"raster-contrast":dark?0.42:0.40,
+       "raster-hue-rotate":-34,"raster-opacity":1}
+    : (dark
+       ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,
+          "raster-contrast":0.12,"raster-hue-rotate":0,"raster-opacity":1}
+       : {"raster-brightness-max":1,"raster-brightness-min":0,"raster-saturation":0,
+          "raster-contrast":0,"raster-hue-rotate":0,"raster-opacity":1});
+  try{ Object.keys(P).forEach(function(k){ map.setPaintProperty("basemap",k,P[k]); }); }catch(e){}
+  try{ map.setPaintProperty("bg","background-color", on?(dark?"#1A0E06":"#6B4A2A"):(dark?"#0E1013":"#EAE6DF")); }catch(e){}
+}
 function applySeasonSky(){
   if(!map||!map.setSky) return;
   var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
