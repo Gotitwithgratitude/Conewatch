@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v176";
+const APP_VERSION="v177";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -587,7 +587,19 @@ function swapMapStyle(theme,force){
   styleSwapping=true;
   styleFor(theme).then(st=>{
     // register BEFORE setStyle so the restore can't be missed (this race was killing the route line)
-    const done=()=>{ mapStyleTheme=theme; styleSwapping=false; addMapLayers(); ensureRouteLayers(); };
+    const done=()=>{ mapStyleTheme=theme; styleSwapping=false; addMapLayers(); ensureRouteLayers();
+      /* Self-heal: a swap requested while another was still resolving was silently dropped by
+         the styleSwapping guard, which left the map painted for the PREVIOUS season state —
+         the theme appeared to be exactly one toggle behind. Rather than queue requests, just
+         check reality once the swap lands and correct it if it disagrees. */
+      try{
+        var want=(typeof seasonActive==="function")?seasonActive():null;
+        if(want!==null && _seasonPainted!==want && !S.navigating){
+          _seasonPainted=want;
+          setTimeout(function(){ try{ swapMapStyle(theme,true); }catch(e){} },0);
+        }
+      }catch(e){}
+    };
     map.once("style.load",done);
     setTimeout(()=>{ if(styleSwapping){ try{ if(map.isStyleLoaded&&map.isStyleLoaded()) done(); }catch(e){} styleSwapping=false; } },2500);
     map.setStyle(st);
