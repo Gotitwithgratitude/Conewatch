@@ -584,6 +584,44 @@
     background:linear-gradient(to top,rgba(255,241,204,.42),rgba(255,238,196,.12) 46%,rgba(255,236,190,0) 100%);
     filter:blur(2px)}
   .tour-car.night .tc-beam{opacity:1}
+  /* ── NITROUS ──────────────────────────────────────────────────────────────
+     Same flame elements, recoloured to a cold blue-violet burn and driven much harder.
+     Burning nitrous really does run the exhaust blue, so the colour is doing double duty. */
+  .tour-car.boost .tc-flame{
+    background:radial-gradient(ellipse at 50% 6%,#ffffff 0%,#bfe9ff 18%,#5fb0ff 40%,#7a4bff 66%,#c026ff 84%,rgba(180,20,255,0) 100%);
+    animation:cwnitro .34s ease-out infinite;filter:blur(.5px)}
+  @keyframes cwnitro{
+    0%{opacity:.55;transform:scaleY(1.1) scaleX(.9)}
+    40%{opacity:1;transform:scaleY(2.5) scaleX(1.35)}
+    72%{opacity:.9;transform:scaleY(1.8) scaleX(1.1)}
+    100%{opacity:.6;transform:scaleY(1.15) scaleX(.92)}}
+  .tour-car.boost .tc-rig{animation:cwshake .09s linear infinite}
+  @keyframes cwshake{0%{transform:translateX(-.6px)}50%{transform:translateX(.6px)}100%{transform:translateX(-.6px)}}
+  .tour-car.boost .tc-lamp{box-shadow:0 0 14px 4px rgba(150,90,255,.85)}
+  /* ── TIME LOOP ────────────────────────────────────────────────────────────
+     Rings racing outward from the vanishing point, a violet vignette closing in from the
+     edges, and a slow hue drift — reads as the world folding past faster than it should. */
+  #tourWarp.on{opacity:1}
+  #tourWarp .warp-rings{position:absolute;inset:-30%;
+    background:repeating-radial-gradient(circle at 50% 42%,
+      rgba(190,140,255,0) 0 34px,
+      rgba(190,140,255,.16) 34px 37px,
+      rgba(120,200,255,.20) 37px 40px,
+      rgba(190,140,255,0) 40px 76px);
+    animation:cwrings .9s linear infinite;mix-blend-mode:screen}
+  @keyframes cwrings{0%{transform:scale(1)}100%{transform:scale(1.75)}}
+  #tourWarp .warp-vig{position:absolute;inset:0;
+    background:radial-gradient(ellipse at 50% 46%,rgba(0,0,0,0) 42%,rgba(96,30,190,.34) 74%,rgba(38,8,90,.62) 100%);
+    animation:cwpulse 1.1s ease-in-out infinite}
+  @keyframes cwpulse{0%,100%{opacity:.75}50%{opacity:1}}
+  #tourWarp .warp-streak{position:absolute;inset:0;
+    background:repeating-conic-gradient(from 0deg at 50% 44%,
+      rgba(255,255,255,.13) 0deg 1.1deg, rgba(255,255,255,0) 1.1deg 5deg);
+    animation:cwspin 2.4s linear infinite;mix-blend-mode:screen;opacity:.5}
+  @keyframes cwspin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+  #tourBoost.armed{color:#fff;background:linear-gradient(135deg,#6d3bff,#c026ff);
+    border-color:rgba(220,160,255,.8);box-shadow:0 0 18px rgba(150,60,255,.7)}
+  #tourBoost.cooling{opacity:.4}
   .tl-bulb{width:40px;height:40px;border-radius:50%;transition:background .15s,box-shadow .15s}
   .tl-bulb.on-red{background:#ff3b30!important;box-shadow:0 0 26px 6px rgba(255,59,48,.8)}
   .tl-bulb.on-yel{background:#ffcc00!important;box-shadow:0 0 26px 6px rgba(255,204,0,.8)}
@@ -1023,6 +1061,7 @@
   <div id="driveMap" style="position:absolute;inset:0;transition:transform .12s ease-out;transform:scale(1.08)"></div>
   <div id="tourFX" style="position:absolute;inset:0;pointer-events:none;z-index:2;opacity:.15;transition:opacity .3s"></div>
   <div id="tourCockpit" style="position:absolute;inset:0;pointer-events:none;z-index:3"></div>
+  <div id="tourWarp" style="position:absolute;inset:0;pointer-events:none;z-index:4;opacity:0;transition:opacity .25s"></div>
   <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:flex-start;padding-top:31%;flex-direction:column;background:linear-gradient(to bottom,rgba(0,0,0,.42) 0%,rgba(0,0,0,.30) 46%,rgba(0,0,0,.06) 74%,transparent 100%)">
     <div style="background:#111418;border:2px solid #2a2f36;border-radius:18px;padding:12px 11px;display:flex;flex-direction:column;gap:9px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
       <div id="tlRed" class="tl-bulb" style="background:#3a0d0d"></div>
@@ -1046,6 +1085,7 @@
       <button class="btn ghost" id="tourSpeed" style="flex:0 0 auto;min-width:50px">1&times;</button>
       <button class="btn ghost" id="tourRestart" style="flex:0 0 auto;min-width:50px">&#8635;</button>
       <button class="btn ghost" id="tourPlay" style="flex:0 0 auto;min-width:50px">&#10073;&#10073;</button>
+      <button class="btn ghost" id="tourBoost" style="flex:0 0 auto;min-width:58px;color:#c9a4ff;border-color:rgba(160,110,255,.5);text-shadow:0 0 10px rgba(150,90,255,.7)">N2O</button>
       <button class="btn orange" id="tourDrive" style="flex:1">Start driving &#8594;</button>
     </div>
   </div>

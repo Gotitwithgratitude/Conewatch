@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v193";
+const APP_VERSION="v194";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3475,7 +3475,10 @@ function startRelock(){
 }
 $("relock").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();cameraFollow();toast(S.navigating?"Resuming navigation view":"🧲 Locked onto GPS");};
 // tapping the top instruction card while navigating recenters on the route (ignore its buttons)
-$("navbanner")&&($("navbanner").addEventListener("click",(e)=>{ if(e.target.closest("button"))return; if(!S.navigating&&!S.pos)return; hideRelock(); S.follow=true; updateFollowUI(); cameraFollow(); toast("Back on route"); }));
+/* Tapping anywhere on the banner that isn't a button now pulls the full turn list down —
+   the whole bar is the handle, not just the instruction text. Recentering still lives on the
+   dedicated recenter button, which is where a driver reaches for it anyway. */
+$("navbanner")&&($("navbanner").addEventListener("click",(e)=>{ if(e.target.closest("button"))return; if(!S.navigating&&!S.pos)return; openTurnList(); }));
 
 /* tap anywhere → identify place, act on it */
 let inspectPopup=null;
@@ -3793,7 +3796,7 @@ function _tourRender(){
   var dB=((st.curBrg-prevBrg+540)%360)-180;
   st._lean=(st._lean||0)*0.80 + (-dB*2.6)*0.20;
   var lean=Math.max(-6,Math.min(6,st._lean));
-  var spd=st.speed||1;
+  var spd=st._eff||st.speed||1;
   /* Tile budget is the real limit at 4x: the camera outruns the network. Games solve this with
      LOD by velocity, so do the same — every zoom level back quarters the tiles needed to cover
      the same ground, and at speed nobody is reading rooftops anyway. */
@@ -3844,7 +3847,10 @@ function runTour(){
     if(!tourState||!tourMap||st.paused||st.done)return;
     if(last==null)last=ts;
     const dt=Math.min(50,ts-last); last=ts;
-    st.frac=Math.min(1, st.frac+(dt/st.baseDur)*st.speed); // rate-based: speed changes never jump the camera
+    var _boosting=st._boostUntil && Date.now()<st._boostUntil;
+    if(st._boostOn && !_boosting) endBoost();
+    st._eff=st.speed*(_boosting?2.4:1);
+    st.frac=Math.min(1, st.frac+(dt/st.baseDur)*st._eff); // rate-based: speed changes never jump the camera
     _tourRender();
     if(st.frac>=1){ st.done=true; arriveCinematic(); return; }
     tourRAF=requestAnimationFrame(frame);
@@ -3875,7 +3881,7 @@ function arriveOrbit(center){
   const step=()=>{ if(!tourMap||touched||!tourState){return;} tourMap.setBearing(tourMap.getBearing()+0.11); tourMap.setCenter(center); arriveRAF=requestAnimationFrame(step); };
   step();
 }
-function stopTour(){ cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
+function stopTour(){ try{ endBoost(); }catch(e){} cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
 
 /* The 3D preview was opening on its own. The button sits in the route sheet, which slides up
    UNDER the finger that just picked a destination — so the release landed on the button and
@@ -3905,6 +3911,31 @@ function tourSeek(clientX){
 $("tourTrack")&&$("tourTrack").addEventListener("pointerdown",(e)=>{ e.preventDefault(); tourSeek(e.clientX);
   const mv=(ev)=>tourSeek(ev.clientX); const up=()=>{ document.removeEventListener("pointermove",mv); document.removeEventListener("pointerup",up); };
   document.addEventListener("pointermove",mv); document.addEventListener("pointerup",up); });
+var BOOST_MS=3600, BOOST_COOL=5200;
+function startBoost(){
+  var st=tourState; if(!st||st.done) return;
+  if(st._boostUntil && Date.now()<st._boostUntil) return;              // already lit
+  if(st._boostReady && Date.now()<st._boostReady) return;              // still recharging
+  st._boostUntil=Date.now()+BOOST_MS; st._boostOn=true;
+  st._boostReady=Date.now()+BOOST_MS+BOOST_COOL;
+  try{ tourPuck.getElement().classList.add("boost"); }catch(e){}
+  try{ var w=$("tourWarp"); if(w){ w.innerHTML='<div class="warp-rings"></div><div class="warp-streak"></div><div class="warp-vig"></div>'; w.classList.add("on"); } }catch(e){}
+  try{ var b=$("tourBoost"); if(b){ b.classList.add("armed"); b.classList.remove("cooling"); } }catch(e){}
+  try{ var g=$("tourGear"); if(g){ g.textContent="N2O"; g.style.color="#c9a4ff"; } }catch(e){}
+  try{ if(navigator.vibrate) navigator.vibrate([18,40,26]); }catch(e){}
+  if(st.paused){ st.paused=false; $("tourPlay").innerHTML="&#10073;&#10073;"; runTour(); }
+}
+function endBoost(){
+  var st=tourState; if(!st) return;
+  st._boostOn=false; st._boostUntil=0;
+  try{ tourPuck.getElement().classList.remove("boost"); }catch(e){}
+  try{ var w=$("tourWarp"); if(w){ w.classList.remove("on"); setTimeout(function(){ try{ if(!(tourState&&tourState._boostOn)) w.innerHTML=""; }catch(e){} },300); } }catch(e){}
+  try{ var g=$("tourGear"); if(g){ g.style.color=""; g.textContent="G"+(st._gear||1); } }catch(e){}
+  var b=$("tourBoost");
+  if(b){ b.classList.remove("armed"); b.classList.add("cooling");
+    setTimeout(function(){ try{ b.classList.remove("cooling"); }catch(e){} }, BOOST_COOL); }
+}
+$("tourBoost")&&($("tourBoost").onclick=function(){ startBoost(); });
 $("tourSpeed")&&($("tourSpeed").onclick=()=>{ const st=tourState; if(!st)return; st.speed=st.speed===0.5?1:st.speed===1?2:st.speed===2?4:0.5; $("tourSpeed").innerHTML=(st.speed===0.5?"0.5":st.speed)+"&times;"; });
 $("tourRestart")&&($("tourRestart").onclick=()=>{ const st=tourState; if(!st)return; st.frac=0;st.done=false;st.paused=false;st.curBrg=_brg(st.co[0],st.co[1]);$("tourPlay").innerHTML="&#10073;&#10073;";runTour(); });
 $("tourPlay")&&($("tourPlay").onclick=()=>{ const st=tourState; if(!st)return; if(st.done){ st.frac=0;st.done=false;st.paused=false;$("tourPlay").innerHTML="&#10073;&#10073;";runTour(); } else { st.paused=!st.paused; $("tourPlay").innerHTML=st.paused?"&#9654;":"&#10073;&#10073;"; if(!st.paused)runTour(); } });
@@ -4240,9 +4271,19 @@ function wireBannerSwipe(){
 }
 try{ wireBannerSwipe(); }catch(e){}
 $("turnClose")&&($("turnClose").onclick=function(){ closeTurnList(); });
+/* Double-tap anywhere on the sheet closes it, so it isn't only the little arrow at the bottom.
+   Guarded against rows and the scroll area so a quick double-tap on a turn still peeks it. */
+try{
+  var _ts=$("turnSheet"), _lastTap=0;
+  if(_ts) _ts.addEventListener("click",function(e){
+    if(e.target.closest(".turn-row")||e.target.closest("button")) return;
+    var now=Date.now();
+    if(now-_lastTap<340){ _lastTap=0; closeTurnList(); } else { _lastTap=now; }
+  });
+}catch(e){}
 try{
   var _bi=document.querySelector("#navbanner .nb-instr");
-  if(_bi){ _bi.style.cursor="pointer"; _bi.addEventListener("click",function(){ openTurnList(); }); }
+  if(_bi){ _bi.style.cursor="pointer"; }          // banner-level handler already opens the list
 }catch(e){}
 function maneuverGlyph(st){
   const m=st.maneuver,mod=m.modifier||"";
