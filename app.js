@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v187";
+const APP_VERSION="v188";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3691,23 +3691,24 @@ function openDriveTour(){
   tourMap=new maplibregl.Map({container:"driveMap",
     style:{version:8,
       sources:{
-        sat:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,maxzoom:19,attribution:satMeta().attr},
-        dem:{type:"raster-dem",tiles:["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],encoding:"terrarium",tileSize:512,maxzoom:12,minzoom:6}
+        sat:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,maxzoom:19,attribution:satMeta().attr}
       },
-      layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat","paint":{"raster-fade-duration":0}}]},
+      layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat","paint":{"raster-fade-duration":140}}]},
     /* Was 85° pitch with terrain on satellite tiles — at that angle the horizon runs on
        almost forever, so MapLibre requests a huge tile set every frame and the DEM gets
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
     center:co[0],zoom:17.4,pitch:76,bearing:initBrg,maxPitch:85,attributionControl:true,
-    interactive:true,maxTileCacheSize:500,fadeDuration:0,refreshExpiredTiles:false});
+    interactive:true,maxTileCacheSize:1500,fadeDuration:140,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
-    try{ tourMap.setTerrain({source:"dem",exaggeration:0.9}); }catch(e){}
+    /* No terrain. The terrarium DEM tops out at z12; draping z17 satellite imagery over an
+       overzoomed heightfield at 78 deg pitch is exactly the smeared, melted ground — and on
+       flat Detroit it adds no relief to justify the cost. Flat ground renders sharp and cheap. */
     // denser ground fog = shorter visible horizon = far fewer tiles to fetch and draw
     try{ tourMap.setSky&&tourMap.setSky({"sky-color":"#8ec9ff","horizon-color":"#dbeeff","fog-color":"#eef6ff","fog-ground-blend":0.78,"sky-horizon-blend":0.8,"horizon-fog-blend":0.75,"atmosphere-blend":0.85}); }catch(e){}
     // terrain is the single most expensive thing here; ease it back without flattening the view
-    try{ tourMap.setTerrain({source:"dem",exaggeration:0.5}); }catch(e){}   // Detroit is flat; terrain is cost, not view
+    try{ tourMap.setTerrain(null); }catch(e){}
     tourMap.addSource("tl",{type:"geojson",data:{type:"Feature",geometry:S.route.geometry}});
     tourMap.addLayer({id:"tl-cas",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#06283d","line-width":10,"line-opacity":.92}});
     tourMap.addLayer({id:"tl-ln",type:"line",source:"tl",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#22d3aa","line-width":5.5}});
@@ -3726,12 +3727,32 @@ function openDriveTour(){
     try{ const de=document.createElement("div"); de.className="sat-beacon"; de.innerHTML='<div class="sat-pulse"></div><div class="sat-pulse b"></div><div class="sat-dot"></div>'; tourPins.push(new maplibregl.Marker({element:de,anchor:"center"}).setLngLat(co[co.length-1]).addTo(tourMap)); }catch(e){}
     // wait until the map has actually drawn tiles (or 3s max) before the countdown, so it never starts on a blank screen
     var _begun=false;
+    /* Games stream the world before the player moves rather than stuttering mid-run. Same idea:
+       fly the camera down the first stretch of route with the view blacked out so MapLibre
+       requests and caches those tiles, then snap back and start. Nothing pauses once rolling. */
+    function warmRoute(done){
+      var mm=$("driveMap");
+      var samples=[0.00,0.10,0.22,0.36].map(function(f){ return total*f; });
+      var i=0;
+      try{ if(mm){ mm.style.transition="none"; mm.style.opacity="0"; } }catch(e){}
+      function step(){
+        if(i>=samples.length){
+          try{ tourMap.jumpTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76}); }catch(e){}
+          try{ if(mm){ mm.style.opacity="1"; mm.style.transition="transform .12s ease-out"; } }catch(e){}
+          done&&done(); return;
+        }
+        var d=samples[i++];
+        try{ tourMap.jumpTo({center:_posAt(co,cum,d),bearing:_brgAt(co,cum,d),zoom:17.4,pitch:76}); }catch(e){}
+        setTimeout(step,240);          // long enough that requests aren't aborted by the next jump
+      }
+      step();
+    }
     function beginTour(){
       if(_begun)return; _begun=true;
-      runStartLight(function(){
+      warmRoute(function(){ runStartLight(function(){
         startTour(co,cum,total,marks);
         var hint=$("tourHint"); if(hint){hint.style.opacity="1"; setTimeout(()=>{try{hint.style.opacity="0";}catch(e){}},5000);}
-      });
+      }); });
     }
     try{ tourMap.once("idle",beginTour); }catch(e){}
     setTimeout(beginTour,3000);
@@ -3792,16 +3813,6 @@ function runTour(){
     if(!tourState||!tourMap||st.paused||st.done)return;
     if(last==null)last=ts;
     const dt=Math.min(50,ts-last); last=ts;
-    /* The drive used to advance on a pure rAF clock, so when satellite tiles hadn't landed yet
-       it flew forward over upscaled parent tiles — the smeared ground. Wait for the ground
-       instead. Capped so a genuinely missing tile can't freeze the preview. */
-    var _tilesIn=true; try{ _tilesIn=tourMap.areTilesLoaded(); }catch(e){}
-    if(!_tilesIn && (st._holdMs||0) < 1200){
-      st._holdMs=(st._holdMs||0)+dt;
-      _tourRender();                                   // camera stays live; only progress pauses
-      tourRAF=requestAnimationFrame(frame); return;
-    }
-    st._holdMs=0;
     st.frac=Math.min(1, st.frac+(dt/st.baseDur)*st.speed); // rate-based: speed changes never jump the camera
     _tourRender();
     if(st.frac>=1){ st.done=true; arriveCinematic(); return; }
@@ -3833,7 +3844,7 @@ function arriveOrbit(center){
   const step=()=>{ if(!tourMap||touched||!tourState){return;} tourMap.setBearing(tourMap.getBearing()+0.11); tourMap.setCenter(center); arriveRAF=requestAnimationFrame(step); };
   step();
 }
-function stopTour(){ cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm)_mm.style.transform="scale(1.08) rotate(0deg)"; cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
+function stopTour(){ cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
 
 $("drivePrev")&&($("drivePrev").onclick=()=>{ if(S.route)openDriveTour(); else toast("Building route — try again in a second."); });
 $("driveClose")&&($("driveClose").onclick=stopTour);
