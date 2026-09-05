@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v189";
+const APP_VERSION="v190";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3699,7 +3699,7 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:14.2,pitch:32,bearing:initBrg,maxPitch:85,attributionControl:true,
+    center:co[0],zoom:15.6,pitch:44,bearing:initBrg,maxPitch:85,attributionControl:true,
     interactive:true,maxTileCacheSize:1500,fadeDuration:140,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     /* No terrain. The terrarium DEM tops out at z12; draping z17 satellite imagery over an
@@ -3716,7 +3716,7 @@ function openDriveTour(){
     marks.forEach((m,i)=>{ if(i===0)return; const el=document.createElement("div"); el.textContent="↱"; el.style.cssText="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:#ffb020;color:#111;font-weight:800;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);font-size:12px"; try{tourPins.push(new maplibregl.Marker({element:el}).setLngLat(m.loc).addTo(tourMap));}catch(e){} });
     // moving puck
     const pk=document.createElement("div"); pk.className="tour-car";
-    pk.innerHTML='<div class="tc-body"></div><div class="tc-glass"></div><div class="tc-tail l"></div><div class="tc-tail r"></div>';
+    pk.innerHTML='<div class="tc-body"></div><div class="tc-glass"></div><div class="tc-head l"></div><div class="tc-head r"></div><div class="tc-mirror l"></div><div class="tc-mirror r"></div><div class="tc-tail l"></div><div class="tc-tail r"></div>';
     /* setRotation was only ever called from _tourRender(), which doesn't run until after the
        traffic-light countdown — so for those first ~2.6s the marker sat at rotation 0, i.e.
        pointing true north while the camera already faced down the route. Align it up front. */
@@ -3733,14 +3733,17 @@ function openDriveTour(){
        falls back to when a high-zoom tile hasn't landed — so a miss degrades to slightly soft
        rather than melted. */
     function warmRoute(done){
+      /* Stays centred on the start line the whole way down and lands exactly on the drive
+         camera, so there is no snap at the bottom — the previous version eased toward a point
+         18% down the route and then jumped back, which is what threw the scaling off. */
       try{
-        tourMap.easeTo({center:_posAt(co,cum,Math.min(total,total*0.18)),bearing:initBrg,
-                        zoom:17.4,pitch:76,duration:1750,essential:true});
+        var _H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
+        tourMap.easeTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76,
+                        padding:{top:Math.round(_H*0.34),bottom:0,left:0,right:0},
+                        duration:3200,essential:true,
+                        easing:function(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }});
       }catch(e){ }
-      setTimeout(function(){
-        try{ tourMap.jumpTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76}); }catch(e){}
-        done&&done();
-      },1800);
+      setTimeout(function(){ done&&done(); },3260);
     }
     function beginTour(){
       if(_begun)return; _begun=true;

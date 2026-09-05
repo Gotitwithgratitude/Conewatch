@@ -507,11 +507,35 @@
   #tourFX::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 120px 20px rgba(0,20,40,.35);mix-blend-mode:multiply}
   #tourCockpit::before{content:"";position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(to right,rgba(4,6,10,.55),transparent 13%,transparent 87%,rgba(4,6,10,.55))}
   #tourCockpit::after{content:"";position:absolute;left:0;right:0;bottom:0;height:14%;background:linear-gradient(to top,rgba(4,6,10,.75),transparent);pointer-events:none}
-  .tour-car{width:34px;height:52px;position:relative;filter:drop-shadow(0 6px 8px rgba(0,0,0,.55))}
-  .tour-car .tc-body{position:absolute;inset:0;background:linear-gradient(180deg,#c0392b,#7d1d14);border-radius:11px 11px 9px 9px;border:1px solid rgba(0,0,0,.35)}
-  .tour-car .tc-glass{position:absolute;top:6px;left:5px;right:5px;height:15px;background:linear-gradient(180deg,#2c3e50,#17222e);border-radius:8px 8px 5px 5px;opacity:.9}
-  .tour-car .tc-tail{position:absolute;bottom:4px;width:7px;height:5px;border-radius:2px;background:#ff2d2d;box-shadow:0 0 8px 2px rgba(255,45,45,.9)}
-  .tour-car .tc-tail.l{left:5px} .tour-car .tc-tail.r{right:5px}
+  /* Modern compact hatchback, viewed from directly above. Read order at speed is silhouette
+     first, then the dark glass band, then the lights — so the shape is tapered at the nose and
+     squared at the tail, and the glass runs as one continuous strip like a panoramic roof. */
+  .tour-car{width:31px;height:57px;position:relative;filter:drop-shadow(0 7px 9px rgba(0,0,0,.5))}
+  .tour-car .tc-body{position:absolute;inset:0;border-radius:14px 14px 9px 9px;
+    background:linear-gradient(103deg,#fdfefe 0%,#dbe2ea 30%,#9fabb8 58%,#c9d2dc 78%,#f4f7fa 100%);
+    border:1px solid rgba(12,18,26,.42);
+    box-shadow:inset 0 -7px 11px rgba(10,16,24,.22),inset 0 5px 9px rgba(255,255,255,.55)}
+  /* waistline crease down each flank — what makes it read as a car and not a lozenge */
+  .tour-car .tc-body::before{content:"";position:absolute;top:11%;bottom:9%;left:2px;width:1px;
+    background:linear-gradient(180deg,transparent,rgba(10,16,24,.30),transparent)}
+  .tour-car .tc-body::after{content:"";position:absolute;top:11%;bottom:9%;right:2px;width:1px;
+    background:linear-gradient(180deg,transparent,rgba(10,16,24,.30),transparent)}
+  .tour-car .tc-glass{position:absolute;top:22%;left:3.5px;right:3.5px;height:44%;
+    background:linear-gradient(180deg,#243244 0%,#131c28 42%,#1b2735 100%);
+    border-radius:7px 7px 6px 6px;
+    box-shadow:inset 0 1px 2px rgba(255,255,255,.20),0 0 0 1px rgba(10,16,24,.35)}
+  /* windshield highlight — a raked sheen across the front glass */
+  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:38%;
+    background:linear-gradient(160deg,rgba(255,255,255,.30),transparent 68%);border-radius:7px 7px 0 0}
+  .tour-car .tc-head{position:absolute;top:3px;width:7px;height:3.5px;border-radius:2px;
+    background:#fffdf2;box-shadow:0 0 7px 2px rgba(255,246,214,.85)}
+  .tour-car .tc-head.l{left:3px} .tour-car .tc-head.r{right:3px}
+  .tour-car .tc-mirror{position:absolute;top:34%;width:3px;height:5px;border-radius:2px;
+    background:linear-gradient(180deg,#e7ecf1,#9aa6b3);border:1px solid rgba(12,18,26,.35)}
+  .tour-car .tc-mirror.l{left:-3px} .tour-car .tc-mirror.r{right:-3px}
+  .tour-car .tc-tail{position:absolute;bottom:3px;width:8px;height:4px;border-radius:2px;
+    background:linear-gradient(180deg,#ff5a4d,#e0231c);box-shadow:0 0 9px 2px rgba(255,45,45,.85)}
+  .tour-car .tc-tail.l{left:3px} .tour-car .tc-tail.r{right:3px}
   .tl-bulb{width:56px;height:56px;border-radius:50%;transition:background .15s,box-shadow .15s}
   .tl-bulb.on-red{background:#ff3b30!important;box-shadow:0 0 26px 6px rgba(255,59,48,.8)}
   .tl-bulb.on-yel{background:#ffcc00!important;box-shadow:0 0 26px 6px rgba(255,204,0,.8)}
@@ -951,7 +975,7 @@
   <div id="driveMap" style="position:absolute;inset:0;transition:transform .12s ease-out;transform:scale(1.08)"></div>
   <div id="tourFX" style="position:absolute;inset:0;pointer-events:none;z-index:2;opacity:.15;transition:opacity .3s"></div>
   <div id="tourCockpit" style="position:absolute;inset:0;pointer-events:none;z-index:3"></div>
-  <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:center;flex-direction:column;background:rgba(0,0,0,.35)">
+  <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:flex-start;padding-top:11%;flex-direction:column;background:linear-gradient(to bottom,rgba(0,0,0,.42) 0%,rgba(0,0,0,.30) 46%,rgba(0,0,0,.06) 74%,transparent 100%)">
     <div style="background:#111418;border:2px solid #2a2f36;border-radius:22px;padding:16px 14px;display:flex;flex-direction:column;gap:12px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
       <div id="tlRed" class="tl-bulb" style="background:#3a0d0d"></div>
       <div id="tlYel" class="tl-bulb" style="background:#3a300d"></div>
