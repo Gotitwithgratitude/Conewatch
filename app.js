@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v188";
+const APP_VERSION="v189";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3699,7 +3699,7 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:17.4,pitch:76,bearing:initBrg,maxPitch:85,attributionControl:true,
+    center:co[0],zoom:14.2,pitch:32,bearing:initBrg,maxPitch:85,attributionControl:true,
     interactive:true,maxTileCacheSize:1500,fadeDuration:140,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     /* No terrain. The terrarium DEM tops out at z12; draping z17 satellite imagery over an
@@ -3727,25 +3727,20 @@ function openDriveTour(){
     try{ const de=document.createElement("div"); de.className="sat-beacon"; de.innerHTML='<div class="sat-pulse"></div><div class="sat-pulse b"></div><div class="sat-dot"></div>'; tourPins.push(new maplibregl.Marker({element:de,anchor:"center"}).setLngLat(co[co.length-1]).addTo(tourMap)); }catch(e){}
     // wait until the map has actually drawn tiles (or 3s max) before the countdown, so it never starts on a blank screen
     var _begun=false;
-    /* Games stream the world before the player moves rather than stuttering mid-run. Same idea:
-       fly the camera down the first stretch of route with the view blacked out so MapLibre
-       requests and caches those tiles, then snap back and start. Nothing pauses once rolling. */
+    /* Opens wide and high, then descends into the driver's seat. Two jobs at once: it reads as
+       a deliberate establishing shot instead of a black screen, and a wide low-zoom frame pulls
+       the ANCESTOR tiles for the whole opening stretch. Those ancestors are exactly what MapLibre
+       falls back to when a high-zoom tile hasn't landed — so a miss degrades to slightly soft
+       rather than melted. */
     function warmRoute(done){
-      var mm=$("driveMap");
-      var samples=[0.00,0.10,0.22,0.36].map(function(f){ return total*f; });
-      var i=0;
-      try{ if(mm){ mm.style.transition="none"; mm.style.opacity="0"; } }catch(e){}
-      function step(){
-        if(i>=samples.length){
-          try{ tourMap.jumpTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76}); }catch(e){}
-          try{ if(mm){ mm.style.opacity="1"; mm.style.transition="transform .12s ease-out"; } }catch(e){}
-          done&&done(); return;
-        }
-        var d=samples[i++];
-        try{ tourMap.jumpTo({center:_posAt(co,cum,d),bearing:_brgAt(co,cum,d),zoom:17.4,pitch:76}); }catch(e){}
-        setTimeout(step,240);          // long enough that requests aren't aborted by the next jump
-      }
-      step();
+      try{
+        tourMap.easeTo({center:_posAt(co,cum,Math.min(total,total*0.18)),bearing:initBrg,
+                        zoom:17.4,pitch:76,duration:1750,essential:true});
+      }catch(e){ }
+      setTimeout(function(){
+        try{ tourMap.jumpTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76}); }catch(e){}
+        done&&done();
+      },1800);
     }
     function beginTour(){
       if(_begun)return; _begun=true;
@@ -3791,9 +3786,15 @@ function _tourRender(){
   st._lean=(st._lean||0)*0.80 + (-dB*2.6)*0.20;
   var lean=Math.max(-6,Math.min(6,st._lean));
   var spd=st.speed||1;
-  var zoom=17.7 - Math.min(0.7,(spd-1)*0.22);
+  /* Tile budget is the real limit at 4x: the camera outruns the network. Games solve this with
+     LOD by velocity, so do the same — every zoom level back quarters the tiles needed to cover
+     the same ground, and at speed nobody is reading rooftops anyway. */
+  var zoom=17.7 - Math.max(0,Math.min(1.9,(spd-1)*0.62));
   // CHASE CAM: center between car and the near look-ahead, pitch ~78 so the horizon rises and the road stretches out ahead
-  var camCtr=_posAt(st.co,st.cum,Math.min(st.total,d+9));
+  // push the camera target further down the road as speed rises: the ground enters the viewport
+  // earlier, so its tiles are requested earlier and are in by the time we get there
+  var _look=9+Math.max(0,Math.min(80,(spd-1)*24));
+  var camCtr=_posAt(st.co,st.cum,Math.min(st.total,d+_look));
   var H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
   tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:78,zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
   // apply the lean (scale hides rotation corners + adds cockpit-forward feel)
