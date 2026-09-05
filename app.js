@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v182";
+const APP_VERSION="v184";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3254,7 +3254,19 @@ $("fabFeedback").onclick=()=>openSheet("feedbackSheet");
 $("fabMore").onclick=()=>toggleTools();
 // tapping the scrim behind an open fan closes it, same as any sheet
 $("radialScrim")&&($("radialScrim").onclick=()=>closeTools());
-$("fabLocate").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();if(S.pos)map.easeTo({center:[S.pos.lng,S.pos.lat],zoom:16});else{startGPS();toast("Acquiring GPS…");}};
+/* easeTo flies the camera across every intermediate zoom level, so re-centring from a far-out
+   view made the map request a whole pyramid of tiles it would never show — you sat looking at
+   the background while they loaded. jumpTo when the move is large: it goes straight there and
+   only ever fetches the tiles you actually end up looking at. Short journeys still animate. */
+$("fabLocate").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();
+  if(S.pos){
+    var far=false;
+    try{ var c=map.getCenter();
+         far = Math.abs(map.getZoom()-16)>2.5 || distM({lat:c.lat,lng:c.lng},S.pos)>4000; }catch(e){}
+    if(far) map.jumpTo({center:[S.pos.lng,S.pos.lat],zoom:16});
+    else    map.easeTo({center:[S.pos.lng,S.pos.lat],zoom:16,duration:420});
+  } else { startGPS(); toast("Acquiring GPS…"); }
+};
 document.querySelectorAll(".grabber").forEach(g=>g.onclick=closeSheets);
 function updateFollowUI(){$("fabLocate").classList.toggle("active",S.follow);$("followState").textContent=S.follow?"On — map recenters as you drive":"Off — tap ◎ to re-center";}
 $("toggleFollow").onclick=()=>{S.follow=!S.follow;updateFollowUI();};
@@ -4605,7 +4617,29 @@ function paintSeasonTint(){
     try{ map.setPaintProperty("basemap",k,P[k]); window.__tintSet++; }
     catch(e){ if(!window.__tintErr) window.__tintErr=k+": "+e.message; }
   });
-  try{ map.setPaintProperty("bg","background-color", on?(dark?"#1A0E06":"#6B4A2A"):(dark?"#0E1013":"#EAE6DF")); }catch(e){}
+  try{ map.setPaintProperty("bg","background-color", on?(dark?"#1A0E06":"#C8A882"):(dark?"#0E1013":"#EAE6DF")); }catch(e){}
+
+  /* The route layers are created with `if(!map.getLayer(...))`, so their colours are fixed at
+     creation and never revisited — a route line built during the season stayed pumpkin-and-purple
+     with the ember dashes running long after the theme was switched off. Repaint them here too,
+     since this function already re-asserts on every toggle. */
+  var A = on ? ACCENT_HW[dark?"dark":"light"] : ACCENT_BASE[dark?"dark":"light"];
+  try{ if(map.getLayer("route-line"))   map.setPaintProperty("route-line","line-color",A.route); }catch(e){}
+  try{ if(map.getLayer("route-casing")) map.setPaintProperty("route-casing","line-color",A.casing); }catch(e){}
+  try{ if(map.getLayer("route-core"))   map.setPaintProperty("route-core","line-color",A.route); }catch(e){}
+  try{
+    if(!on){
+      stopRouteFlow();
+      if(map.getLayer("route-flow")) map.removeLayer("route-flow");
+    } else if(!map.getLayer("route-flow") && map.getSource("route")){
+      map.addLayer({id:"route-flow",type:"line",source:"route",
+        layout:{"line-cap":"butt","line-join":"round"},
+        paint:{"line-color":"#FFD24A","line-opacity":.85,
+          "line-width":["interpolate",["linear"],["zoom"],10,2.5,14,5,18,8],
+          "line-dasharray":[0,0,2,6]}});
+      startRouteFlow();
+    }
+  }catch(e){}
 }
 function applySeasonSky(){
   if(!map||!map.setSky) return;
