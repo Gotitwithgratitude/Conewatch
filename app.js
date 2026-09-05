@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v185";
+const APP_VERSION="v186";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -163,10 +163,10 @@ const CW_CONFIG = {
   fsqProxy: "/api/fsq"
 };
 const PROFILES = { car:"routed-car/route/v1/driving", bike:"routed-bike/route/v1/driving", foot:"routed-foot/route/v1/driving", hike:"routed-foot/route/v1/driving" };
-const ACCENT_BASE = { dark:{route:"#35E0C8",casing:"#CFFAF0",glow:"#35E0C8",core:"rgba(255,255,255,.94)"}, light:{route:"#1D6EF2",casing:"#DCE9FF",glow:"#1D6EF2",core:"rgba(255,255,255,.96)"} };
+const ACCENT_BASE = { dark:{route:"#35E0C8",casing:"#0A3B33",core:"rgba(255,255,255,.82)"}, light:{route:"#1D6EF2",casing:"#0A2E66",core:"rgba(255,255,255,.82)"} };
 /* The route line is the single most-looked-at element on the screen while driving, so leaving
    it teal/blue kept the whole thing feeling ordinary no matter what the chrome did. */
-const ACCENT_HW   = { dark:{route:"#FF7A12",casing:"#FFD9A6",glow:"#FF7A12",core:"rgba(255,241,219,.94)"}, light:{route:"#E2620A",casing:"#FFE0BC",glow:"#E2620A",core:"rgba(255,246,232,.96)"} };
+const ACCENT_HW   = { dark:{route:"#FF7A12",casing:"#3B0A5C",core:"rgba(255,241,219,.82)"}, light:{route:"#E2620A",casing:"#2E0847",core:"rgba(255,246,232,.82)"} };
 const ACCENT = new Proxy({},{ get:function(_,k){
   var on=false; try{ on=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
   return (on?ACCENT_HW:ACCENT_BASE)[k];
@@ -558,10 +558,6 @@ function addMapLayers(){
   setTimeout(function(){ try{ paintSeasonTint(); }catch(e){} },0);   // style swaps reset the sky — reapply every time
   const a=ACCENT[S.themeNow];
   if(!map.getSource("route")) map.addSource("route",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
-  // bloom: a wide, blurred wash of the accent under everything — this is what made the old
-  // line read as a lit tube instead of a flat painted stripe
-  if(!map.getLayer("route-glow")) map.addLayer({id:"route-glow",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.glow,"line-width":["interpolate",["linear"],["zoom"],10,13,14,23,18,38],"line-opacity":.38,"line-blur":5}}, map.getLayer("route-casing")?"route-casing":undefined);
-  // rim: pale, not dark — it frames the line against the map instead of muddying into it
   if(!map.getLayer("route-casing")) map.addLayer({id:"route-casing",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.casing,"line-width":["interpolate",["linear"],["zoom"],10,7,14,13,18,22],"line-opacity":.95}});
   if(!map.getLayer("route-line")) map.addLayer({id:"route-line",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.route,"line-width":["interpolate",["linear"],["zoom"],10,4.5,14,9,18,15]}});
   // seasonal flow layer — a pale ember travelling the route, sitting on top of the solid line
@@ -578,7 +574,7 @@ function addMapLayers(){
       stopRouteFlow(); map.removeLayer("route-flow");
     }
   }catch(e){}
-  if(!map.getLayer("route-core")) map.addLayer({id:"route-core",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.core,"line-width":["interpolate",["linear"],["zoom"],10,1.8,14,3.2,18,5]}});
+  if(!map.getLayer("route-core")) map.addLayer({id:"route-core",type:"line",source:"route",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":a.core,"line-width":["interpolate",["linear"],["zoom"],10,1.4,14,2.6,18,4.2]}});
   // 3D buildings from whichever vector source the style ships
   try{
     const sources=map.getStyle().sources;
@@ -667,7 +663,9 @@ function refreshRouteCondition(){
 function ensureRouteLayers(){
   try{
     if(!S.mapReady||!map) return;
-    if(!map.getSource("route")||!map.getLayer("route-line")||!map.getLayer("route-glow")) addMapLayers();
+    // v185 briefly shipped a blurred bloom layer; strip it if a cached session still has one
+    try{ if(map.getLayer("route-glow")) map.removeLayer("route-glow"); }catch(e){}
+    if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
     refreshRouteCondition();
   }catch(e){}
@@ -3536,7 +3534,7 @@ function ensureSat(){
     }
     _satProv=prov; const m=satMeta();
     if(!map.getSource("esri"))map.addSource("esri",{type:"raster",tiles:satTiles(),tileSize:m.size,maxzoom:19,attribution:m.attr});
-    if(!map.getLayer("esri-sat"))map.addLayer({id:"esri-sat",type:"raster",source:"esri"},map.getLayer("route-glow")?"route-glow":(map.getLayer("route-casing")?"route-casing":undefined));
+    if(!map.getLayer("esri-sat"))map.addLayer({id:"esri-sat",type:"raster",source:"esri"},map.getLayer("route-casing")?"route-casing":undefined);
     map.setLayoutProperty("esri-sat","visibility",S.sat?"visible":"none");
   }catch{}
 }
@@ -4645,7 +4643,6 @@ function paintSeasonTint(){
   /* This used to paint the core with A.route — the same colour as the body — which silently
      erased the bright centre line the moment any season toggle ran (including at boot). */
   try{ if(map.getLayer("route-core"))   map.setPaintProperty("route-core","line-color",A.core); }catch(e){}
-  try{ if(map.getLayer("route-glow"))   map.setPaintProperty("route-glow","line-color",A.glow); }catch(e){}
   try{
     if(!on){
       stopRouteFlow();
