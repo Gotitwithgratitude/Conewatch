@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v190";
+const APP_VERSION="v191";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3716,11 +3716,14 @@ function openDriveTour(){
     marks.forEach((m,i)=>{ if(i===0)return; const el=document.createElement("div"); el.textContent="↱"; el.style.cssText="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:#ffb020;color:#111;font-weight:800;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);font-size:12px"; try{tourPins.push(new maplibregl.Marker({element:el}).setLngLat(m.loc).addTo(tourMap));}catch(e){} });
     // moving puck
     const pk=document.createElement("div"); pk.className="tour-car";
-    pk.innerHTML='<div class="tc-body"></div><div class="tc-glass"></div><div class="tc-head l"></div><div class="tc-head r"></div><div class="tc-mirror l"></div><div class="tc-mirror r"></div><div class="tc-tail l"></div><div class="tc-tail r"></div>';
+    pk.innerHTML='<div class="tc-rig"><div class="tc-shadow"></div><div class="tc-wheel l"></div><div class="tc-wheel r"></div><div class="tc-spoil"></div><div class="tc-cabin"></div><div class="tc-glass"></div><div class="tc-lower"></div><div class="tc-lamp l"></div><div class="tc-lamp r"></div><div class="tc-plate"></div><div class="tc-exh l"></div><div class="tc-exh r"></div></div>';
     /* setRotation was only ever called from _tourRender(), which doesn't run until after the
        traffic-light countdown — so for those first ~2.6s the marker sat at rotation 0, i.e.
        pointing true north while the camera already faced down the route. Align it up front. */
-    try{ tourPuck=new maplibregl.Marker({element:pk,rotationAlignment:"map",pitchAlignment:"map"}).setLngLat(co[0]).addTo(tourMap); tourPuck.setRotation(initBrg); }catch(e){}
+    /* viewport-aligned on both axes: the sprite never rotates or lies flat, it just stands there
+       facing you. The chase cam is always behind the car, so "rear of vehicle, upright" is the
+       correct view every frame — and steering is expressed by leaning the sprite, not spinning it. */
+    try{ tourPuck=new maplibregl.Marker({element:pk,rotationAlignment:"viewport",pitchAlignment:"viewport",anchor:"bottom"}).setLngLat(co[0]).addTo(tourMap); }catch(e){}
     // start/finish flags
     const mk=(txt,at)=>{const e=document.createElement("div");e.textContent=txt;e.style.cssText="font-size:20px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))";try{tourPins.push(new maplibregl.Marker({element:e}).setLngLat(at).addTo(tourMap));}catch(_){}}; 
     // pulsing highlight beacon at the destination
@@ -3804,7 +3807,14 @@ function _tourRender(){
   var mm=$("driveMap"); if(mm) mm.style.transform="scale(1.08) rotate("+lean.toFixed(2)+"deg)";
   // ═══ SPEED WARP intensity: streaks + vignette ramp up with speed and in turns ═══
   var fx=$("tourFX"); if(fx) fx.style.opacity=(0.12 + Math.min(1,(spd-1)/3)*0.5 + Math.min(0.25,Math.abs(dB)*0.05)).toFixed(2);
-  if(tourPuck){ try{tourPuck.setLngLat(pos); tourPuck.setRotation(st.curBrg);}catch(e){} }
+  if(tourPuck){ try{
+    tourPuck.setLngLat(pos);
+    // arcade body english: lean into the turn, drift a little across, squat down as speed builds
+    var _tilt=(lean*2.1).toFixed(2), _slide=(lean*1.5).toFixed(1),
+        _sq=(1+Math.min(0.10,(spd-1)*0.035)).toFixed(3);
+    var _rig=tourPuck.getElement().querySelector(".tc-rig");
+    if(_rig) _rig.style.transform="translateX("+_slide+"px) rotate("+_tilt+"deg) scale("+_sq+")";
+  }catch(e){} }
   const up=st.marks.find(m=>m.dist>=d-15);
   if(up){ const rem=Math.max(0,up.dist-d); $("tourInstr").textContent=up.text; $("tourDist").textContent=rem>25?("in "+_tourDist(rem)):"now"; }
   $("tourProg").style.width=(st.frac*100).toFixed(1)+"%";

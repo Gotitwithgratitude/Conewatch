@@ -507,35 +507,37 @@
   #tourFX::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 120px 20px rgba(0,20,40,.35);mix-blend-mode:multiply}
   #tourCockpit::before{content:"";position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(to right,rgba(4,6,10,.55),transparent 13%,transparent 87%,rgba(4,6,10,.55))}
   #tourCockpit::after{content:"";position:absolute;left:0;right:0;bottom:0;height:14%;background:linear-gradient(to top,rgba(4,6,10,.75),transparent);pointer-events:none}
-  /* Modern compact hatchback, viewed from directly above. Read order at speed is silhouette
-     first, then the dark glass band, then the lights — so the shape is tapered at the nose and
-     squared at the tail, and the glass runs as one continuous strip like a panoramic roof. */
-  .tour-car{width:31px;height:57px;position:relative;filter:drop-shadow(0 7px 9px rgba(0,0,0,.5))}
-  .tour-car .tc-body{position:absolute;inset:0;border-radius:14px 14px 9px 9px;
-    background:linear-gradient(103deg,#fdfefe 0%,#dbe2ea 30%,#9fabb8 58%,#c9d2dc 78%,#f4f7fa 100%);
-    border:1px solid rgba(12,18,26,.42);
-    box-shadow:inset 0 -7px 11px rgba(10,16,24,.22),inset 0 5px 9px rgba(255,255,255,.55)}
-  /* waistline crease down each flank — what makes it read as a car and not a lozenge */
-  .tour-car .tc-body::before{content:"";position:absolute;top:11%;bottom:9%;left:2px;width:1px;
-    background:linear-gradient(180deg,transparent,rgba(10,16,24,.30),transparent)}
-  .tour-car .tc-body::after{content:"";position:absolute;top:11%;bottom:9%;right:2px;width:1px;
-    background:linear-gradient(180deg,transparent,rgba(10,16,24,.30),transparent)}
-  .tour-car .tc-glass{position:absolute;top:22%;left:3.5px;right:3.5px;height:44%;
-    background:linear-gradient(180deg,#243244 0%,#131c28 42%,#1b2735 100%);
-    border-radius:7px 7px 6px 6px;
-    box-shadow:inset 0 1px 2px rgba(255,255,255,.20),0 0 0 1px rgba(10,16,24,.35)}
-  /* windshield highlight — a raked sheen across the front glass */
-  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:38%;
-    background:linear-gradient(160deg,rgba(255,255,255,.30),transparent 68%);border-radius:7px 7px 0 0}
-  .tour-car .tc-head{position:absolute;top:3px;width:7px;height:3.5px;border-radius:2px;
-    background:#fffdf2;box-shadow:0 0 7px 2px rgba(255,246,214,.85)}
-  .tour-car .tc-head.l{left:3px} .tour-car .tc-head.r{right:3px}
-  .tour-car .tc-mirror{position:absolute;top:34%;width:3px;height:5px;border-radius:2px;
-    background:linear-gradient(180deg,#e7ecf1,#9aa6b3);border:1px solid rgba(12,18,26,.35)}
-  .tour-car .tc-mirror.l{left:-3px} .tour-car .tc-mirror.r{right:-3px}
-  .tour-car .tc-tail{position:absolute;bottom:3px;width:8px;height:4px;border-radius:2px;
-    background:linear-gradient(180deg,#ff5a4d,#e0231c);box-shadow:0 0 9px 2px rgba(255,45,45,.85)}
-  .tour-car .tc-tail.l{left:3px} .tour-car .tc-tail.r{right:3px}
+  /* ARCADE SPRITE — drive preview only. The chase cam sits permanently behind the car, so the
+     honest view is the rear of the vehicle, drawn upright facing the camera the way a racing
+     game draws it. This lives strictly inside the pre-drive preview; the live navigation puck
+     on the real map is a separate element and stays a plain directional arrow. */
+  .tour-car{width:76px;height:54px;position:relative;pointer-events:none;
+    filter:drop-shadow(0 9px 9px rgba(0,0,0,.45))}
+  .tour-car .tc-rig{position:absolute;inset:0;transform-origin:50% 92%;will-change:transform}
+  .tour-car .tc-shadow{position:absolute;left:8%;right:8%;bottom:-4px;height:9px;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.55),transparent 72%)}
+  .tour-car .tc-wheel{position:absolute;bottom:2px;width:13px;height:14px;border-radius:4px;
+    background:linear-gradient(180deg,#2a2f36,#0d1013);border:1px solid rgba(0,0,0,.5)}
+  .tour-car .tc-wheel.l{left:1px} .tour-car .tc-wheel.r{right:1px}
+  .tour-car .tc-lower{position:absolute;left:4px;right:4px;bottom:6px;height:26px;border-radius:7px 7px 9px 9px;
+    background:linear-gradient(180deg,#e9eef4 0%,#b7c2cd 46%,#7d8894 78%,#5f6a75 100%);
+    border:1px solid rgba(12,18,26,.45)}
+  .tour-car .tc-cabin{position:absolute;left:13px;right:13px;top:3px;height:26px;border-radius:11px 11px 4px 4px;
+    background:linear-gradient(180deg,#f4f8fb,#c2ccd7);border:1px solid rgba(12,18,26,.42)}
+  .tour-car .tc-glass{position:absolute;left:17px;right:17px;top:7px;height:16px;border-radius:7px 7px 3px 3px;
+    background:linear-gradient(180deg,#2b3a4d 0%,#111a25 60%,#1d2836 100%);
+    box-shadow:inset 0 1px 2px rgba(255,255,255,.22)}
+  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:44%;
+    background:linear-gradient(150deg,rgba(255,255,255,.34),transparent 70%);border-radius:7px 7px 0 0}
+  .tour-car .tc-spoil{position:absolute;left:11px;right:11px;top:0;height:4px;border-radius:3px;
+    background:linear-gradient(180deg,#4a545f,#20272e)}
+  .tour-car .tc-lamp{position:absolute;bottom:16px;width:16px;height:6px;border-radius:3px;
+    background:linear-gradient(180deg,#ff6a5c,#d81f18);box-shadow:0 0 11px 3px rgba(255,48,40,.8)}
+  .tour-car .tc-lamp.l{left:7px} .tour-car .tc-lamp.r{right:7px}
+  .tour-car .tc-plate{position:absolute;left:50%;transform:translateX(-50%);bottom:9px;
+    width:20px;height:7px;border-radius:2px;background:#f3f4ef;border:1px solid rgba(12,18,26,.4)}
+  .tour-car .tc-exh{position:absolute;bottom:4px;width:5px;height:4px;border-radius:2px;background:#2b3138}
+  .tour-car .tc-exh.l{left:16px} .tour-car .tc-exh.r{right:16px}
   .tl-bulb{width:56px;height:56px;border-radius:50%;transition:background .15s,box-shadow .15s}
   .tl-bulb.on-red{background:#ff3b30!important;box-shadow:0 0 26px 6px rgba(255,59,48,.8)}
   .tl-bulb.on-yel{background:#ffcc00!important;box-shadow:0 0 26px 6px rgba(255,204,0,.8)}
