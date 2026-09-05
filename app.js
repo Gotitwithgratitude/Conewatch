@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v191";
+const APP_VERSION="v192";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3716,7 +3716,7 @@ function openDriveTour(){
     marks.forEach((m,i)=>{ if(i===0)return; const el=document.createElement("div"); el.textContent="↱"; el.style.cssText="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:#ffb020;color:#111;font-weight:800;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);font-size:12px"; try{tourPins.push(new maplibregl.Marker({element:el}).setLngLat(m.loc).addTo(tourMap));}catch(e){} });
     // moving puck
     const pk=document.createElement("div"); pk.className="tour-car";
-    pk.innerHTML='<div class="tc-rig"><div class="tc-shadow"></div><div class="tc-wheel l"></div><div class="tc-wheel r"></div><div class="tc-spoil"></div><div class="tc-cabin"></div><div class="tc-glass"></div><div class="tc-lower"></div><div class="tc-lamp l"></div><div class="tc-lamp r"></div><div class="tc-plate"></div><div class="tc-exh l"></div><div class="tc-exh r"></div></div>';
+    pk.innerHTML='<div class="tc-rig"><div class="tc-shadow"></div><div class="tc-flame l"></div><div class="tc-flame r"></div><div class="tc-wheel l"></div><div class="tc-wheel r"></div><div class="tc-spoil"></div><div class="tc-cabin"></div><div class="tc-glass"></div><div class="tc-lower"></div><div class="tc-bar"></div><div class="tc-lamp l"></div><div class="tc-lamp r"></div><div class="tc-plate"></div><div class="tc-diff"></div><div class="tc-exh l"></div><div class="tc-exh r"></div></div>';
     /* setRotation was only ever called from _tourRender(), which doesn't run until after the
        traffic-light countdown — so for those first ~2.6s the marker sat at rotation 0, i.e.
        pointing true north while the camera already faced down the route. Align it up front. */
@@ -3809,11 +3809,23 @@ function _tourRender(){
   var fx=$("tourFX"); if(fx) fx.style.opacity=(0.12 + Math.min(1,(spd-1)/3)*0.5 + Math.min(0.25,Math.abs(dB)*0.05)).toFixed(2);
   if(tourPuck){ try{
     tourPuck.setLngLat(pos);
-    // arcade body english: lean into the turn, drift a little across, squat down as speed builds
-    var _tilt=(lean*2.1).toFixed(2), _slide=(lean*1.5).toFixed(1),
-        _sq=(1+Math.min(0.10,(spd-1)*0.035)).toFixed(3);
-    var _rig=tourPuck.getElement().querySelector(".tc-rig");
+    /* Body english: lean into the turn and squat as speed builds. Slide is deliberately small —
+       the car should look planted ON the line, not swimming beside it. */
+    var _tilt=(lean*2.0).toFixed(2), _slide=(lean*0.75).toFixed(1),
+        _sq=(1+Math.min(0.08,(spd-1)*0.028)).toFixed(3);
+    var _el=tourPuck.getElement();
+    var _rig=_el.querySelector(".tc-rig");
     if(_rig) _rig.style.transform="translateX("+_slide+"px) rotate("+_tilt+"deg) scale("+_sq+")";
+    /* GEARBOX: a virtual box that upshifts on an interval which tightens as the multiplier rises.
+       Each shift throws flame out both tips and punches the brightness for a frame or two. */
+    var _now=Date.now();
+    if(!st._nextShift) st._nextShift=_now+800;
+    if(_now>=st._nextShift){
+      st._gear=Math.min(6,(st._gear||1)+1);
+      if(st._gear>=6) st._gear=2;                       // roll back down the box and climb again
+      try{ _el.classList.remove("shift"); void _el.offsetWidth; _el.classList.add("shift"); }catch(e){}
+      st._nextShift=_now+Math.round((1400+Math.random()*700)/Math.max(0.6,spd*0.7));
+    }
   }catch(e){} }
   const up=st.marks.find(m=>m.dist>=d-15);
   if(up){ const rem=Math.max(0,up.dist-d); $("tourInstr").textContent=up.text; $("tourDist").textContent=rem>25?("in "+_tourDist(rem)):"now"; }

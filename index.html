@@ -507,37 +507,62 @@
   #tourFX::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 120px 20px rgba(0,20,40,.35);mix-blend-mode:multiply}
   #tourCockpit::before{content:"";position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(to right,rgba(4,6,10,.55),transparent 13%,transparent 87%,rgba(4,6,10,.55))}
   #tourCockpit::after{content:"";position:absolute;left:0;right:0;bottom:0;height:14%;background:linear-gradient(to top,rgba(4,6,10,.75),transparent);pointer-events:none}
-  /* ARCADE SPRITE — drive preview only. The chase cam sits permanently behind the car, so the
-     honest view is the rear of the vehicle, drawn upright facing the camera the way a racing
-     game draws it. This lives strictly inside the pre-drive preview; the live navigation puck
-     on the real map is a separate element and stays a plain directional arrow. */
-  .tour-car{width:76px;height:54px;position:relative;pointer-events:none;
-    filter:drop-shadow(0 9px 9px rgba(0,0,0,.45))}
-  .tour-car .tc-rig{position:absolute;inset:0;transform-origin:50% 92%;will-change:transform}
-  .tour-car .tc-shadow{position:absolute;left:8%;right:8%;bottom:-4px;height:9px;border-radius:50%;
-    background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.55),transparent 72%)}
-  .tour-car .tc-wheel{position:absolute;bottom:2px;width:13px;height:14px;border-radius:4px;
-    background:linear-gradient(180deg,#2a2f36,#0d1013);border:1px solid rgba(0,0,0,.5)}
-  .tour-car .tc-wheel.l{left:1px} .tour-car .tc-wheel.r{right:1px}
-  .tour-car .tc-lower{position:absolute;left:4px;right:4px;bottom:6px;height:26px;border-radius:7px 7px 9px 9px;
-    background:linear-gradient(180deg,#e9eef4 0%,#b7c2cd 46%,#7d8894 78%,#5f6a75 100%);
-    border:1px solid rgba(12,18,26,.45)}
-  .tour-car .tc-cabin{position:absolute;left:13px;right:13px;top:3px;height:26px;border-radius:11px 11px 4px 4px;
-    background:linear-gradient(180deg,#f4f8fb,#c2ccd7);border:1px solid rgba(12,18,26,.42)}
-  .tour-car .tc-glass{position:absolute;left:17px;right:17px;top:7px;height:16px;border-radius:7px 7px 3px 3px;
-    background:linear-gradient(180deg,#2b3a4d 0%,#111a25 60%,#1d2836 100%);
-    box-shadow:inset 0 1px 2px rgba(255,255,255,.22)}
-  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:44%;
-    background:linear-gradient(150deg,rgba(255,255,255,.34),transparent 70%);border-radius:7px 7px 0 0}
-  .tour-car .tc-spoil{position:absolute;left:11px;right:11px;top:0;height:4px;border-radius:3px;
-    background:linear-gradient(180deg,#4a545f,#20272e)}
-  .tour-car .tc-lamp{position:absolute;bottom:16px;width:16px;height:6px;border-radius:3px;
-    background:linear-gradient(180deg,#ff6a5c,#d81f18);box-shadow:0 0 11px 3px rgba(255,48,40,.8)}
-  .tour-car .tc-lamp.l{left:7px} .tour-car .tc-lamp.r{right:7px}
-  .tour-car .tc-plate{position:absolute;left:50%;transform:translateX(-50%);bottom:9px;
-    width:20px;height:7px;border-radius:2px;background:#f3f4ef;border:1px solid rgba(12,18,26,.4)}
-  .tour-car .tc-exh{position:absolute;bottom:4px;width:5px;height:4px;border-radius:2px;background:#2b3138}
-  .tour-car .tc-exh.l{left:16px} .tour-car .tc-exh.r{right:16px}
+  /* ARCADE SPRITE — drive preview only. Chase cam sits permanently behind the car, so the
+     honest view is the rear of the vehicle drawn upright facing the camera, the way a racing
+     game draws it. Lives strictly inside the pre-drive preview; the live navigation puck on the
+     real map is a separate element and stays a plain directional arrow. */
+  .tour-car{width:46px;height:34px;position:relative;pointer-events:none;
+    filter:drop-shadow(0 6px 7px rgba(0,0,0,.5))}
+  .tour-car .tc-rig{position:absolute;inset:0;transform-origin:50% 94%;will-change:transform}
+  .tour-car .tc-shadow{position:absolute;left:4%;right:4%;bottom:-3px;height:7px;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.6),transparent 70%)}
+  /* wide planted stance — rear tyres sit proud of the bodywork */
+  .tour-car .tc-wheel{position:absolute;bottom:1px;width:9px;height:11px;border-radius:3px;
+    background:linear-gradient(180deg,#31373f 0%,#14181d 55%,#0a0d10 100%);
+    border:1px solid rgba(0,0,0,.55);box-shadow:inset 0 1px 1px rgba(255,255,255,.10)}
+  .tour-car .tc-wheel.l{left:0} .tour-car .tc-wheel.r{right:0}
+  .tour-car .tc-lower{position:absolute;left:5px;right:5px;bottom:4px;height:17px;border-radius:4px 4px 6px 6px;
+    background:linear-gradient(180deg,#eef3f8 0%,#c2ccd8 40%,#8b96a3 74%,#5b656f 100%);
+    border:1px solid rgba(12,18,26,.5)}
+  .tour-car .tc-cabin{position:absolute;left:11px;right:11px;top:2px;height:15px;border-radius:7px 7px 2px 2px;
+    background:linear-gradient(180deg,#f6fafd,#b9c4d0);border:1px solid rgba(12,18,26,.45)}
+  .tour-car .tc-glass{position:absolute;left:14px;right:14px;top:4px;height:9px;border-radius:4px 4px 2px 2px;
+    background:linear-gradient(180deg,#31425a 0%,#0f1721 62%,#1b2634 100%);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.26)}
+  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:46%;
+    background:linear-gradient(150deg,rgba(255,255,255,.40),transparent 72%);border-radius:4px 4px 0 0}
+  .tour-car .tc-spoil{position:absolute;left:8px;right:8px;top:0;height:3px;border-radius:2px;
+    background:linear-gradient(180deg,#59636e,#1d242b);box-shadow:0 1px 2px rgba(0,0,0,.5)}
+  /* full-width LED tail bar, plus the two lamp clusters either side of it */
+  .tour-car .tc-bar{position:absolute;left:8px;right:8px;bottom:12px;height:2.5px;border-radius:2px;
+    background:linear-gradient(90deg,#8e1410,#ff5346 22%,#ff7a6b 50%,#ff5346 78%,#8e1410);
+    box-shadow:0 0 8px 2px rgba(255,52,40,.7)}
+  .tour-car .tc-lamp{position:absolute;bottom:8px;width:10px;height:4px;border-radius:2px;
+    background:linear-gradient(180deg,#ff6a5c,#cf1a13);box-shadow:0 0 9px 2px rgba(255,48,40,.75)}
+  .tour-car .tc-lamp.l{left:5px} .tour-car .tc-lamp.r{right:5px}
+  .tour-car .tc-plate{position:absolute;left:50%;margin-left:-6px;bottom:6px;
+    width:12px;height:4px;border-radius:1px;background:#f2f3ee;border:1px solid rgba(12,18,26,.45)}
+  /* rear diffuser fins */
+  .tour-car .tc-diff{position:absolute;left:11px;right:11px;bottom:2px;height:4px;border-radius:1px;
+    background:repeating-linear-gradient(90deg,#232a31 0 2px,#0e1216 2px 4px)}
+  .tour-car .tc-exh{position:absolute;bottom:3px;width:4px;height:3px;border-radius:1px;
+    background:linear-gradient(180deg,#39414a,#171c21)}
+  .tour-car .tc-exh.l{left:12px} .tour-car .tc-exh.r{right:12px}
+  /* UPSHIFT FLAME — fires out of both tips on every gear change */
+  .tour-car .tc-flame{position:absolute;bottom:-1px;width:6px;height:11px;margin-left:-1px;
+    border-radius:50% 50% 45% 45%;opacity:0;transform-origin:50% 0%;transform:scaleY(.2);
+    background:radial-gradient(ellipse at 50% 10%,#fff6d0 0%,#ffd24a 26%,#ff8a1c 52%,#ff3d10 74%,rgba(255,40,0,0) 100%);
+    filter:blur(.4px)}
+  .tour-car .tc-flame.l{left:12px} .tour-car .tc-flame.r{right:12px;margin-left:0;margin-right:-1px}
+  .tour-car.shift .tc-flame{animation:cwflame .3s ease-out}
+  @keyframes cwflame{
+    0%{opacity:0;transform:scaleY(.15) scaleX(.7)}
+    18%{opacity:1;transform:scaleY(1.25) scaleX(1.12)}
+    52%{opacity:.85;transform:scaleY(.85) scaleX(.95)}
+    100%{opacity:0;transform:scaleY(.2) scaleX(.7)}}
+  /* the whole car kicks forward a touch on the shift — the "wow" beat */
+  .tour-car.shift .tc-rig{animation:cwkick .3s ease-out}
+  @keyframes cwkick{0%{filter:brightness(1)}22%{filter:brightness(1.22)}100%{filter:brightness(1)}}
   .tl-bulb{width:56px;height:56px;border-radius:50%;transition:background .15s,box-shadow .15s}
   .tl-bulb.on-red{background:#ff3b30!important;box-shadow:0 0 26px 6px rgba(255,59,48,.8)}
   .tl-bulb.on-yel{background:#ffcc00!important;box-shadow:0 0 26px 6px rgba(255,204,0,.8)}
@@ -977,7 +1002,7 @@
   <div id="driveMap" style="position:absolute;inset:0;transition:transform .12s ease-out;transform:scale(1.08)"></div>
   <div id="tourFX" style="position:absolute;inset:0;pointer-events:none;z-index:2;opacity:.15;transition:opacity .3s"></div>
   <div id="tourCockpit" style="position:absolute;inset:0;pointer-events:none;z-index:3"></div>
-  <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:flex-start;padding-top:11%;flex-direction:column;background:linear-gradient(to bottom,rgba(0,0,0,.42) 0%,rgba(0,0,0,.30) 46%,rgba(0,0,0,.06) 74%,transparent 100%)">
+  <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:flex-start;padding-top:27%;flex-direction:column;background:linear-gradient(to bottom,rgba(0,0,0,.42) 0%,rgba(0,0,0,.30) 46%,rgba(0,0,0,.06) 74%,transparent 100%)">
     <div style="background:#111418;border:2px solid #2a2f36;border-radius:22px;padding:16px 14px;display:flex;flex-direction:column;gap:12px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
       <div id="tlRed" class="tl-bulb" style="background:#3a0d0d"></div>
       <div id="tlYel" class="tl-bulb" style="background:#3a300d"></div>
