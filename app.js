@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v195";
+const APP_VERSION="v196";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -469,7 +469,7 @@ let mapStyleTheme="dark";
     touchZoomRotate:true, touchPitch:true, doubleClickZoom:true, keyboard:true });
   try{ map.touchZoomRotate.enableRotation(); }catch(e){}
   try{ map.dragRotate.enable(); }catch(e){}
-  map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker();
+  map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker(); try{ restoreRouteLocal(); }catch(e){}
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
     if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
@@ -1502,6 +1502,89 @@ function renderRouteOpts(){
   });
 }
 
+
+/* ═══════════ offline resilience (Tier 1) ═══════════
+   Every map ConeWatch competes with fails the same way: signal drops, tiles stop, the route
+   dies. Three defences, all local, none of which change what the app does when online.
+   1. When a route is built, warm the tiles along that corridor into a size-capped cache in the
+      service worker, so the drive still renders through a dead zone.
+   2. Persist the route line and its steps, so a reload mid-drive doesn't lose them.
+   3. Don't spam an offline driver with reroute failures. */
+function _tileXY(lat,lng,z){
+  var n=Math.pow(2,z), la=lat*Math.PI/180;
+  return [ Math.floor((lng+180)/360*n),
+           Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n) ];
+}
+/* Mirrors whatever basemap is actually in use — caching Esri tiles while the map draws CARTO
+   would warm the wrong cache and look like the feature simply didn't work. */
+function _baseTileTpl(){
+  try{
+    var ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim();
+    if(ck){ var base=(S.theme==="dark")?"dark_all":"voyager";
+      return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+base+"/{z}/{x}/{y}.png?key="+ck, yx:false}; }
+  }catch(e){}
+  return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", yx:true};
+}
+function corridorTileURLs(coords){
+  var tpl=_baseTileTpl(), seen={}, out=[], CAP=800;
+  // low zooms first: they always render *something*, so they are the ones worth the budget
+  var plan=[{z:13,halo:1},{z:14,halo:1},{z:15,halo:0},{z:16,halo:0}];
+  for(var p=0;p<plan.length;p++){
+    var z=plan[p].z, h=plan[p].halo;
+    for(var i=0;i<coords.length;i++){
+      var c=coords[i]; if(!c) continue;
+      var t=_tileXY(c[1],c[0],z);
+      for(var dx=-h;dx<=h;dx++) for(var dy=-h;dy<=h;dy++){
+        var x=t[0]+dx, y=t[1]+dy, k=z+"/"+x+"/"+y;
+        if(seen[k]) continue; seen[k]=1;
+        var u=tpl.u.replace("{z}",z).replace("{x}",x).replace("{y}",y);
+        out.push(u);
+        if(out.length>=CAP) return out;
+      }
+    }
+  }
+  return out;
+}
+function precacheCorridor(r){
+  try{
+    if(!r||!r.geometry||!r.geometry.coordinates) return;
+    if(!navigator.serviceWorker||!navigator.serviceWorker.controller) return;
+    var urls=corridorTileURLs(r.geometry.coordinates);
+    if(urls.length) navigator.serviceWorker.controller.postMessage({type:"cw-precache-tiles",urls:urls});
+  }catch(e){}
+}
+function saveRouteLocal(r){
+  try{
+    if(!r||!r.geometry) return;
+    var co=r.geometry.coordinates||[];
+    // a long route can carry thousands of coords; thin it rather than blow the storage quota
+    if(co.length>3000){ var st=Math.ceil(co.length/3000), th=[]; for(var i=0;i<co.length;i+=st) th.push(co[i]); if(th[th.length-1]!==co[co.length-1]) th.push(co[co.length-1]); co=th; }
+    var steps=(S.steps||[]).map(function(x){
+      var m=x.maneuver||{};
+      return {name:x.name,distance:x.distance,ref:x.ref,exits:x.exits,
+              maneuver:{type:m.type,modifier:m.modifier,location:m.location}};
+    });
+    localStorage.setItem("cw_lastroute",JSON.stringify({
+      t:Date.now(),dest:S.dest,destName:S.destName,coords:co,
+      dur:r.duration,dist:r.distance,steps:steps}));
+  }catch(e){}
+}
+function restoreRouteLocal(){
+  try{
+    if(navigator.onLine) return false;            // online, a fresh route is always better
+    var raw=localStorage.getItem("cw_lastroute"); if(!raw) return false;
+    var d=JSON.parse(raw);
+    if(!d||!d.coords||!d.coords.length) return false;
+    if(Date.now()-(d.t||0) > 3*3600*1000) return false;   // stale enough to be misleading
+    S.route={geometry:{type:"LineString",coordinates:d.coords},duration:d.dur,distance:d.dist,legs:[]};
+    S.steps=d.steps||[]; S.stepIdx=0; S.peekIdx=null;
+    S.dest=d.dest||null; S.destName=d.destName||"";
+    try{ ensureRouteLayers(); map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch(e){}
+    toast("Offline — your last route is still here.",3400);
+    return true;
+  }catch(e){ return false; }
+}
+
 async function fetchRoute(silent){
   if(!S.pos||!S.dest) return;
   // A stuck "in flight" flag used to wedge routing permanently: if any routing request hung,
@@ -1510,7 +1593,14 @@ async function fetchRoute(silent){
     if(Date.now()-(S._reroutingAt||0) < 20000) return;
     S.rerouting=false;                                   // previous attempt clearly died — move on
   }
-  if(!navigator.onLine){ if(!silent)toast("Offline — showing your saved route. It stays active.",3200); return; }
+  if(!navigator.onLine){
+    // off-route detection retries constantly; one notice per minute is plenty
+    if(!silent && Date.now()-(S._offToastAt||0) > 60000){
+      S._offToastAt=Date.now();
+      toast("Offline — showing your saved route. It stays active.",3200);
+    }
+    return;
+  }
   S.rerouting=true; S._reroutingAt=Date.now();
   // During active turn-by-turn, a reroute MUST start from where you are now — never the
   // original planned origin. Using S.origin on a reroute sent drivers back toward their
@@ -1538,6 +1628,7 @@ async function fetchRoute(silent){
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     try{refreshRouteCondition();}catch(e){}
+    try{ saveRouteLocal(r); precacheCorridor(r); }catch(e){}
     if(!silent){
       const b=r.geometry.coordinates.reduce((bb,c)=>bb.extend(c),new maplibregl.LngLatBounds(r.geometry.coordinates[0],r.geometry.coordinates[0]));
       map.fitBounds(b,{padding:{top:160,bottom:90,left:50,right:50}});
