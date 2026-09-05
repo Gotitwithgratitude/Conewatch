@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v194";
+const APP_VERSION="v195";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3687,6 +3687,11 @@ function openDriveTour(){
      points a metre apart is noise — which started both the camera AND the car pointed wrong.
      Take the heading over the first ~20m of actual route instead. */
   const initBrg=_brg(co[0], _posAt(co,cum,Math.min(total,20)));
+  /* The establishing shot doubles as the prefetch: whatever is in frame at the top of the
+     descent has its low-zoom ancestors pulled, and ancestors are what MapLibre upscales when a
+     detail tile is late. So a long route should open WIDER — a fixed z15.6 only ever covered the
+     first stretch, which is why the back half of a long drive still went soft. */
+  const _openZoom = total>12000 ? 13.2 : total>5000 ? 14.2 : total>1800 ? 15.1 : 15.9;
   const marks=(S.steps||[]).map(st=>{ const loc=st.maneuver&&st.maneuver.location; if(!loc)return null; let bi=0,bd=Infinity; for(let i=0;i<co.length;i++){const d=_hav(co[i],loc);if(d<bd){bd=d;bi=i;}} return {dist:cum[bi],text:stepText(st),loc:loc}; }).filter(m=>m&&m.text);
   $("drivePreview").style.display="block";
   if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;}
@@ -3702,7 +3707,7 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:15.6,pitch:44,bearing:initBrg,maxPitch:85,attributionControl:true,
+    center:co[0],zoom:_openZoom,pitch:44,bearing:initBrg,maxPitch:85,attributionControl:true,
     interactive:true,maxTileCacheSize:1500,fadeDuration:140,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     /* No terrain. The terrarium DEM tops out at z12; draping z17 satellite imagery over an
@@ -4271,14 +4276,14 @@ function wireBannerSwipe(){
 }
 try{ wireBannerSwipe(); }catch(e){}
 $("turnClose")&&($("turnClose").onclick=function(){ closeTurnList(); });
-/* Double-tap anywhere on the sheet closes it, so it isn't only the little arrow at the bottom.
-   Guarded against rows and the scroll area so a quick double-tap on a turn still peeks it. */
+/* One tap anywhere on the sheet that isn't a turn row or a control sends it back up.
+   Rows still peek their turn; the arrow button still works. */
 try{
-  var _ts=$("turnSheet"), _lastTap=0;
+  var _ts=$("turnSheet");
   if(_ts) _ts.addEventListener("click",function(e){
     if(e.target.closest(".turn-row")||e.target.closest("button")) return;
-    var now=Date.now();
-    if(now-_lastTap<340){ _lastTap=0; closeTurnList(); } else { _lastTap=now; }
+    if(e.target.closest("#turnList")) return;      // don't fight a scroll fling in the list
+    closeTurnList();
   });
 }catch(e){}
 try{
