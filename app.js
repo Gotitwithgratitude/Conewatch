@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v196";
+const APP_VERSION="v197";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1564,10 +1564,64 @@ function saveRouteLocal(r){
       return {name:x.name,distance:x.distance,ref:x.ref,exits:x.exits,
               maneuver:{type:m.type,modifier:m.modifier,location:m.location}};
     });
-    localStorage.setItem("cw_lastroute",JSON.stringify({
-      t:Date.now(),dest:S.dest,destName:S.destName,coords:co,
-      dur:r.duration,dist:r.distance,steps:steps}));
+    var rec={t:Date.now(),dest:S.dest,destName:S.destName,coords:co,
+             dur:r.duration,dist:r.distance,steps:steps};
+    localStorage.setItem("cw_lastroute",JSON.stringify(rec));
+    /* One saved route only helps if you happen to want that exact trip again. Keeping the last
+       few, keyed by destination, means an offline search for anywhere you have already routed
+       to today comes back with real turn-by-turn instead of nothing. */
+    try{
+      var lib=JSON.parse(localStorage.getItem("cw_routes")||"[]");
+      lib=lib.filter(function(x){ return !(x.dest&&S.dest&&distM(x.dest,S.dest)<200); });
+      lib.unshift(rec);
+      while(lib.length>5) lib.pop();
+      localStorage.setItem("cw_routes",JSON.stringify(lib));
+    }catch(e){
+      try{ localStorage.setItem("cw_routes",JSON.stringify([rec])); }catch(_){}
+    }
   }catch(e){}
+}
+/* Find a stored route whose destination is essentially the one being asked for. 200m is loose
+   enough to survive a different geocode hit on the same place, tight enough not to hand back
+   the wrong trip. */
+function offlineRouteFor(dest){
+  if(!dest) return null;
+  try{
+    var lib=JSON.parse(localStorage.getItem("cw_routes")||"[]");
+    for(var i=0;i<lib.length;i++){
+      var x=lib[i];
+      if(x&&x.dest&&x.coords&&x.coords.length&&distM(x.dest,dest)<200) return x;
+    }
+  }catch(e){}
+  return null;
+}
+function installStoredRoute(x){
+  S.route={geometry:{type:"LineString",coordinates:x.coords},duration:x.dur,distance:x.dist,legs:[]};
+  S.steps=x.steps||[]; S.stepIdx=0; S.peekIdx=null; S.offRouteCount=0;
+  try{ S.alerted.clear(); }catch(e){}
+  S._ri=undefined; S._riT=0;
+  try{ ensureRouteLayers(); map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch(e){}
+  try{ refreshRouteCondition(); }catch(e){}
+}
+/* Last resort when nothing is stored: a straight line to the destination with distance and
+   compass heading. It is not navigation and is never presented as navigation — but knowing
+   "2.3 mi, northeast" beats a dead screen when you have no signal. */
+function beelineTo(dest){
+  if(!S.pos||!dest) return false;
+  try{
+    var geo={type:"LineString",coordinates:[[S.pos.lng,S.pos.lat],[dest.lng,dest.lat]]};
+    ensureRouteLayers();
+    map.getSource("route").setData({type:"Feature",geometry:geo});
+    var d=distM(S.pos,dest), b=_brg(S.pos,dest);
+    var pts=["N","NE","E","SE","S","SW","W","NW"], dir=pts[Math.round(((b%360)+360)%360/45)%8];
+    try{
+      var bb=new maplibregl.LngLatBounds(geo.coordinates[0],geo.coordinates[0]);
+      geo.coordinates.forEach(function(c){ bb.extend(c); });
+      map.fitBounds(bb,{padding:{top:150,bottom:120,left:50,right:50}});
+    }catch(e){}
+    toast("Offline — no turn-by-turn. Direct line: "+fmtDist(d)+" "+dir+".",4600);
+    return true;
+  }catch(e){ return false; }
 }
 function restoreRouteLocal(){
   try{
@@ -1594,11 +1648,30 @@ async function fetchRoute(silent){
     S.rerouting=false;                                   // previous attempt clearly died — move on
   }
   if(!navigator.onLine){
-    // off-route detection retries constantly; one notice per minute is plenty
-    if(!silent && Date.now()-(S._offToastAt||0) > 60000){
-      S._offToastAt=Date.now();
-      toast("Offline — showing your saved route. It stays active.",3200);
+    // mid-drive: the route already on screen is the right answer, just stop nagging about it
+    if(silent||S.navigating){
+      if(!silent && Date.now()-(S._offToastAt||0) > 60000){
+        S._offToastAt=Date.now();
+        toast("Offline — showing your saved route. It stays active.",3200);
+      }
+      return;
     }
+    // planning a NEW trip offline: a route we already drove to this destination is real
+    // turn-by-turn and should be handed back rather than refused
+    var stored=offlineRouteFor(S.dest);
+    if(stored){
+      installStoredRoute(stored);
+      try{
+        var bb=new maplibregl.LngLatBounds(stored.coords[0],stored.coords[0]);
+        stored.coords.forEach(function(c){ bb.extend(c); });
+        map.fitBounds(bb,{padding:{top:160,bottom:90,left:50,right:50}});
+        openSheet("routeSheet"); try{ renderRouteSheet(S.route); }catch(e){}
+      }catch(e){}
+      toast("Offline — using your saved route to "+(stored.destName||"this place")+".",3600);
+      return;
+    }
+    if(beelineTo(S.dest)) return;
+    toast("Offline — no saved route here. Search this place once with signal.",4200);
     return;
   }
   S.rerouting=true; S._reroutingAt=Date.now();
