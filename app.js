@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v186";
+const APP_VERSION="v187";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3680,6 +3680,10 @@ function openDriveTour(){
   const co=S.route.geometry.coordinates.slice();
   const cum=[0]; for(let i=1;i<co.length;i++)cum[i]=cum[i-1]+_hav(co[i-1],co[i]);
   const total=cum[cum.length-1]||1;
+  /* OSRM routinely emits a near-duplicate first coordinate, and a bearing taken between two
+     points a metre apart is noise — which started both the camera AND the car pointed wrong.
+     Take the heading over the first ~20m of actual route instead. */
+  const initBrg=_brg(co[0], _posAt(co,cum,Math.min(total,20)));
   const marks=(S.steps||[]).map(st=>{ const loc=st.maneuver&&st.maneuver.location; if(!loc)return null; let bi=0,bd=Infinity; for(let i=0;i<co.length;i++){const d=_hav(co[i],loc);if(d<bd){bd=d;bi=i;}} return {dist:cum[bi],text:stepText(st),loc:loc}; }).filter(m=>m&&m.text);
   $("drivePreview").style.display="block";
   if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;}
@@ -3696,7 +3700,7 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:17.4,pitch:76,bearing:_brg(co[0],co[1]),maxPitch:85,attributionControl:true,
+    center:co[0],zoom:17.4,pitch:76,bearing:initBrg,maxPitch:85,attributionControl:true,
     interactive:true,maxTileCacheSize:500,fadeDuration:0,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     try{ tourMap.setTerrain({source:"dem",exaggeration:0.9}); }catch(e){}
@@ -3712,7 +3716,10 @@ function openDriveTour(){
     // moving puck
     const pk=document.createElement("div"); pk.className="tour-car";
     pk.innerHTML='<div class="tc-body"></div><div class="tc-glass"></div><div class="tc-tail l"></div><div class="tc-tail r"></div>';
-    try{ tourPuck=new maplibregl.Marker({element:pk,rotationAlignment:"map",pitchAlignment:"map"}).setLngLat(co[0]).addTo(tourMap); }catch(e){}
+    /* setRotation was only ever called from _tourRender(), which doesn't run until after the
+       traffic-light countdown — so for those first ~2.6s the marker sat at rotation 0, i.e.
+       pointing true north while the camera already faced down the route. Align it up front. */
+    try{ tourPuck=new maplibregl.Marker({element:pk,rotationAlignment:"map",pitchAlignment:"map"}).setLngLat(co[0]).addTo(tourMap); tourPuck.setRotation(initBrg); }catch(e){}
     // start/finish flags
     const mk=(txt,at)=>{const e=document.createElement("div");e.textContent=txt;e.style.cssText="font-size:20px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.6))";try{tourPins.push(new maplibregl.Marker({element:e}).setLngLat(at).addTo(tourMap));}catch(_){}}; 
     // pulsing highlight beacon at the destination
@@ -3746,7 +3753,7 @@ function startTour(co,cum,total,marks){
   cancelAnimationFrame(tourRAF);
   var _mm=$("driveMap"); if(_mm)_mm.style.transform="scale(1.08) rotate(0deg)";
   const baseDur=Math.min(60000,Math.max(14000, total*7)); // slower base = clearer; ~7ms per meter, 14–60s
-  tourState={co,cum,total,marks,baseDur,frac:0,speed:0.5,paused:false,done:false,curBrg:_brg(co[0],co[1])};
+  tourState={co,cum,total,marks,baseDur,frac:0,speed:0.5,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
   $("tourSpeed").innerHTML="0.5&times;";
   $("tourPlay").innerHTML="&#10073;&#10073;";
   runTour();
@@ -3785,6 +3792,16 @@ function runTour(){
     if(!tourState||!tourMap||st.paused||st.done)return;
     if(last==null)last=ts;
     const dt=Math.min(50,ts-last); last=ts;
+    /* The drive used to advance on a pure rAF clock, so when satellite tiles hadn't landed yet
+       it flew forward over upscaled parent tiles — the smeared ground. Wait for the ground
+       instead. Capped so a genuinely missing tile can't freeze the preview. */
+    var _tilesIn=true; try{ _tilesIn=tourMap.areTilesLoaded(); }catch(e){}
+    if(!_tilesIn && (st._holdMs||0) < 1200){
+      st._holdMs=(st._holdMs||0)+dt;
+      _tourRender();                                   // camera stays live; only progress pauses
+      tourRAF=requestAnimationFrame(frame); return;
+    }
+    st._holdMs=0;
     st.frac=Math.min(1, st.frac+(dt/st.baseDur)*st.speed); // rate-based: speed changes never jump the camera
     _tourRender();
     if(st.frac>=1){ st.done=true; arriveCinematic(); return; }
