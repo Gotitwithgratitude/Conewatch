@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v192";
+const APP_VERSION="v193";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3251,7 +3251,7 @@ function openSheet(id){
   // the "destination set" confirm card floats over the sheet and was eating taps on
   // Start navigation — get it out of the way as soon as a sheet opens
   try{ if(id==="routeSheet"){ $("confirmBar").style.display="none"; clearTimeout(window.__confT); } }catch(e){}
-  $(id).classList.add("open");pushUI();
+  $(id).classList.add("open");pushUI();try{window._cwSheetAt=Date.now();}catch(e){}
 }
 document.querySelectorAll(".sheet").forEach(s=>{
   const x=document.createElement("button");
@@ -3716,7 +3716,8 @@ function openDriveTour(){
     marks.forEach((m,i)=>{ if(i===0)return; const el=document.createElement("div"); el.textContent="↱"; el.style.cssText="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:#ffb020;color:#111;font-weight:800;border-radius:50%;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);font-size:12px"; try{tourPins.push(new maplibregl.Marker({element:el}).setLngLat(m.loc).addTo(tourMap));}catch(e){} });
     // moving puck
     const pk=document.createElement("div"); pk.className="tour-car";
-    pk.innerHTML='<div class="tc-rig"><div class="tc-shadow"></div><div class="tc-flame l"></div><div class="tc-flame r"></div><div class="tc-wheel l"></div><div class="tc-wheel r"></div><div class="tc-spoil"></div><div class="tc-cabin"></div><div class="tc-glass"></div><div class="tc-lower"></div><div class="tc-bar"></div><div class="tc-lamp l"></div><div class="tc-lamp r"></div><div class="tc-plate"></div><div class="tc-diff"></div><div class="tc-exh l"></div><div class="tc-exh r"></div></div>';
+    pk.innerHTML='<div class="tc-rig"><div class="tc-beam"></div><div class="tc-smoke l"></div><div class="tc-smoke r"></div><div class="tc-shadow"></div><div class="tc-flame l"></div><div class="tc-flame r"></div><div class="tc-wheel l"></div><div class="tc-wheel r"></div><div class="tc-spoil"></div><div class="tc-cabin"></div><div class="tc-glass"></div><div class="tc-lower"></div><div class="tc-lamp l"></div><div class="tc-lamp r"></div><div class="tc-bar"></div><div class="tc-plate"></div><div class="tc-diff"></div><div class="tc-exh l"></div><div class="tc-exh r"></div></div>';
+    try{ var _hr=new Date().getHours(); if(_hr<7||_hr>=19) pk.classList.add("night"); }catch(e){}
     /* setRotation was only ever called from _tourRender(), which doesn't run until after the
        traffic-light countdown — so for those first ~2.6s the marker sat at rotation 0, i.e.
        pointing true north while the camera already faced down the route. Align it up front. */
@@ -3777,6 +3778,7 @@ function startTour(co,cum,total,marks){
   const baseDur=Math.min(60000,Math.max(14000, total*7)); // slower base = clearer; ~7ms per meter, 14–60s
   tourState={co,cum,total,marks,baseDur,frac:0,speed:0.5,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
   $("tourSpeed").innerHTML="0.5&times;";
+  try{ var _g0=$("tourGear"); if(_g0) _g0.textContent="G1"; }catch(e){}
   $("tourPlay").innerHTML="&#10073;&#10073;";
   runTour();
 }
@@ -3825,7 +3827,10 @@ function _tourRender(){
       if(st._gear>=6) st._gear=2;                       // roll back down the box and climb again
       try{ _el.classList.remove("shift"); void _el.offsetWidth; _el.classList.add("shift"); }catch(e){}
       st._nextShift=_now+Math.round((1400+Math.random()*700)/Math.max(0.6,spd*0.7));
+      try{ var _g=$("tourGear"); if(_g) _g.textContent="G"+st._gear; }catch(e){}
     }
+    // tyre smoke only when it is genuinely leaning on it, so it stays an event and not wallpaper
+    try{ _el.classList.toggle("drift", Math.abs(lean)>3.4); }catch(e){}
   }catch(e){} }
   const up=st.marks.find(m=>m.dist>=d-15);
   if(up){ const rem=Math.max(0,up.dist-d); $("tourInstr").textContent=up.text; $("tourDist").textContent=rem>25?("in "+_tourDist(rem)):"now"; }
@@ -3872,7 +3877,21 @@ function arriveOrbit(center){
 }
 function stopTour(){ cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
 
-$("drivePrev")&&($("drivePrev").onclick=()=>{ if(S.route)openDriveTour(); else toast("Building route — try again in a second."); });
+/* The 3D preview was opening on its own. The button sits in the route sheet, which slides up
+   UNDER the finger that just picked a destination — so the release landed on the button and
+   fired a click nobody meant. Two guards: the press must have STARTED on this button, and the
+   sheet must have been on screen long enough for a human to have aimed at it. */
+if($("drivePrev")){
+  var _dpArmed=false;
+  $("drivePrev").addEventListener("pointerdown",function(){ _dpArmed=true; });
+  $("drivePrev").addEventListener("pointercancel",function(){ _dpArmed=false; });
+  $("drivePrev").onclick=function(){
+    var started=_dpArmed; _dpArmed=false;
+    if(!started) return;                                   // click with no matching press = ghost
+    if(Date.now()-(window._cwSheetAt||0) < 700) return;     // sheet still animating in
+    if(S.route) openDriveTour(); else toast("Building route — try again in a second.");
+  };
+}
 $("driveClose")&&($("driveClose").onclick=stopTour);
 $("tourDrive")&&($("tourDrive").onclick=()=>{ stopTour(); startNavigation(); });
 function tourSeek(clientX){
