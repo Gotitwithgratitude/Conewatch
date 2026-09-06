@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v200";
+const APP_VERSION="v204";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -677,6 +677,10 @@ function ensureRouteLayers(){
 let _dr={lat:null,lng:null,brg:0,t:0,raf:null};
 function _drStep(){
   _dr.raf=requestAnimationFrame(_drStep);
+  /* While the 3D preview is up there are TWO live WebGL maps: the preview on screen and the
+     main map still repainting behind it on every GPS tick. On a phone with one GPU that is the
+     whole lag story. The preview covers the screen, so nothing below it needs to draw. */
+  if(S._previewOpen) return;
   if(!S.navigating||!S.pos||!meMarker||!S.mapReady) return;
   const now=performance.now();
   const dt=Math.min(0.5,(now-(_dr.t||now))/1000); _dr.t=now;
@@ -791,7 +795,8 @@ function onPos(p){
     }
   }
   S.dispPos={lat:_dispLat,lng:_dispLng};
-  if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[_dispLng,_dispLat],zoom:16,duration:800}); toast("GPS locked ✓"); }
+  if(meMarker && !meMarker._map){ meMarker.addTo(map); map.easeTo({center:[_dispLng,_dispLat],zoom:16,duration:800}); toast("GPS locked ✓"); try{ setTimeout(maybeWarmArea,2500); }catch(e){} }
+  try{ maybeWarmArea(); }catch(e){}
   if(meMarker && !S.navigating){ meMarker.setLngLat([_dispLng,_dispLat]); if(S.course!==null) meMarker.setRotation(S.course); }
   if(!sunLoaded){ sunLoaded=true; loadSunTimes(); }
 
@@ -1553,6 +1558,41 @@ function corridorTileURLs(coords){
     }
   }
   return out;
+}
+/* Corridor caching only covers where you were GOING. Pan anywhere else offline and you hit
+   black, which is exactly what happens in a parking garage or on a detour. Warm a disc around
+   wherever the driver actually is, so the map near them always renders with no signal. */
+function precacheAround(pos,radiusM){
+  try{
+    if(!pos||!navigator.serviceWorker||!navigator.serviceWorker.controller) return;
+    var R=radiusM||3000, tpl=_baseTileTpl(), seen={}, out=[];
+    // metres per tile at this latitude, per zoom
+    var latRad=pos.lat*Math.PI/180;
+    var plan=[13,14,15,16];
+    for(var p=0;p<plan.length;p++){
+      var z=plan[p];
+      var mPerTile=156543.03392*Math.cos(latRad)/Math.pow(2,z)*256;
+      var span=Math.ceil(R/mPerTile);
+      var t=_tileXY(pos.lat,pos.lng,z);
+      for(var dx=-span;dx<=span;dx++) for(var dy=-span;dy<=span;dy++){
+        var k=z+"/"+(t[0]+dx)+"/"+(t[1]+dy);
+        if(seen[k]) continue; seen[k]=1;
+        out.push(tpl.u.replace("{z}",z).replace("{x}",t[0]+dx).replace("{y}",t[1]+dy));
+      }
+    }
+    navigator.serviceWorker.controller.postMessage({type:"cw-precache-tiles",urls:out});
+  }catch(e){}
+}
+/* Re-warm only when the driver has actually moved somewhere new — otherwise this would refetch
+   the same discs every GPS tick and fight the live map for bandwidth. */
+function maybeWarmArea(){
+  try{
+    if(!S.pos||!navigator.onLine) return;
+    var last=S._warmAt;
+    if(last && distM(last,S.pos)<2000) return;
+    S._warmAt={lat:S.pos.lat,lng:S.pos.lng};
+    precacheAround(S.pos,3000);
+  }catch(e){}
 }
 function precacheCorridor(r){
   try{
@@ -3528,16 +3568,14 @@ let lastSave=0;
 document.addEventListener("click",()=>{const n=Date.now();if(n-lastSave>2000){lastSave=n;setTimeout(saveSettings,80);}},true);
 function seenWelcome(){try{return localStorage.getItem("cw_welcome")==="1";}catch{return true;}}
 /* ═══════════ v30: guided how-to tutorial (coach-marks) ═══════════ */
+/* Was nine coach-marks before a first-time user could touch anything, which is where people
+   quit. Three: the one action that makes the network work, the one that gets them moving, and
+   the one that rescues them when they've panned away. Everything else is discoverable, and the
+   full set is still one tap away in Settings. */
 const TUT=[
-  {sel:"#search",title:"🔎 Search anything",body:"Type an address — or just \u201Cgas\u201D, \u201Cfood\u201D, \u201Cgrocery\u201D, \u201Ccoffee\u201D to find the nearest ones, with a tap to widen the search radius."},
-  {sel:"#modes",title:"🚗 Choose your mode",body:"Drive, bike, walk, or trail. Routes adapt to each — one-ways for cars, footpaths for walking."},
-  {sel:"#fabReport",title:"⚠️ Report a hazard",body:"Drop a cone, pothole, accident, or closure. Nearby drivers get warned — and automatically rerouted around closures."},
-  {sel:"#fabDiscover",title:"🧭 Discover nearby",body:"Browse gas, food, EV charging, parking and more around you, each sorted by distance with colored map labels."},
-  {sel:"#fab911",title:"🆘 Emergency",body:"One tap shows 911 with your exact coordinates ready to read to a dispatcher."},
-  {sel:"#fabSettings",title:"⚙️ Settings & tools",body:"HD satellite, offline map download, turn-cue test, units — and you can replay this tour anytime."},
-  {sel:"#fabLocate",title:"\u25CE Recenter",body:"Panned away? Tap to snap back to your live GPS and resume follow mode."},
-  {title:"🧭 On the road",body:"You get steady 3D guidance, spoken turns, a buzz or tone right before every exit, interstate shields, live speed limits, and automatic rerouting."},
-  {title:"🎬 Preview in 3D",body:"Set a destination, then tap \u201CPreview the drive in 3D\u201D to fly the whole route first, turn by turn — perfect for unfamiliar trips. You're all set!"}
+  {sel:"#fabReport",title:"⚠️ Report a hazard",body:"Cone, pothole, accident, closure — one tap. Every driver behind you gets warned, and closures reroute them automatically. This is the whole point of ConeWatch."},
+  {sel:"#search",title:"🔎 Search anything",body:"An address, or just \u201Cgas\u201D, \u201Cfood\u201D, \u201Ccoffee\u201D to find the nearest ones."},
+  {sel:"#fabLocate",title:"\u25CE Recenter",body:"Panned away? Tap to snap back to your live GPS. You're set — there's a full tour in Settings whenever you want it."}
 ];
 let tutI=0;
 function tutSeen(){ try{return localStorage.getItem("cw_tut")==="1";}catch(e){return true;} }
@@ -3578,7 +3616,17 @@ $("welcomeGo").onclick=async()=>{
   if(!tutSeen()) setTimeout(startTutorial,600);
   else toast("You're set — search a destination or tap ⚠️ to report.");
 };
-$("welcomeSkip").onclick=()=>{try{localStorage.setItem("cw_welcome","1");}catch{};$("welcome").style.display="none";startGPS();};
+/* Skip used to mean "skip everything": no requestMotion() call, so a skipper permanently lost
+   accelerometer road sensing and never found out. Skipping the TOUR is a fair choice; skipping
+   a core sensor without being asked is not. Permission is still requested either way. */
+$("welcomeSkip").onclick=async()=>{
+  try{localStorage.setItem("cw_welcome","1");}catch{}
+  $("welcome").style.display="none";
+  try{ await requestMotion(); }catch(e){}
+  startGPS();
+  if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); }
+  toast("You're set — search a destination or tap ⚠️ to report.",4200);
+};
 
 /* free roam as long as you like + one-tap GPS re-lock */
 function hideRelock(){
@@ -3867,8 +3915,17 @@ function openDriveTour(){
      detail tile is late. So a long route should open WIDER — a fixed z15.6 only ever covered the
      first stretch, which is why the back half of a long drive still went soft. */
   const _openZoom = total>12000 ? 13.2 : total>5000 ? 14.2 : total>1800 ? 15.1 : 15.9;
+  /* On a weak GPU the preview renders every pixel twice at 2x DPR and shades a 76-degree
+     horizon full of satellite tiles. Halving the pixel count and pulling the horizon in costs
+     some polish and buys back most of the frame budget. */
+  const _lite = (typeof liteMode==="function") ? liteMode() : false;
+  const _drivePitch = _lite ? 62 : 76;
+  S._drivePitch = _lite ? 64 : 78;
   const marks=(S.steps||[]).map(st=>{ const loc=st.maneuver&&st.maneuver.location; if(!loc)return null; let bi=0,bd=Infinity; for(let i=0;i<co.length;i++){const d=_hav(co[i],loc);if(d<bd){bd=d;bi=i;}} return {dist:cum[bi],text:stepText(st),loc:loc}; }).filter(m=>m&&m.text);
   $("drivePreview").style.display="block";
+  S._previewOpen=true;
+  try{ setTimeout(function(){ watchFrames(5000); }, 4500); }catch(e){}   // the heaviest screen in the app
+  try{ map.stop(); }catch(e){}                       // kill any in-flight camera easing below
   if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;}
   tourPuck=null; tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[];
   tourMap=new maplibregl.Map({container:"driveMap",
@@ -3882,7 +3939,7 @@ function openDriveTour(){
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
        seat but cuts the horizon draw substantially; the bigger cache stops re-fetching
        ground already flown over, and no fade removes the shimmer that reads as stutter. */
-    center:co[0],zoom:_openZoom,pitch:44,bearing:initBrg,maxPitch:85,attributionControl:true,
+    center:co[0],zoom:_openZoom,pitch:44,bearing:initBrg,maxPitch:85,attributionControl:true,pixelRatio:(_lite?1:undefined),
     interactive:true,maxTileCacheSize:1500,fadeDuration:140,refreshExpiredTiles:false});
   tourMap.on("load",()=>{
     /* No terrain. The terrarium DEM tops out at z12; draping z17 satellite imagery over an
@@ -3925,7 +3982,7 @@ function openDriveTour(){
          18% down the route and then jumped back, which is what threw the scaling off. */
       try{
         var _H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
-        tourMap.easeTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:76,
+        tourMap.easeTo({center:co[0],bearing:initBrg,zoom:17.4,pitch:_drivePitch,
                         padding:{top:Math.round(_H*0.34),bottom:0,left:0,right:0},
                         duration:3200,essential:true,
                         easing:function(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }});
@@ -3987,7 +4044,7 @@ function _tourRender(){
   var _look=9+Math.max(0,Math.min(80,(spd-1)*24));
   var camCtr=_posAt(st.co,st.cum,Math.min(st.total,d+_look));
   var H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
-  tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:78,zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
+  tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:(S._drivePitch||78),zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
   // apply the lean (scale hides rotation corners + adds cockpit-forward feel)
   var mm=$("driveMap"); if(mm) mm.style.transform="scale(1.08) rotate("+lean.toFixed(2)+"deg)";
   // ═══ SPEED WARP intensity: streaks + vignette ramp up with speed and in turns ═══
@@ -4061,7 +4118,7 @@ function arriveOrbit(center){
   const step=()=>{ if(!tourMap||touched||!tourState){return;} tourMap.setBearing(tourMap.getBearing()+0.11); tourMap.setCenter(center); arriveRAF=requestAnimationFrame(step); };
   step();
 }
-function stopTour(){ try{ endBoost(); }catch(e){} cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
+function stopTour(){ S._previewOpen=false; try{ endBoost(); }catch(e){} cancelAnimationFrame(arriveRAF); arriveRAF=null; var _mm=$("driveMap"); if(_mm){_mm.style.transform="scale(1.08) rotate(0deg)"; _mm.style.opacity="1";} cancelAnimationFrame(tourRAF); tourState=null; if(tourPuck){try{tourPuck.remove();}catch(e){}tourPuck=null;} tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[]; if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;} $("drivePreview").style.display="none"; }
 
 /* The 3D preview was opening on its own. The button sits in the route sheet, which slides up
    UNDER the finger that just picked a destination — so the release landed on the button and
@@ -5188,16 +5245,46 @@ function liteMode(){
   try{
     var v=localStorage.getItem("cw_lite");
     if(v==="1") return true;
-    if(v==="0") return false;
+    if(v==="0") return false;                   // explicit opt-out always wins
   }catch(e){}
+  /* Android is lite by DEFAULT, not by spec check. The first version gated this on core count,
+     but plenty of Android phones report 8 cores and 8GB and still choke — the bottleneck is GPU
+     compositing of blurred layers over a repainting map, which Android handles far worse than
+     iOS regardless of how fast the CPU is. A driver should never have to find a switch. */
+  try{ if(/android/i.test(navigator.userAgent)) return true; }catch(e){}
   try{
     var cores=navigator.hardwareConcurrency||8;
-    var mem=navigator.deviceMemory||8;          // Chrome/Android only; undefined on iOS
-    if(cores<=4) return true;
-    if(mem<=4) return true;
+    var mem=navigator.deviceMemory||8;
+    if(cores<=4||mem<=4) return true;
   }catch(e){}
   return false;
 }
+
+/* Spec sniffing only ever approximates the thing we actually care about, which is whether THIS
+   device is dropping frames right now. Watch real frame times and downgrade automatically if
+   they're bad — that catches the phones no user-agent rule would have predicted. Only ever
+   turns lite ON; it never flips back mid-drive, because a display that keeps changing under a
+   driver is worse than one that stays plain. */
+function watchFrames(ms){
+  if(liteMode()) return;                        // already lite, nothing to measure for
+  var frames=[], start=performance.now(), last=start, bad=0;
+  function tick(now){
+    var dt=now-last; last=now;
+    if(dt>0&&dt<500) frames.push(dt);
+    if(now-start < (ms||4000)){ requestAnimationFrame(tick); return; }
+    if(frames.length<20) return;
+    frames.sort(function(a,b){return a-b;});
+    var median=frames[Math.floor(frames.length/2)];
+    if(median>28){                              // slower than ~36fps sustained
+      bad++;
+      try{ localStorage.setItem("cw_lite","1"); }catch(e){}
+      applyLite();
+      try{ console.log("ConeWatch: lite mode on — median frame "+median.toFixed(1)+"ms"); }catch(e){}
+    }
+  }
+  requestAnimationFrame(tick);
+}
+try{ setTimeout(function(){ watchFrames(4000); }, 6000); }catch(e){}
 function applyLite(){
   try{ document.documentElement.setAttribute("data-lite", liteMode()?"1":"0"); }catch(e){}
 }
