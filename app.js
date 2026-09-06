@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v215";
+const APP_VERSION="v216";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1954,9 +1954,12 @@ function renderRouteSheet(r){
   const ol=el("steps"); if(ol) ol.innerHTML="";
   S.steps.forEach((st,i)=>{
     const li=document.createElement("li");
-    li.innerHTML=`<span class="n">${i+1}</span><span>${stepText(st)}</span><span class="d">${fmtDist(st.distance)}</span>`;
+    li.innerHTML=`<span class="n">${i+1}</span><span class="t">${stepText(st)}</span><span class="d">${fmtDist(st.distance)}</span>`;
     if(ol) ol.appendChild(li);
   });
+  const sh=el("stepsHead"), sc=el("stepsCount");
+  if(sh) sh.style.display = S.steps.length ? "flex" : "none";
+  if(sc) sc.textContent = S.steps.length ? (S.steps.length+" steps") : "";
 }
 function curveScore(coords){
   let turns=0;
@@ -4513,6 +4516,36 @@ function renderDockMore(){
   var el=$("dockMore"); if(!el) return;
   var out="";
 
+
+  /* Suggestions first — the section Apple fills with Siri guesses. Ours is grounded in things
+     the app actually knows: an unfinished route, and live hazards on the road around you. */
+  var sug=[];
+  try{
+    if(S.destName && S.route) sug.push({e:"\u21A9",t:"Continue to "+S.destName,
+      s:fmtDist(S.route.distance||0)+" \u00b7 resume", go:function(){ setDock(1); openSheet("routeSheet"); }});
+    var near=(S.hazards||[]).filter(function(h){
+      return S.pos && h && isFinite(h.lat) && distM(S.pos,{lat:h.lat,lng:h.lng})<3200 && notDismissed(h);
+    });
+    if(near.length){
+      var by={};
+      near.forEach(function(h){ by[h.type]=(by[h.type]||0)+1; });
+      var top=Object.keys(by).sort(function(a,b){return by[b]-by[a];})[0];
+      var meta=HZ_META[top]||{emoji:"\u26A0\uFE0F",label:"Hazards"};
+      sug.push({e:meta.emoji,t:near.length+" hazard"+(near.length>1?"s":"")+" within 2 mi",
+        s:"Most common: "+meta.label, go:function(){ setDock(1); }});
+    }
+  }catch(e){}
+  var out2="";
+  if(sug.length){
+    out2+='<div class="dm-h">Suggestions</div><div class="dm-list">';
+    sug.forEach(function(x,i){
+      out2+='<button class="dm-row" data-s="'+i+'"><span class="ri">'+x.e+'</span>'+
+            '<span class="rt"><b>'+x.t+'</b><small>'+x.s+'</small></span></button>';
+    });
+    out2+='</div>';
+  }
+  out+=out2;
+
   var places=[];
   if(QK.home) places.push({k:"home",e:"🏠",n:"Home",c:"linear-gradient(135deg,#4FC3F7,#0288D1)",p:QK.home});
   if(QK.work) places.push({k:"work",e:"💼",n:"Work",c:"linear-gradient(135deg,#5C6BC0,#303F9F)",p:QK.work});
@@ -4542,8 +4575,15 @@ function renderDockMore(){
     out+='<div class="dm-list">';
     rec.forEach(function(r,i){
       var d=(S.pos&&isFinite(r.lat))?fmtDist(distM(S.pos,{lat:r.lat,lng:r.lng}))+" away":"";
-      out+='<button class="dm-row" data-r="'+i+'"><span class="ri">🕘</span>'+
-           '<span class="rt"><b>'+(r.name||"Place")+'</b><small>'+d+'</small></span></button>';
+      var ic="\uD83D\uDD52", nm=(r.name||"Place");
+      if(QK.home&&Math.abs((QK.home.lat||0)-(r.lat||0))<1e-4) ic="\uD83C\uDFE0";
+      else if(QK.work&&Math.abs((QK.work.lat||0)-(r.lat||0))<1e-4) ic="\uD83D\uDCBC";
+      else if(/airport|terminal/i.test(nm)) ic="\u2708\uFE0F";
+      else if(/mall|shop|store|market/i.test(nm)) ic="\uD83D\uDECD\uFE0F";
+      else if(/park|trail|beach/i.test(nm)) ic="\uD83C\uDF33";
+      else if(/stadium|field|arena/i.test(nm)) ic="\uD83C\uDFDF\uFE0F";
+      out+='<button class="dm-row" data-r="'+i+'"><span class="ri">'+ic+'</span>'+
+           '<span class="rt"><b>'+nm+'</b><small>'+d+'</small></span></button>';
     });
     out+='</div>';
   } else {
@@ -4551,6 +4591,9 @@ function renderDockMore(){
   }
 
   el.innerHTML=out;
+  el.querySelectorAll("[data-s]").forEach(function(b){
+    b.onclick=function(){ var x=sug[+b.dataset.s]; if(x&&x.go) x.go(); };
+  });
   /* Home, Work and saved places could be set but never unset — the only way out was clearing
      site data. Long-press removes any of them, same gesture as recents. */
   el.querySelectorAll(".dm-place").forEach(function(b){
