@@ -217,17 +217,24 @@
   #dock #quick{margin-top:10px}
   #dock #modes{margin-top:10px}
   /* collapsed still shows the search bar — the one control that always has to be reachable */
-  #dock.collapsed{transform:translateY(calc(100% - 96px - env(safe-area-inset-bottom)))}
-  #dock{max-height:88vh;display:flex;flex-direction:column}
-  #dockGrip{flex:0 0 auto;padding:6px 0;margin:-6px auto 8px;width:64px;
-    background:none;position:relative;touch-action:none}
+  /* detents are driven from JS via --dockY so the drag and the snap share one mechanism */
+  #dock{transform:translateY(var(--dockY,0px))}
+  /* The sheet moves with TRANSFORM only. Animating max-height re-laid-out and repainted a big
+     scrolling panel on top of a WebGL canvas every frame, which made the drag feel stuck and
+     tore the map. A transform is composited on the GPU and touches neither. */
+  #dock{display:flex;flex-direction:column;will-change:transform;contain:layout paint}
+  /* generous invisible grab area — the visible bar is 40px but the target is the full width */
+  #dockGrip{flex:0 0 auto;padding:12px 0;margin:-10px 0 4px;width:100%;
+    background:none;position:relative;touch-action:none;cursor:grab}
+  #dockGrip:active{cursor:grabbing}
   #dockGrip::after{content:"";display:block;width:40px;height:5px;border-radius:3px;
     background:rgba(255,255,255,.26);margin:0 auto}
-  /* the pull-up drawer */
-  #dockMore{flex:1 1 auto;max-height:0;opacity:0;overflow-y:auto;overscroll-behavior:contain;
-    -webkit-overflow-scrolling:touch;
-    transition:max-height .32s cubic-bezier(.32,.72,0,1),opacity .22s}
-  #dock.expanded #dockMore{max-height:54vh;opacity:1;margin-top:14px}
+  /* the drawer is always laid out; the sheet slides to reveal it */
+  #dockMore{flex:0 0 auto;height:54vh;overflow-y:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;margin-top:14px;
+    opacity:0;transition:opacity .2s;pointer-events:none}
+  #dock.expanded #dockMore{opacity:1;pointer-events:auto}
+  #dock.dragging{transition:none}
   .dm-h{font-family:var(--display);font-size:19px;color:var(--text);margin:2px 2px 10px;
     letter-spacing:-.2px}
   .dm-h:not(:first-child){margin-top:20px}

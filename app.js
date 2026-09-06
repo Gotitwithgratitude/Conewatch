@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v208";
+const APP_VERSION="v209";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4360,54 +4360,64 @@ document.querySelectorAll("#unitChips .chip").forEach(c=>c.classList.toggle("on"
    search + recents + modes, expanded with the full drawer. The grip follows the finger during
    a drag and snaps to the nearest detent on release — a sheet that only toggles on tap feels
    like a menu, and a sheet that follows your thumb feels like an object. */
-function dockState(){
-  var d=$("dock"); if(!d) return 1;
-  if(d.classList.contains("collapsed")) return 0;
-  return d.classList.contains("expanded") ? 2 : 1;
+var DOCK_MIN=96;                      // collapsed: just the search bar
+function dockMetrics(){
+  var d=$("dock"), more=$("dockMore");
+  if(!d) return null;
+  var H=d.offsetHeight, M=more?more.offsetHeight+14:0;
+  return { H:H, M:M, y2:0, y1:M, y0:Math.max(0,H-DOCK_MIN) };   // expanded / mid / collapsed
 }
+function setDockY(px){
+  try{ document.documentElement.style.setProperty("--dockY",px+"px"); }catch(e){}
+}
+function dockState(){ var d=$("dock"); return d? (+d.dataset.detent||1) : 1; }
 function setDock(n,persist){
   var d=$("dock"); if(!d) return;
-  d.classList.toggle("collapsed", n===0);
+  var m=dockMetrics(); if(!m) return;
+  n=Math.max(0,Math.min(2,n));
+  if(n===2){ try{ renderDockMore(); }catch(e){} }
+  d.dataset.detent=n;
   d.classList.toggle("expanded", n===2);
   var dm=$("dockMore"); if(dm) dm.setAttribute("aria-hidden", n===2?"false":"true");
-  if(n===2){ try{ renderDockMore(); }catch(e){} }
-  if(persist!==false){ try{ localStorage.setItem("cw_dock", String(n)); }catch(e){} }
+  setDockY(n===2?m.y2:(n===1?m.y1:m.y0));
+  if(persist!==false){ try{ localStorage.setItem("cw_dock",String(n)); }catch(e){} }
   try{ layout(); setTimeout(layout,340); }catch(e){}
 }
 try{
   var _g=document.getElementById("dockGrip"), _dk=document.getElementById("dock");
   if(_g&&_dk){
-    var _saved=null; try{ _saved=localStorage.getItem("cw_dock"); }catch(e){}
-    if(_saved==="0"||_saved==="2") setDock(parseInt(_saved,10),false);
-
-    var _dragY=0,_dragFrom=1,_dragging=false,_moved=0,_dm=null;
+    requestAnimationFrame(function(){
+      var sv=null; try{ sv=localStorage.getItem("cw_dock"); }catch(e){}
+      setDock(sv==="0"||sv==="2"?parseInt(sv,10):1,false);
+    });
+    var _y0=0,_startY=0,_from=1,_drag=false,_moved=0,_met=null;
     _g.addEventListener("pointerdown",function(e){
-      _dragging=true; _moved=0; _dragY=e.clientY; _dragFrom=dockState();
-      _dm=$("dockMore");
-      if(_dm){ _dm.style.transition="none"; }
+      _met=dockMetrics(); if(!_met) return;
+      _drag=true; _moved=0; _startY=e.clientY; _from=dockState();
+      _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
+      _dk.classList.add("dragging");
       try{ _g.setPointerCapture(e.pointerId); }catch(err){}
     });
     _g.addEventListener("pointermove",function(e){
-      if(!_dragging||!_dm) return;
-      var dy=_dragY-e.clientY; _moved=Math.max(_moved,Math.abs(dy));
-      if(dy<=0){ return; }                                  // downward handled on release
-      // live-follow: the drawer grows exactly as far as the thumb travels
-      var cap=Math.round(window.innerHeight*0.54);
-      var base=(_dragFrom===2)?cap:0;
-      _dm.style.maxHeight=Math.min(cap,Math.max(0,base+dy))+"px";
-      _dm.style.opacity=String(Math.min(1,(base+dy)/120));
+      if(!_drag||!_met) return;
+      var dy=e.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
+      setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));   // transform only — no layout
     });
-    function _endDrag(e){
-      if(!_dragging) return; _dragging=false;
-      var dy=_dragY-((e&&e.clientY)||_dragY);
-      if(_dm){ _dm.style.transition=""; _dm.style.maxHeight=""; _dm.style.opacity=""; }
-      if(_moved<8){ setDock(_dragFrom===2?1:(_dragFrom===0?1:2)); return; }   // a tap, not a drag
-      if(dy>60) setDock(Math.min(2,_dragFrom+1));
-      else if(dy<-60) setDock(Math.max(0,_dragFrom-1));
-      else setDock(_dragFrom);
+    function _end(e){
+      if(!_drag) return; _drag=false; _dk.classList.remove("dragging");
+      if(!_met) return;
+      if(_moved<8){ setDock(_from===2?1:(_from===0?1:2)); return; }
+      var y=_y0+(((e&&e.clientY)||_startY)-_startY);
+      // snap to whichever detent the sheet was actually left nearest to
+      var best=1,bd=Infinity;
+      [[2,_met.y2],[1,_met.y1],[0,_met.y0]].forEach(function(p){
+        var dd=Math.abs(y-p[1]); if(dd<bd){bd=dd;best=p[0];}
+      });
+      setDock(best);
     }
-    _g.addEventListener("pointerup",_endDrag);
-    _g.addEventListener("pointercancel",_endDrag);
+    _g.addEventListener("pointerup",_end);
+    _g.addEventListener("pointercancel",_end);
+    window.addEventListener("resize",function(){ try{ setDock(dockState(),false); }catch(e){} });
   }
 }catch(e){}
 
@@ -4464,7 +4474,11 @@ function renderDockMore(){
 /* Anything that shows or hides a stacked element has to re-measure, or the next element down
    keeps reserving space for something that is no longer on screen. */
 try{
-  var _mo=new MutationObserver(function(){ try{layout();}catch(e){} });
+  var _loPend=false;
+  var _mo=new MutationObserver(function(){
+    if(_loPend) return; _loPend=true;
+    requestAnimationFrame(function(){ _loPend=false; try{layout();}catch(e){} });
+  });
   _mo.observe(document.body,{attributes:true,attributeFilter:["class"]});
 }catch(e){}
 function layout(){
@@ -4474,7 +4488,8 @@ function layout(){
   try{
     var d=$("dock"), hh=0;
     if(d && !document.body.classList.contains("driving")){
-      hh = d.classList.contains("collapsed") ? 96 : d.offsetHeight;
+      var yy=parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockY"))||0;
+      hh=Math.max(DOCK_MIN, d.offsetHeight-yy);
     }
     document.documentElement.style.setProperty("--dockH",hh+"px");
     /* Toasts, the confirm bar and the install banner all used to sit at fixed offsets that
