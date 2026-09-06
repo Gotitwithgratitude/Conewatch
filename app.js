@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v216";
+const APP_VERSION="v217";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4410,12 +4410,23 @@ try{
     /* Apple lets you drag the sheet from any non-interactive part of it, not only the grabber.
        Restricting it to a thin bar is most of why this felt like it was "struggling" — you were
        usually not touching the one element that listened. */
+    /* Every part of the sheet is a drag surface, including the chips and mode buttons. Excluding
+       them left only the thin gaps between controls as draggable, which is why it still felt
+       hesitant — most of the block did nothing. The gesture only COMMITS after 10px of travel,
+       so a tap on a chip is still a tap, and the click is suppressed once a drag has begun. */
     function draggableFrom(t){
       if(!t) return false;
-      if(t.closest("input,button,textarea,select,a,.dm-row,.dm-place,.chip,.mode")) return false;
+      if(t.closest("input,textarea,select")) return false;      // typing wins
       var scroller=t.closest("#dockMore");
-      if(scroller && scroller.scrollTop>0) return false;   // let content scroll first
+      if(scroller && scroller.scrollTop>0) return false;         // let content scroll first
       return true;
+    }
+    var _armed=false;                                            // pressed, not yet a drag
+    function suppressNextClick(){
+      window.addEventListener("click",function h(e){
+        e.stopPropagation(); e.preventDefault();
+        window.removeEventListener("click",h,true);
+      },true);
     }
     var _y0=0,_startY=0,_from=1,_drag=false,_moved=0,_met=null;
     /* On-screen instrumentation. Long-press the version badge to toggle. It reports what the
@@ -4463,28 +4474,34 @@ try{
     function onDown(e){
       if(e.currentTarget!==_g && !draggableFrom(e.target)) return;
       _met=dockMetrics(); if(!_met) return;
-      _drag=true; _moved=0; _startY=e.clientY; _from=dockState();
+      _armed=true; _drag=false; _moved=0; _startY=e.clientY; _from=dockState();
       _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
-      _dk.classList.add("dragging");
-      window.__cwDragging=true;
       try{ (e.currentTarget||_g).setPointerCapture(e.pointerId); }catch(err){}
       dbg("down");
     }
     _g.addEventListener("pointerdown",onDown);
     _dk.addEventListener("pointerdown",onDown);
     function onMove(e){
-      if(!_drag||!_met) return;
+      if((!_armed&&!_drag)||!_met) return;
       var dy=e.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
+      if(!_drag){
+        if(_moved<10) return;                     // still could be a tap — don't hijack it
+        _drag=true; _armed=false;
+        _dk.classList.add("dragging"); window.__cwDragging=true;
+        try{ (e.currentTarget||_g).setPointerCapture(e.pointerId); }catch(err){}
+      }
       setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));   // transform only — no layout
       dbg("move");
     }
     _g.addEventListener("pointermove",onMove);
     _dk.addEventListener("pointermove",onMove);
     function _end(e){
-      if(!_drag) return; _drag=false; window.__cwDragging=false; _dk.classList.remove("dragging");
+      if(!_drag){ _armed=false; return; }         // never moved — let the tap through untouched
+      _drag=false; _armed=false; window.__cwDragging=false; _dk.classList.remove("dragging");
+      suppressNextClick();
       dbg("up");
       if(!_met) return;
-      if(_moved<8){ setDock(_from===2?1:(_from===0?1:2)); return; }
+      if(_moved<8){ setDock(_from===2?1:(_from===0?1:2)); return; }   // grip tap = cycle
       /* Snap by INTENT, not proximity. Nearest-detent looks reasonable until you notice the gap
          between mid and expanded is the full drawer height — 530px on this phone — so anything
          short of a 265px drag fell back to where it started. That is what "resisting" was.
