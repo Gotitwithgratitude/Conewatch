@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v212";
+const APP_VERSION="v213";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -108,7 +108,8 @@ function applySeason(){
   try{
     var sp=$("seasonPill");
     if(sp){
-      sp.style.display = on ? "inline-flex" : "none";
+      sp.classList.toggle("on", !!on);        // .on carries the centred inline-flex geometry
+      sp.style.display = "";                   // let the class own visibility
       sp.textContent = "\uD83C\uDF83";   // pumpkin alone — the pill was crowding the search field
     }
   }catch(e){}
@@ -4404,20 +4405,62 @@ try{
       setDock(sv==="0"||sv==="2"?parseInt(sv,10):1,false);
     });
     var _y0=0,_startY=0,_from=1,_drag=false,_moved=0,_met=null;
+    /* On-screen instrumentation. Long-press the version badge to toggle. It reports what the
+       sheet actually receives, so a screenshot settles what is happening instead of me
+       inferring it from a description. */
+    var _dbg=null;
+    function dbg(tag){
+      if(!window.__cwDockDebug) return;
+      if(!_dbg){
+        _dbg=document.createElement("div"); _dbg.id="dockDbg";
+        _dbg.style.cssText="position:fixed;left:8px;top:52%;z-index:9999;font:11px/1.45 ui-monospace,monospace;"+
+          "background:rgba(0,0,0,.86);color:#5BF0C8;padding:8px 10px;border-radius:8px;"+
+          "pointer-events:none;white-space:pre;max-width:74vw";
+        document.body.appendChild(_dbg);
+      }
+      var y=getComputedStyle(document.documentElement).getPropertyValue("--dockY").trim();
+      _dbg.textContent =
+        "evt   "+tag+"\n"+
+        "drag  "+_drag+"  moved "+Math.round(_moved)+"\n"+
+        "dockY "+y+"\n"+
+        "from  "+_from+"  state "+dockState()+"\n"+
+        (_met? ("y2/y1/y0  "+Math.round(_met.y2)+" / "+Math.round(_met.y1)+" / "+Math.round(_met.y0)+"\n"+
+                "dockH "+Math.round(_met.H)+"  moreH "+Math.round(_met.M)) : "metrics null");
+    }
+    try{
+      var _vb=document.getElementById("verBadge"), _vt=null;
+      if(_vb){
+        _vb.addEventListener("pointerdown",function(){
+          _vt=setTimeout(function(){
+            window.__cwDockDebug=!window.__cwDockDebug;
+            if(!window.__cwDockDebug && _dbg){ _dbg.remove(); _dbg=null; }
+            else dbg("armed");
+            try{ if(navigator.vibrate) navigator.vibrate(20); }catch(e){}
+          },700);
+        });
+        ["pointerup","pointerleave","pointercancel"].forEach(function(ev){
+          _vb.addEventListener(ev,function(){ clearTimeout(_vt); });
+        });
+      }
+    }catch(e){}
     _g.addEventListener("pointerdown",function(e){
       _met=dockMetrics(); if(!_met) return;
       _drag=true; _moved=0; _startY=e.clientY; _from=dockState();
       _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
       _dk.classList.add("dragging");
+      window.__cwDragging=true;
       try{ _g.setPointerCapture(e.pointerId); }catch(err){}
+      dbg("down");
     });
     _g.addEventListener("pointermove",function(e){
       if(!_drag||!_met) return;
       var dy=e.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
       setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));   // transform only — no layout
+      dbg("move");
     });
     function _end(e){
-      if(!_drag) return; _drag=false; _dk.classList.remove("dragging");
+      if(!_drag) return; _drag=false; window.__cwDragging=false; _dk.classList.remove("dragging");
+      dbg("up");
       if(!_met) return;
       if(_moved<8){ setDock(_from===2?1:(_from===0?1:2)); return; }
       var y=_y0+(((e&&e.clientY)||_startY)-_startY);
@@ -4434,7 +4477,10 @@ try{
     _g.addEventListener("pointercancel",function(){
       if(!_drag) return; _drag=false; _dk.classList.remove("dragging"); setDock(_from,false);
     });
-    window.addEventListener("resize",function(){ try{ setDock(dockState(),false); }catch(e){} });
+    window.addEventListener("resize",function(){
+      if(_drag) return;                      // never re-anchor the sheet mid-gesture
+      try{ setDock(dockState(),false); }catch(e){}
+    });
   }
 }catch(e){}
 
@@ -4448,11 +4494,13 @@ function renderDockMore(){
   if(QK.home) places.push({k:"home",e:"🏠",n:"Home",c:"linear-gradient(135deg,#4FC3F7,#0288D1)",p:QK.home});
   if(QK.work) places.push({k:"work",e:"💼",n:"Work",c:"linear-gradient(135deg,#5C6BC0,#303F9F)",p:QK.work});
   if(QK.park) places.push({k:"park",e:"🅿️",n:"My car",c:"linear-gradient(135deg,#66BB6A,#2E7D32)",p:QK.park});
+  // (favorites appended below — every one of these is removable by long-press)
   (QK.favorites||[]).slice(0,6).forEach(function(f){
     places.push({k:"fav",e:"📍",n:f.name||"Saved",c:"linear-gradient(135deg,#FF7A9A,#E5484D)",p:f});
   });
   out+='<div class="dm-h">Places</div>';
   if(places.length){
+    out+='<div class="dm-empty" style="padding:0 2px 8px;font-size:11px">Press and hold to unsave</div>';
     out+='<div class="dm-places">';
     places.forEach(function(p,i){
       var d=(S.pos&&isFinite(p.p.lat))?fmtDist(distM(S.pos,{lat:p.p.lat,lng:p.p.lng})):"";
@@ -4480,9 +4528,30 @@ function renderDockMore(){
   }
 
   el.innerHTML=out;
+  /* Home, Work and saved places could be set but never unset — the only way out was clearing
+     site data. Long-press removes any of them, same gesture as recents. */
   el.querySelectorAll(".dm-place").forEach(function(b){
-    b.onclick=function(){ var p=places[+b.dataset.i]; if(!p)return;
-      setDock(1); confirmDestination({lat:p.p.lat,lng:p.p.lng},p.n); };
+    var held=false,timer=null;
+    function unsave(){
+      var p=places[+b.dataset.i]; if(!p) return;
+      if(p.k==="home") QK.home=null;
+      else if(p.k==="work") QK.work=null;
+      else if(p.k==="park") QK.park=null;
+      else QK.favorites=(QK.favorites||[]).filter(function(f){
+        return !(f.name===p.n && Math.abs((f.lat||0)-(p.p.lat||0))<1e-6); });
+      saveQK(); renderDockMore(); try{ renderQuick(); }catch(e){}
+      toast("Removed "+p.n,2400);
+      try{ if(navigator.vibrate) navigator.vibrate(14); }catch(e){}
+    }
+    b.addEventListener("pointerdown",function(){ held=false; timer=setTimeout(function(){ held=true; unsave(); },550); });
+    ["pointerup","pointerleave","pointercancel"].forEach(function(ev){
+      b.addEventListener(ev,function(){ clearTimeout(timer); }); });
+    b.addEventListener("contextmenu",function(e){ e.preventDefault(); clearTimeout(timer); unsave(); });
+    b.onclick=function(){
+      if(held){ held=false; return; }
+      var p=places[+b.dataset.i]; if(!p)return;
+      setDock(1); confirmDestination({lat:p.p.lat,lng:p.p.lng},p.n);
+    };
   });
   el.querySelectorAll(".dm-row").forEach(function(b){
     var held=false,timer=null;
@@ -4538,7 +4607,7 @@ function layout(){
     document.documentElement.style.setProperty("--clusterH",ch+"px");
   }catch{}
 }
-try{ window.addEventListener("resize",function(){ try{layout();}catch(e){} }); }catch(e){}
+try{ window.addEventListener("resize",function(){ try{ if(!window.__cwDragging) layout(); }catch(e){} }); }catch(e){}
 window.addEventListener("resize",layout); setTimeout(layout,300); setTimeout(layout,1500);
 function closeAllUI(){
   closeSheets();

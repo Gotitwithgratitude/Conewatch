@@ -190,6 +190,16 @@
   /* version, theme and connection travel together as one cluster beside the wordmark, evenly
      spaced, so the eye reads brand -> status -> time straight across */
   #badgeRow{display:flex;align-items:center;gap:9px}
+  /* The season pill lives INSIDE the wordmark, so it is centred on the lettering's optical
+     midline rather than the line box — inline-flex with a fixed square and no padding keeps it
+     a true circle at any font size, and the -1px lift sits it on the cap-height axis. */
+  #brand{display:inline-flex;align-items:center;white-space:nowrap}
+  #seasonPill{display:none;width:20px;height:20px;flex:0 0 20px;border-radius:50%;
+    align-items:center;justify-content:center;margin:0 0 0 9px;padding:0;
+    font-size:12px;line-height:1;position:relative;top:-1px;
+    background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;
+    box-shadow:0 0 9px rgba(255,122,18,.45);border:1px solid rgba(255,255,255,.16)}
+  #seasonPill.on{display:inline-flex}
   #verBadge{flex:0 0 auto}
   /* the clock owns the right edge on its own */
   #clock{justify-self:end;display:flex;align-items:center;line-height:1}
@@ -834,7 +844,7 @@
 <header id="hdr">
   <div id="stripe"></div>
   <div id="brandrow">
-    <div id="brand">Cone<b>Watch</b><span id="seasonPill" style="display:none;align-items:center;gap:4px;display:none;width:19px;height:19px;padding:0;border-radius:50%;background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;font-size:11px;line-height:1;align-items:center;justify-content:center;margin:0 0 0 7px;vertical-align:middle;position:relative;top:-1px;box-shadow:0 0 8px rgba(255,122,18,.5);flex:0 0 auto"></span></div>
+    <div id="brand">Cone<b>Watch</b><span id="seasonPill"></span></div>
     <div id="badgeRow">
       <span id="verBadge">v—</span>
       <span class="cw-pill" id="clockTheme">auto</span>
