@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v197";
+const APP_VERSION="v199";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -947,7 +947,16 @@ function offlineMatches(q){
   try{const c=JSON.parse(localStorage.getItem("cw_geo")||"{}");
     for(const k in c){if(k.includes(ql)){out.push({name:c[k].label.split(",")[0],label:c[k].label,lat:c[k].lat,lng:c[k].lng});}}
   }catch{}
-  try{(QK.recents||[]).forEach(r=>{if(r.name.toLowerCase().includes(ql))out.push({name:r.name,label:"Recent",lat:r.lat,lng:r.lng});});}catch{}
+  try{const qn=_normPlace(q);(QK.recents||[]).forEach(r=>{const rn=_normPlace(r.name);
+    if(rn&&qn&&(rn.includes(qn)||qn.includes(rn)))out.push({name:r.name,label:"Recent",lat:r.lat,lng:r.lng});});}catch{}
+  // Discover results the patch layer already cached are real places with real coordinates —
+  // offline they are just as navigable as a past geocode, and were being ignored.
+  try{const p=JSON.parse(localStorage.getItem("cw_poi")||"{}");
+    for(const pk in p){ const els=(p[pk]&&p[pk].els)||[];
+      for(let i=0;i<els.length;i++){ const e=els[i];
+        if(e&&e.name&&e.name.toLowerCase().includes(ql)&&isFinite(e.lat)&&isFinite(e.lng))
+          out.push({name:e.name,label:"Nearby (saved)",lat:e.lat,lng:e.lng}); } }
+  }catch{}
   if(QK.home&&"home".includes(ql))out.push({name:"Home",label:"Saved",lat:QK.home.lat,lng:QK.home.lng});
   if(QK.work&&"work".includes(ql))out.push({name:"Work",label:"Saved",lat:QK.work.lat,lng:QK.work.lng});
   return out.slice(0,8);
@@ -1612,7 +1621,9 @@ function beelineTo(dest){
     var geo={type:"LineString",coordinates:[[S.pos.lng,S.pos.lat],[dest.lng,dest.lat]]};
     ensureRouteLayers();
     map.getSource("route").setData({type:"Feature",geometry:geo});
-    var d=distM(S.pos,dest), b=_brg(S.pos,dest);
+    // _brg takes [lng,lat] arrays, not {lat,lng} objects — passing objects made b NaN,
+    // which indexed the compass table with NaN and printed "undefined" as the heading
+    var d=distM(S.pos,dest), b=_brg([S.pos.lng,S.pos.lat],[dest.lng,dest.lat]);
     var pts=["N","NE","E","SE","S","SW","W","NW"], dir=pts[Math.round(((b%360)+360)%360/45)%8];
     try{
       var bb=new maplibregl.LngLatBounds(geo.coordinates[0],geo.coordinates[0]);
@@ -4620,7 +4631,11 @@ async function forceGeocode(q){
   }
   if(!navigator.onLine){
     if(cached){ confirmDestination(cached,q); toast("📍 Saved location (offline)",3000); return; }
-    toast("Offline — can only navigate to saved/recent places. Search online first.",4500);
+    var local=lookupAnyLocal(q);
+    if(local){ confirmDestination(local,q); toast("📍 "+local.label+" — from places saved on this phone",3400); return; }
+    /* Nothing on the device has coordinates for this name, and without signal there is no way to
+       find out where it is. Say that plainly rather than implying the driver did something wrong. */
+    toast("Offline — this phone has no location saved for \""+q+"\". Nothing to route to until you have signal.",5000);
     return;
   }
   toast("Locating address…",1600);
@@ -4824,8 +4839,55 @@ function cacheGeocode(typed,res){
     const keys=Object.keys(c); if(keys.length>200)delete c[keys[0]];
     localStorage.setItem("cw_geo",JSON.stringify(c));}catch{}
 }
+/* Strip punctuation, collapse whitespace, drop a trailing city/state tail — "Pasadena
+   Apartments, Detroit, MI" and "pasadena  apartments" both need to land on the same key. */
+function _normPlace(x){
+  return String(x||"").toLowerCase()
+    .replace(/[.,#()\-\/]/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+}
 function lookupCachedGeocode(typed){
-  try{const c=JSON.parse(localStorage.getItem("cw_geo")||"{}");return c[typed.trim().toLowerCase()]||null;}catch{return null;}
+  try{const c=JSON.parse(localStorage.getItem("cw_geo")||"{}");
+    const hit=c[typed.trim().toLowerCase()]; if(hit) return hit;
+  }catch{}
+  return null;
+}
+/* Offline, the exact-key geocode cache is a narrow net — it only matches if you typed the query
+   the same way last time. Widen it to everything on the device that has coordinates: past
+   geocodes by partial name, Discover results cached by the patch layer, recents, home and work.
+   None of this is a network call; it is all already sitting in localStorage. */
+function lookupAnyLocal(typed){
+  /* Matching was one-directional and raw: it only fired when the stored name CONTAINED the
+     query, so a recent saved as "Pasadena Apartments, Detroit" missed when you typed the fuller
+     string, and punctuation or double spaces broke it outright. Normalise both sides, match
+     either direction, and rank exact over prefix over contains before falling back to distance. */
+  var q=_normPlace(typed); if(!q) return null;
+  var best=null;
+  function consider(name,lat,lng,label){
+    if(!isFinite(lat)||!isFinite(lng)) return;
+    var n=_normPlace(name); if(!n) return;
+    var score;
+    if(n===q) score=0;
+    else if(n.indexOf(q)===0||q.indexOf(n)===0) score=1;
+    else if(n.indexOf(q)!==-1||q.indexOf(n)!==-1) score=2;
+    else return;
+    var d=S.pos?distM(S.pos,{lat:lat,lng:lng}):0;
+    if(!best||score<best._s||(score===best._s&&d<best._d))
+      best={lat:lat,lng:lng,label:label||name,_s:score,_d:d};
+  }
+  try{ var c=JSON.parse(localStorage.getItem("cw_geo")||"{}");
+    for(var k in c){ var v=c[k]; consider(k,v.lat,v.lng,v.label); if(v&&v.label) consider(v.label,v.lat,v.lng,v.label); }
+  }catch(e){}
+  try{ var p=JSON.parse(localStorage.getItem("cw_poi")||"{}");
+    for(var pk in p){ var els=(p[pk]&&p[pk].els)||[];
+      for(var i=0;i<els.length;i++) consider(els[i].name,els[i].lat,els[i].lng,els[i].name); }
+  }catch(e){}
+  try{ (QK.recents||[]).forEach(function(r){ consider(r.name,r.lat,r.lng,r.name); }); }catch(e){}
+  try{ (QK.saved||[]).forEach(function(r){ consider(r.name,r.lat,r.lng,r.name); }); }catch(e){}
+  try{ if(QK.home) consider("home",QK.home.lat,QK.home.lng,"Home");
+       if(QK.work) consider("work",QK.work.lat,QK.work.lng,"Work"); }catch(e){}
+  return best;
 }
 function _milesFrom(lat,lng){ if(!S.pos)return ""; try{ var d=distM(S.pos,{lat:lat,lng:lng})/1609.34; return d<0.1?"":("≈ "+(d<10?d.toFixed(1):Math.round(d))+" mi away"); }catch(e){ return ""; } }
 /* Does this candidate contain everything the driver typed? "flower bowl" matches
