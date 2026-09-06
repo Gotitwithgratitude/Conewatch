@@ -267,12 +267,18 @@
      were arriving. A plain transform on a plain element tracks the finger exactly. */
   #dock{display:flex;flex-direction:column;touch-action:none}
   /* generous invisible grab area — the visible bar is 40px but the target is the full width */
-  #dockGrip{flex:0 0 auto;padding:18px 0 14px;margin:-12px 0 2px;width:100%;
+  /* The grabber was white at 26% opacity — invisible on a white sheet in light mode, so there
+     was no visible cue where the sheet could be grabbed. Apple's own values: a neutral grey
+     that reads on both themes, 36x5 with a 2.5px radius. */
+  #dockGrip{flex:0 0 auto;padding:16px 0 12px;margin:-10px 0 2px;width:100%;
     background:none;position:relative;touch-action:none;cursor:grab;
     -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   #dockGrip:active{cursor:grabbing}
-  #dockGrip::after{content:"";display:block;width:40px;height:5px;border-radius:3px;
-    background:rgba(255,255,255,.26);margin:0 auto}
+  #dockGrip::after{content:"";display:block;width:36px;height:5px;border-radius:2.5px;
+    background:rgba(235,235,245,.32);margin:0 auto;transition:background .15s,width .15s}
+  [data-theme="light"] #dockGrip::after{background:rgba(60,60,67,.30)}
+  #dock.dragging #dockGrip::after{width:52px;background:rgba(235,235,245,.55)}
+  [data-theme="light"] #dock.dragging #dockGrip::after{background:rgba(60,60,67,.55)}
   /* the drawer is always laid out; the sheet slides to reveal it */
   #dockMore{flex:0 0 auto;height:54vh;overflow-y:auto;overscroll-behavior:contain;
     -webkit-overflow-scrolling:touch;margin-top:14px;

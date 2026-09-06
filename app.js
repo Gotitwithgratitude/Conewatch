@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v214";
+const APP_VERSION="v215";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4404,6 +4404,16 @@ try{
       var sv=null; try{ sv=localStorage.getItem("cw_dock"); }catch(e){}
       setDock(sv==="0"||sv==="2"?parseInt(sv,10):1,false);
     });
+    /* Apple lets you drag the sheet from any non-interactive part of it, not only the grabber.
+       Restricting it to a thin bar is most of why this felt like it was "struggling" — you were
+       usually not touching the one element that listened. */
+    function draggableFrom(t){
+      if(!t) return false;
+      if(t.closest("input,button,textarea,select,a,.dm-row,.dm-place,.chip,.mode")) return false;
+      var scroller=t.closest("#dockMore");
+      if(scroller && scroller.scrollTop>0) return false;   // let content scroll first
+      return true;
+    }
     var _y0=0,_startY=0,_from=1,_drag=false,_moved=0,_met=null;
     /* On-screen instrumentation. Long-press the version badge to toggle. It reports what the
        sheet actually receives, so a screenshot settles what is happening instead of me
@@ -4447,21 +4457,26 @@ try{
         });
       }
     }catch(e){}
-    _g.addEventListener("pointerdown",function(e){
+    function onDown(e){
+      if(e.currentTarget!==_g && !draggableFrom(e.target)) return;
       _met=dockMetrics(); if(!_met) return;
       _drag=true; _moved=0; _startY=e.clientY; _from=dockState();
       _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
       _dk.classList.add("dragging");
       window.__cwDragging=true;
-      try{ _g.setPointerCapture(e.pointerId); }catch(err){}
+      try{ (e.currentTarget||_g).setPointerCapture(e.pointerId); }catch(err){}
       dbg("down");
-    });
-    _g.addEventListener("pointermove",function(e){
+    }
+    _g.addEventListener("pointerdown",onDown);
+    _dk.addEventListener("pointerdown",onDown);
+    function onMove(e){
       if(!_drag||!_met) return;
       var dy=e.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
       setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));   // transform only — no layout
       dbg("move");
-    });
+    }
+    _g.addEventListener("pointermove",onMove);
+    _dk.addEventListener("pointermove",onMove);
     function _end(e){
       if(!_drag) return; _drag=false; window.__cwDragging=false; _dk.classList.remove("dragging");
       dbg("up");
@@ -4479,6 +4494,7 @@ try{
       else setDock(_from);
     }
     _g.addEventListener("pointerup",_end);
+    _dk.addEventListener("pointerup",_end);
     /* A cancel is not a tap. Ending without the tap branch stops a cancelled gesture from
        toggling the sheet under the user. */
     _g.addEventListener("pointercancel",function(){
