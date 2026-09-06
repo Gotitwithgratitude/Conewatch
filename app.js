@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v199";
+const APP_VERSION="v200";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -5179,8 +5179,32 @@ async function readRoadSign(){
 /* ═══════════ PWA service worker ═══════════ */
 /* ═══════════ v34: Add-to-Home-Screen install prompt ═══════════ */
 let deferredInstall=null;
+/* Lite mode. An Android tester reported heavy lag, and the likeliest cause is compositing
+   cost rather than JS: this stylesheet carries 39 backdrop-filters, and a blurred panel sitting
+   over a map that repaints every frame forces the blur to be recomputed every frame too.
+   Rather than guess at one device, key off what the browser will actually tell us about the
+   hardware, and let it be overridden either way. */
+function liteMode(){
+  try{
+    var v=localStorage.getItem("cw_lite");
+    if(v==="1") return true;
+    if(v==="0") return false;
+  }catch(e){}
+  try{
+    var cores=navigator.hardwareConcurrency||8;
+    var mem=navigator.deviceMemory||8;          // Chrome/Android only; undefined on iOS
+    if(cores<=4) return true;
+    if(mem<=4) return true;
+  }catch(e){}
+  return false;
+}
+function applyLite(){
+  try{ document.documentElement.setAttribute("data-lite", liteMode()?"1":"0"); }catch(e){}
+}
+try{ applyLite(); }catch(e){}
 function isStandalone(){ return (window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true; }
 function isIOSdev(){ return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+function isAndroidDev(){ return /android/i.test(navigator.userAgent); }
 function installDismissed(){ try{return localStorage.getItem("cw_install")==="1";}catch(e){return false;} }
 function _installClear(){
   if(S.navigating) return false;
@@ -5195,8 +5219,16 @@ function showInstallBanner(force){
   if(!force && !_installClear())return;
   const b=$("installBanner"); if(!b)return;
   if(isIOSdev()){ $("installGo").style.display="none"; $("iosSteps").style.display="block"; $("installMsg").textContent="Opens like a real app — no browser bar, one tap to launch."; }
-  else if(deferredInstall){ $("installGo").style.display=""; $("iosSteps").style.display="none"; }
+  else if(deferredInstall){ $("installGo").style.display=""; $("iosSteps").style.display="none"; var _a0=$("androidSteps"); if(_a0)_a0.style.display="none"; }
   else if(!force){ return; }
+  else if(isAndroidDev()){
+    /* beforeinstallprompt is unreliable — it fires once per load, only when Chrome decides the
+       install criteria are met, and never at all in Firefox or Samsung Internet. Android users
+       were being handed a vague "check your browser menu" and nothing else. */
+    $("installGo").style.display="none"; $("iosSteps").style.display="none";
+    var _as=$("androidSteps"); if(_as) _as.style.display="block";
+    $("installMsg").textContent="Opens like a real app — no browser bar, one tap to launch.";
+  }
   else { $("installGo").style.display="none"; $("iosSteps").style.display="none"; $("installMsg").textContent="In your browser menu, choose \u201CInstall app\u201D or \u201CAdd to Home Screen.\u201D"; }
   b.style.display="block";
 }

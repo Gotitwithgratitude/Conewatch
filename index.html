@@ -584,6 +584,28 @@
     background:linear-gradient(to top,rgba(255,241,204,.42),rgba(255,238,196,.12) 46%,rgba(255,236,190,0) 100%);
     filter:blur(2px)}
   .tour-car.night .tc-beam{opacity:1}
+  /* ═══════════ LITE MODE ═══════════
+     39 backdrop-filters over a continuously repainting map is the single most expensive thing
+     in this stylesheet, and Android GPUs handle it far worse than iOS does — every blurred
+     panel forces the region beneath it to re-composite on every map frame. Lite mode trades the
+     frosted glass for flat translucent panels, flattens shadows, and stops ambient animation.
+     Auto-enabled on low-core / low-memory devices; toggleable by hand. */
+  html[data-lite="1"] *{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+  html[data-lite="1"] .sheet,
+  html[data-lite="1"] .panel,
+  html[data-lite="1"] #navbanner,
+  html[data-lite="1"] #topbar{ background:rgba(18,21,26,.94) !important; }
+  html[data-lite="1"] *{ text-shadow:none !important; }
+  html[data-lite="1"] .btn,
+  html[data-lite="1"] .row-btn,
+  html[data-lite="1"] .chip{ box-shadow:none !important; }
+  /* ambient loops only — user-triggered feedback animations are left alone */
+  html[data-lite="1"] #tourWarp .warp-rings,
+  html[data-lite="1"] #tourWarp .warp-streak,
+  html[data-lite="1"] .tour-car.drift .tc-smoke{ animation:none !important; }
+  html[data-lite="1"] #tourFX{ display:none !important; }
+  html[data-lite="1"] .tour-car{ filter:none !important; }
+  html[data-lite="1"] .hz-pulse{ animation:none !important; }
   /* ── NITROUS ──────────────────────────────────────────────────────────────
      Same flame elements, recoloured to a cold blue-violet burn and driven much harder.
      Burning nitrous really does run the exhaust blue, so the colour is doing double duty. */
@@ -993,6 +1015,9 @@
   </div>
   <div id="iosSteps" style="display:none;margin-top:10px;font-size:13px;color:var(--text);line-height:1.6">
     Tap the <b>Share</b> icon <span style="font-size:15px">&#x2191;⎔</span> at the bottom of Safari, then choose <b>“Add to Home Screen.”</b>
+  </div>
+  <div id="androidSteps" style="display:none;margin-top:10px;font-size:13px;color:var(--text);line-height:1.6">
+    Tap the <b>&#8942;</b> menu at the top right of Chrome, then choose <b>“Add to Home screen”</b> or <b>“Install app.”</b>
   </div>
 </div>
 
