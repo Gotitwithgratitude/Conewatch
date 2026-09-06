@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v211";
+const APP_VERSION="v212";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4429,28 +4429,11 @@ try{
       setDock(best);
     }
     _g.addEventListener("pointerup",_end);
-    _g.addEventListener("pointercancel",_end);
-    /* iOS Safari does not always deliver pointer events to an element it has decided is part of
-       a scroll gesture, which is why the grip felt dead. Touch events are delivered regardless,
-       so mirror the whole interaction onto them and preventDefault to stop the page rubber-banding. */
-    function _t(e){ return (e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0]); }
-    _g.addEventListener("touchstart",function(e){
-      var t=_t(e); if(!t) return;
-      _met=dockMetrics(); if(!_met) return;
-      _drag=true; _moved=0; _startY=t.clientY; _from=dockState();
-      _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
-      _dk.classList.add("dragging");
-      e.preventDefault();
-    },{passive:false});
-    _g.addEventListener("touchmove",function(e){
-      if(!_drag||!_met) return;
-      var t=_t(e); if(!t) return;
-      var dy=t.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
-      setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));
-      e.preventDefault();
-    },{passive:false});
-    _g.addEventListener("touchend",function(e){ _end({clientY:(_t(e)||{}).clientY}); },{passive:true});
-    _g.addEventListener("touchcancel",function(){ _end(null); },{passive:true});
+    /* A cancel is not a tap. Ending without the tap branch stops a cancelled gesture from
+       toggling the sheet under the user. */
+    _g.addEventListener("pointercancel",function(){
+      if(!_drag) return; _drag=false; _dk.classList.remove("dragging"); setDock(_from,false);
+    });
     window.addEventListener("resize",function(){ try{ setDock(dockState(),false); }catch(e){} });
   }
 }catch(e){}
