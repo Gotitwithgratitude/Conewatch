@@ -10,7 +10,7 @@
    • skipWaiting + clients.claim so a new version takes over promptly.
 */
 const CACHE = "conewatch-cache-v2";
-const TILES = "conewatch-tiles-v1";
+const TILES = "conewatch-tiles-v2";   // v1 purged: it held unverifiable opaque responses
 const TILE_CAP = 1400;                 // ~50-90MB of 256px tiles; trimmed oldest-first
 const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/apple-touch-icon.png","/icon-512.png"];
 
@@ -62,8 +62,13 @@ async function precacheTiles(urls){
       const u = urls[i++];
       try{
         if (await c.match(u)) { ok++; continue; }          // already have it
-        const res = await fetch(u, { mode: "no-cors" });   // opaque is fine, we only replay it
-        if (res) { await c.put(u, res.clone()); ok++; }
+        /* CORS, not no-cors. An opaque response hides its status code, so a 404 page, a
+           rate-limit body and a real tile are indistinguishable — and caching one poisons that
+           tile forever, which is what was painting garbled fragments over the map. */
+        const res = await fetch(u, { mode: "cors", credentials: "omit" });
+        if (res && res.ok && (res.headers.get("content-type") || "").indexOf("image") === 0) {
+          await c.put(u, res.clone()); ok++;
+        }
       }catch(err){}
     }
   }
@@ -100,8 +105,8 @@ self.addEventListener("fetch", (e) => {
       if (hit) return hit;
       try{
         const res = await fetch(req);
-        // don't cache error responses; opaque (status 0) is expected for no-cors tiles and is fine
-        if (res && (res.status === 200 || res.type === "opaque")) c.put(req, res.clone());
+        // only ever store a response we could actually verify
+        if (res && res.ok && res.type !== "opaque") c.put(req, res.clone());
         return res;
       }catch(err){
         return hit || Response.error();

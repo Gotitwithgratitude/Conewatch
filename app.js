@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v210";
+const APP_VERSION="v211";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -202,8 +202,11 @@ function isDayNow(){
 }
 function applyTheme(force){
   const next=isDayNow()?"light":"dark";
-  $("clockTime").textContent=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
-  $("clockTheme").textContent=S.themeMode.toUpperCase()+(S.themeMode==="auto"?(next==="light"?" ☀":" ☾"):"");
+  paintClock();
+  var _tt=$("clockTheme");
+  if(_tt){ _tt.textContent=S.themeMode+(S.themeMode==="auto"?(next==="light"?" \u2600":" \u263e"):"");
+           _tt.className="cw-pill"+(S.themeMode==="auto"?"":" on"); }
+
   if(S.mapReady && mapStyleTheme!==next) swapMapStyle(next); // heal UI/map mismatch anytime
   if(next===S.themeNow && !force) return;
   S.themeNow=next;
@@ -3334,9 +3337,19 @@ try{
     upd();b.addEventListener("levelchange",upd);b.addEventListener("chargingchange",upd);
   });
 }catch{}
+/* The clock is a display element now, not a text node: hours and minutes are separate spans so
+   the colon can pulse on the second, and tabular figures keep the width fixed as digits change. */
+function paintClock(){
+  var el=$("clockTime"); if(!el) return;
+  var d=new Date(), h=d.getHours(), m=d.getMinutes();
+  var mer=h>=12?"PM":"AM"; var hh=h%12; if(hh===0) hh=12;
+  el.innerHTML=(hh<10?"0":"")+hh+'<span class="cln">:</span>'+(m<10?"0":"")+m+
+               '<span class="mer">'+mer+'</span>';
+}
 function updateNet(){const el=$("netDot");if(!el)return;
-  if(navigator.onLine){el.textContent="● live";el.style.color="#46C08A";}
-  else{el.textContent="● offline";el.style.color="#E5A020";}}
+  el.innerHTML='<span class="dot"></span>'+(navigator.onLine?"live":"offline");
+  el.className="cw-pill "+(navigator.onLine?"livep":"offp");
+  el.style.color="";}
 updateNet();
 window.addEventListener("offline",()=>{updateNet();toast("📡 Offline — cached maps active. Your route keeps going.",3000);});
 window.addEventListener("online",()=>{
@@ -3513,7 +3526,7 @@ $("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 $("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
 $("shareApp")&&($("shareApp").onclick=function(){ shareApp(); });
-try{ var _ct=$("clockTheme"); if(_ct){ _ct.style.cursor="pointer"; _ct.style.textDecoration="underline";
+try{ var _ct=$("clockTheme"); if(_ct){ _ct.style.cursor="pointer";
   _ct.style.textDecorationStyle="dotted"; _ct.style.textUnderlineOffset="3px";
   _ct.title="Tap to switch theme";
   _ct.onclick=function(ev){ ev.stopPropagation(); cycleThemeLabel(); }; } }catch(e){}
@@ -3544,7 +3557,7 @@ $("viewTrips").onclick=()=>{
   alert("Recent trips:\n\n"+lines);
 };
 
-setInterval(()=>{$("clockTime").textContent=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});},10000);
+setInterval(paintClock,10000); paintClock();
 
 
 /* ═══════════ v3: persistence · welcome · relock · tap-inspect · satellite 360 · speed limits ═══════════ */
