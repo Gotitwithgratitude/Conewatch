@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v207";
+const APP_VERSION="v208";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4355,20 +4355,112 @@ document.querySelectorAll("#unitChips .chip").forEach(c=>c.classList.toggle("on"
 
 
 /* ═══════════ v5: back-gesture panel closing + dynamic header layout ═══════════ */
-/* Tap the grip to drop the dock to just the search bar, drag-free. Collapsed state persists,
-   because someone who wants the map uncluttered wants it that way next time too. */
+/* ═══════════ the dock sheet ═══════════
+   Three detents, the way Apple Maps and Waze do it: collapsed to just the search bar, mid with
+   search + recents + modes, expanded with the full drawer. The grip follows the finger during
+   a drag and snaps to the nearest detent on release — a sheet that only toggles on tap feels
+   like a menu, and a sheet that follows your thumb feels like an object. */
+function dockState(){
+  var d=$("dock"); if(!d) return 1;
+  if(d.classList.contains("collapsed")) return 0;
+  return d.classList.contains("expanded") ? 2 : 1;
+}
+function setDock(n,persist){
+  var d=$("dock"); if(!d) return;
+  d.classList.toggle("collapsed", n===0);
+  d.classList.toggle("expanded", n===2);
+  var dm=$("dockMore"); if(dm) dm.setAttribute("aria-hidden", n===2?"false":"true");
+  if(n===2){ try{ renderDockMore(); }catch(e){} }
+  if(persist!==false){ try{ localStorage.setItem("cw_dock", String(n)); }catch(e){} }
+  try{ layout(); setTimeout(layout,340); }catch(e){}
+}
 try{
   var _g=document.getElementById("dockGrip"), _dk=document.getElementById("dock");
   if(_g&&_dk){
-    if(localStorage.getItem("cw_dock")==="0") _dk.classList.add("collapsed");
-    _g.addEventListener("click",function(){
-      var c=_dk.classList.toggle("collapsed");
-      try{ localStorage.setItem("cw_dock", c?"0":"1"); }catch(e){}
-      // measure after the transition, or the rail snaps to the pre-collapse height
-      try{ layout(); setTimeout(layout,300); }catch(e){}
+    var _saved=null; try{ _saved=localStorage.getItem("cw_dock"); }catch(e){}
+    if(_saved==="0"||_saved==="2") setDock(parseInt(_saved,10),false);
+
+    var _dragY=0,_dragFrom=1,_dragging=false,_moved=0,_dm=null;
+    _g.addEventListener("pointerdown",function(e){
+      _dragging=true; _moved=0; _dragY=e.clientY; _dragFrom=dockState();
+      _dm=$("dockMore");
+      if(_dm){ _dm.style.transition="none"; }
+      try{ _g.setPointerCapture(e.pointerId); }catch(err){}
     });
+    _g.addEventListener("pointermove",function(e){
+      if(!_dragging||!_dm) return;
+      var dy=_dragY-e.clientY; _moved=Math.max(_moved,Math.abs(dy));
+      if(dy<=0){ return; }                                  // downward handled on release
+      // live-follow: the drawer grows exactly as far as the thumb travels
+      var cap=Math.round(window.innerHeight*0.54);
+      var base=(_dragFrom===2)?cap:0;
+      _dm.style.maxHeight=Math.min(cap,Math.max(0,base+dy))+"px";
+      _dm.style.opacity=String(Math.min(1,(base+dy)/120));
+    });
+    function _endDrag(e){
+      if(!_dragging) return; _dragging=false;
+      var dy=_dragY-((e&&e.clientY)||_dragY);
+      if(_dm){ _dm.style.transition=""; _dm.style.maxHeight=""; _dm.style.opacity=""; }
+      if(_moved<8){ setDock(_dragFrom===2?1:(_dragFrom===0?1:2)); return; }   // a tap, not a drag
+      if(dy>60) setDock(Math.min(2,_dragFrom+1));
+      else if(dy<-60) setDock(Math.max(0,_dragFrom-1));
+      else setDock(_dragFrom);
+    }
+    _g.addEventListener("pointerup",_endDrag);
+    _g.addEventListener("pointercancel",_endDrag);
   }
 }catch(e){}
+
+/* Contents of the drawer. Everything here is already on the device — saved places, recents,
+   the parked car — it just had nowhere to live except a cramped chip row. */
+function renderDockMore(){
+  var el=$("dockMore"); if(!el) return;
+  var out="";
+
+  var places=[];
+  if(QK.home) places.push({k:"home",e:"🏠",n:"Home",c:"linear-gradient(135deg,#4FC3F7,#0288D1)",p:QK.home});
+  if(QK.work) places.push({k:"work",e:"💼",n:"Work",c:"linear-gradient(135deg,#5C6BC0,#303F9F)",p:QK.work});
+  if(QK.park) places.push({k:"park",e:"🅿️",n:"My car",c:"linear-gradient(135deg,#66BB6A,#2E7D32)",p:QK.park});
+  (QK.favorites||[]).slice(0,6).forEach(function(f){
+    places.push({k:"fav",e:"📍",n:f.name||"Saved",c:"linear-gradient(135deg,#FF7A9A,#E5484D)",p:f});
+  });
+  out+='<div class="dm-h">Places</div>';
+  if(places.length){
+    out+='<div class="dm-places">';
+    places.forEach(function(p,i){
+      var d=(S.pos&&isFinite(p.p.lat))?fmtDist(distM(S.pos,{lat:p.p.lat,lng:p.p.lng})):"";
+      out+='<button class="dm-place" data-i="'+i+'"><span class="pc" style="background:'+p.c+'">'+p.e+'</span>'+
+           '<span class="pn">'+p.n+'</span><span class="pd">'+d+'</span></button>';
+    });
+    out+='</div>';
+  } else {
+    out+='<div class="dm-empty">No saved places yet — search somewhere, then save it.</div>';
+  }
+
+  var rec=(QK.recents||[]).slice(0,8);
+  out+='<div class="dm-h">Recents</div>';
+  if(rec.length){
+    out+='<div class="dm-list">';
+    rec.forEach(function(r,i){
+      var d=(S.pos&&isFinite(r.lat))?fmtDist(distM(S.pos,{lat:r.lat,lng:r.lng}))+" away":"";
+      out+='<button class="dm-row" data-r="'+i+'"><span class="ri">🕘</span>'+
+           '<span class="rt"><b>'+(r.name||"Place")+'</b><small>'+d+'</small></span></button>';
+    });
+    out+='</div>';
+  } else {
+    out+='<div class="dm-empty">Places you navigate to will show up here.</div>';
+  }
+
+  el.innerHTML=out;
+  el.querySelectorAll(".dm-place").forEach(function(b){
+    b.onclick=function(){ var p=places[+b.dataset.i]; if(!p)return;
+      setDock(1); confirmDestination({lat:p.p.lat,lng:p.p.lng},p.n); };
+  });
+  el.querySelectorAll(".dm-row").forEach(function(b){
+    b.onclick=function(){ var r=rec[+b.dataset.r]; if(!r)return;
+      setDock(1); confirmDestination({lat:r.lat,lng:r.lng},r.name); };
+  });
+}
 /* Anything that shows or hides a stacked element has to re-measure, or the next element down
    keeps reserving space for something that is no longer on screen. */
 try{

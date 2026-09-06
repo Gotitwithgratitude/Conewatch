@@ -218,6 +218,43 @@
   #dock #modes{margin-top:10px}
   /* collapsed still shows the search bar — the one control that always has to be reachable */
   #dock.collapsed{transform:translateY(calc(100% - 96px - env(safe-area-inset-bottom)))}
+  #dock{max-height:88vh;display:flex;flex-direction:column}
+  #dockGrip{flex:0 0 auto;padding:6px 0;margin:-6px auto 8px;width:64px;
+    background:none;position:relative;touch-action:none}
+  #dockGrip::after{content:"";display:block;width:40px;height:5px;border-radius:3px;
+    background:rgba(255,255,255,.26);margin:0 auto}
+  /* the pull-up drawer */
+  #dockMore{flex:1 1 auto;max-height:0;opacity:0;overflow-y:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+    transition:max-height .32s cubic-bezier(.32,.72,0,1),opacity .22s}
+  #dock.expanded #dockMore{max-height:54vh;opacity:1;margin-top:14px}
+  .dm-h{font-family:var(--display);font-size:19px;color:var(--text);margin:2px 2px 10px;
+    letter-spacing:-.2px}
+  .dm-h:not(:first-child){margin-top:20px}
+  /* Places — circular tiles, the shape Apple uses because a circle reads as a destination
+     rather than a button, and the label sits outside so the tile stays clean */
+  .dm-places{display:flex;gap:16px;overflow-x:auto;padding:2px 2px 4px;scrollbar-width:none}
+  .dm-places::-webkit-scrollbar{display:none}
+  .dm-place{flex:0 0 auto;width:74px;text-align:center;cursor:pointer;background:none;border:none;padding:0}
+  .dm-place .pc{width:62px;height:62px;border-radius:50%;margin:0 auto 7px;display:flex;
+    align-items:center;justify-content:center;font-size:26px;
+    box-shadow:0 4px 14px rgba(0,0,0,.4)}
+  .dm-place .pn{display:block;font-size:12px;color:var(--text);font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dm-place .pd{display:block;font-size:11px;color:var(--mute);margin-top:1px}
+  /* Recents — one grouped card, hairline dividers, exactly like a settings list */
+  .dm-list{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden}
+  .dm-row{display:flex;align-items:center;gap:13px;padding:13px 14px;cursor:pointer;background:none;
+    border:none;width:100%;text-align:left}
+  .dm-row+.dm-row{border-top:1px solid var(--line)}
+  .dm-row:active{background:rgba(255,255,255,.05)}
+  .dm-row .ri{width:36px;height:36px;border-radius:50%;flex:0 0 auto;display:flex;
+    align-items:center;justify-content:center;font-size:17px;background:var(--btn-face)}
+  .dm-row .rt{flex:1;min-width:0}
+  .dm-row .rt b{display:block;font-size:15px;color:var(--text);font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dm-row .rt small{display:block;font-size:12px;color:var(--mute);margin-top:2px}
+  .dm-empty{color:var(--mute);font-size:13px;padding:14px 2px}
   body.driving #dock{transform:translateY(110%);pointer-events:none}
   #results{position:absolute;top:auto;bottom:calc(100% + 8px);left:0;right:0;background:var(--panel-solid);border:1px solid var(--line);border-radius:14px;display:none;max-height:44vh;overflow-y:auto;z-index:1002;box-shadow:0 14px 40px rgba(0,0,0,.5)}
   .result{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--line);cursor:pointer}
@@ -755,6 +792,7 @@
     <button class="mode" data-mode="foot" aria-label="Walk">🚶</button>
     <button class="mode" data-mode="hike" aria-label="Mountain / trail">⛰️</button>
   </div>
+  <div id="dockMore" aria-hidden="true"></div>
 </div>
 
 <div id="navbanner" role="status">
