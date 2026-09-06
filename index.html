@@ -527,6 +527,13 @@
 
   .sheet{position:fixed;left:0;right:0;bottom:0;z-index:1001;background:var(--panel-solid);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:12px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .3s cubic-bezier(.32,.72,0,1);max-height:80vh;overflow-y:auto;box-shadow:0 -1px 0 rgba(255,255,255,.08) inset,0 -20px 50px rgba(0,0,0,.5)}
   .sheet.open{transform:translateY(0)}
+  /* The route sheet was still painting dark in light mode, which is why the "Every turn" header
+     vanished — dark text on a dark panel. Pin the surface per theme rather than trusting a
+     variable that something else is shadowing. */
+  [data-theme="light"] .sheet{background:#FFFFFF;color:#11151c;
+    box-shadow:0 -1px 0 rgba(0,0,0,.06) inset,0 -18px 44px rgba(20,26,36,.22)}
+  [data-theme="light"] #stepsHead b{color:#11151c}
+  [data-theme="light"] #stepsHead small{color:#5a6472}
   @media (prefers-reduced-motion:reduce){.sheet{transition:none}}
   .sheet h3{font-family:var(--display);letter-spacing:1px;text-transform:uppercase;font-size:15px;margin:0 0 4px}
   .sub{font-size:12px;color:var(--mute);margin:0 0 12px;line-height:1.5}
@@ -560,7 +567,8 @@
   #steps li{display:flex;align-items:center;gap:12px;font-size:14px;padding:12px 14px;
     background:var(--panel)}
   #steps li+li{border-top:1px solid var(--line)}
-  #steps li:nth-child(odd){background:rgba(127,127,127,.04)}
+  #steps li:nth-child(odd){background:rgba(127,127,127,.045)}
+  [data-theme="light"] #steps li:nth-child(odd){background:rgba(18,24,34,.025)}
   #steps .n{color:var(--nav-accent);font-family:var(--tech);font-size:12px;font-weight:700;
     min-width:22px;height:22px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;background:rgba(127,127,127,.14);flex:0 0 22px}

@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v217";
+const APP_VERSION="v218";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4414,9 +4414,12 @@ try{
        them left only the thin gaps between controls as draggable, which is why it still felt
        hesitant — most of the block did nothing. The gesture only COMMITS after 10px of travel,
        so a tap on a chip is still a tap, and the click is suppressed once a drag has begun. */
+    /* Even the search field drags the sheet. Excluding inputs meant a swipe that started on
+       "Where to?" — the single largest target on the sheet, and the obvious place to grab —
+       did nothing, or worse let iOS drag the caret instead. A tap under 10px still focuses it
+       normally; past 10px the field blurs and the sheet takes the gesture. */
     function draggableFrom(t){
       if(!t) return false;
-      if(t.closest("input,textarea,select")) return false;      // typing wins
       var scroller=t.closest("#dockMore");
       if(scroller && scroller.scrollTop>0) return false;         // let content scroll first
       return true;
@@ -4487,6 +4490,9 @@ try{
       if(!_drag){
         if(_moved<10) return;                     // still could be a tap — don't hijack it
         _drag=true; _armed=false;
+        // the gesture won: give up any caret the field may have taken
+        try{ var af=document.activeElement;
+          if(af&&af.tagName==="INPUT"&&_dk.contains(af)) af.blur(); }catch(err){}
         _dk.classList.add("dragging"); window.__cwDragging=true;
         try{ (e.currentTarget||_g).setPointerCapture(e.pointerId); }catch(err){}
       }
