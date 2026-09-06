@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v213";
+const APP_VERSION="v214";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4430,6 +4430,10 @@ try{
     try{
       var _vb=document.getElementById("verBadge"), _vt=null;
       if(_vb){
+        // a long press on text summons Copy / Look Up / Translate; suppress it on the badge
+        _vb.style.webkitUserSelect="none"; _vb.style.userSelect="none";
+        _vb.style.webkitTouchCallout="none"; _vb.style.touchAction="manipulation";
+        _vb.addEventListener("contextmenu",function(e){ e.preventDefault(); });
         _vb.addEventListener("pointerdown",function(){
           _vt=setTimeout(function(){
             window.__cwDockDebug=!window.__cwDockDebug;
@@ -4463,13 +4467,16 @@ try{
       dbg("up");
       if(!_met) return;
       if(_moved<8){ setDock(_from===2?1:(_from===0?1:2)); return; }
-      var y=_y0+(((e&&e.clientY)||_startY)-_startY);
-      // snap to whichever detent the sheet was actually left nearest to
-      var best=1,bd=Infinity;
-      [[2,_met.y2],[1,_met.y1],[0,_met.y0]].forEach(function(p){
-        var dd=Math.abs(y-p[1]); if(dd<bd){bd=dd;best=p[0];}
-      });
-      setDock(best);
+      /* Snap by INTENT, not proximity. Nearest-detent looks reasonable until you notice the gap
+         between mid and expanded is the full drawer height — 530px on this phone — so anything
+         short of a 265px drag fell back to where it started. That is what "resisting" was.
+         A deliberate 44px pull now commits to the next detent in that direction, which is how
+         every sheet you have ever used behaves. */
+      var dyTotal=_startY-((e&&e.clientY)||_startY);        // positive = dragged UP
+      var THRESH=44;
+      if(dyTotal>THRESH) setDock(Math.min(2,_from+1));       // up  -> open further
+      else if(dyTotal<-THRESH) setDock(Math.max(0,_from-1)); // down -> close further
+      else setDock(_from);
     }
     _g.addEventListener("pointerup",_end);
     /* A cancel is not a tap. Ending without the tap branch stops a cancelled gesture from
