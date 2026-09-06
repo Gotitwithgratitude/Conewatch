@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v205";
+const APP_VERSION="v207";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2525,6 +2525,9 @@ function layoutRadial(animate){
        this one in the rail. Keep every item clear to the LEFT of the rail instead. */
     var railX=g.cx-g.sz*0.95;
     if(x>railX) x=railX;
+    /* and never let one drop onto the dock */
+    var dockTop=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150);
+    if(y>dockTop-g.sz*0.75) y=dockTop-g.sz*0.75;
     el.style.left=(g.cx-g.sz/2)+"px";
     el.style.top=(g.cy-g.sz/2)+"px";
     el.style.margin="0";
@@ -4361,9 +4364,16 @@ try{
     _g.addEventListener("click",function(){
       var c=_dk.classList.toggle("collapsed");
       try{ localStorage.setItem("cw_dock", c?"0":"1"); }catch(e){}
-      try{ layout(); }catch(e){}
+      // measure after the transition, or the rail snaps to the pre-collapse height
+      try{ layout(); setTimeout(layout,300); }catch(e){}
     });
   }
+}catch(e){}
+/* Anything that shows or hides a stacked element has to re-measure, or the next element down
+   keeps reserving space for something that is no longer on screen. */
+try{
+  var _mo=new MutationObserver(function(){ try{layout();}catch(e){} });
+  _mo.observe(document.body,{attributes:true,attributeFilter:["class"]});
 }catch(e){}
 function layout(){
   try{ document.documentElement.style.setProperty("--hdrH",($("hdr").offsetHeight+10)+"px"); }catch{}
@@ -4371,8 +4381,16 @@ function layout(){
      zero while driving, when the dock slides off screen and the rail should reclaim that space. */
   try{
     var d=$("dock"), hh=0;
-    if(d && !document.body.classList.contains("driving")) hh=d.offsetHeight;
+    if(d && !document.body.classList.contains("driving")){
+      hh = d.classList.contains("collapsed") ? 96 : d.offsetHeight;
+    }
     document.documentElement.style.setProperty("--dockH",hh+"px");
+    /* Toasts, the confirm bar and the install banner all used to sit at fixed offsets that
+       predated the dock, so they landed on top of the speedometer cluster. Measure the cluster
+       and let them stack above it. */
+    var cl=$("cluster"), ch=0;
+    if(cl && getComputedStyle(cl).display!=="none") ch=cl.offsetHeight;
+    document.documentElement.style.setProperty("--clusterH",ch+"px");
   }catch{}
 }
 try{ window.addEventListener("resize",function(){ try{layout();}catch(e){} }); }catch(e){}
