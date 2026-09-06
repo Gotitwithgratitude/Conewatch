@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v209";
+const APP_VERSION="v210";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4417,6 +4417,27 @@ try{
     }
     _g.addEventListener("pointerup",_end);
     _g.addEventListener("pointercancel",_end);
+    /* iOS Safari does not always deliver pointer events to an element it has decided is part of
+       a scroll gesture, which is why the grip felt dead. Touch events are delivered regardless,
+       so mirror the whole interaction onto them and preventDefault to stop the page rubber-banding. */
+    function _t(e){ return (e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0]); }
+    _g.addEventListener("touchstart",function(e){
+      var t=_t(e); if(!t) return;
+      _met=dockMetrics(); if(!_met) return;
+      _drag=true; _moved=0; _startY=t.clientY; _from=dockState();
+      _y0=(_from===2?_met.y2:(_from===1?_met.y1:_met.y0));
+      _dk.classList.add("dragging");
+      e.preventDefault();
+    },{passive:false});
+    _g.addEventListener("touchmove",function(e){
+      if(!_drag||!_met) return;
+      var t=_t(e); if(!t) return;
+      var dy=t.clientY-_startY; _moved=Math.max(_moved,Math.abs(dy));
+      setDockY(Math.max(_met.y2,Math.min(_met.y0,_y0+dy)));
+      e.preventDefault();
+    },{passive:false});
+    _g.addEventListener("touchend",function(e){ _end({clientY:(_t(e)||{}).clientY}); },{passive:true});
+    _g.addEventListener("touchcancel",function(){ _end(null); },{passive:true});
     window.addEventListener("resize",function(){ try{ setDock(dockState(),false); }catch(e){} });
   }
 }catch(e){}
@@ -4450,6 +4471,7 @@ function renderDockMore(){
   var rec=(QK.recents||[]).slice(0,8);
   out+='<div class="dm-h">Recents</div>';
   if(rec.length){
+    out+='<div class="dm-empty" style="padding:0 2px 8px;font-size:11px">Press and hold to remove</div>';
     out+='<div class="dm-list">';
     rec.forEach(function(r,i){
       var d=(S.pos&&isFinite(r.lat))?fmtDist(distM(S.pos,{lat:r.lat,lng:r.lng}))+" away":"";
@@ -4467,8 +4489,28 @@ function renderDockMore(){
       setDock(1); confirmDestination({lat:p.p.lat,lng:p.p.lng},p.n); };
   });
   el.querySelectorAll(".dm-row").forEach(function(b){
-    b.onclick=function(){ var r=rec[+b.dataset.r]; if(!r)return;
-      setDock(1); confirmDestination({lat:r.lat,lng:r.lng},r.name); };
+    var held=false,timer=null;
+    function forget(){
+      var r=rec[+b.dataset.r]; if(!r) return;
+      QK.recents=(QK.recents||[]).filter(function(x){
+        return !(x.name===r.name && Math.abs((x.lat||0)-(r.lat||0))<1e-6);
+      });
+      saveQK(); renderDockMore(); try{ renderQuick(); }catch(e){}
+      toast("Removed \u201C"+(r.name||"place")+"\u201D from recents",2600);
+      try{ if(navigator.vibrate) navigator.vibrate(14); }catch(e){}
+    }
+    function start(){ held=false; timer=setTimeout(function(){ held=true; forget(); },550); }
+    function cancel(){ clearTimeout(timer); }
+    b.addEventListener("pointerdown",start);
+    b.addEventListener("pointerup",cancel);
+    b.addEventListener("pointerleave",cancel);
+    b.addEventListener("pointercancel",cancel);
+    b.addEventListener("contextmenu",function(e){ e.preventDefault(); cancel(); forget(); });
+    b.onclick=function(){
+      if(held){ held=false; return; }          // the press already deleted it
+      var r=rec[+b.dataset.r]; if(!r)return;
+      setDock(1); confirmDestination({lat:r.lat,lng:r.lng},r.name);
+    };
   });
 }
 /* Anything that shows or hides a stacked element has to re-measure, or the next element down

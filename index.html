@@ -181,7 +181,10 @@
     background:var(--panel-solid);
     border-bottom:1px solid var(--line)}
   #stripe{height:7px;border-radius:2px;margin-bottom:8px;background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,rgba(0,0,0,.55) 13px 26px)}
-  #brandrow{display:flex;align-items:center;gap:10px}
+  /* The row carried brand, badge and clock bunched left with a void on the right. Space them
+     across the full width so the three blocks sit on a real grid instead of floating. */
+  #brandrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px}
+  #brandrow #clock{justify-self:end;text-align:right}
   #brand{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;text-shadow:0 0 18px var(--glow)}
   #brand b{color:var(--cone)}
   #clock{font-family:var(--tech);font-size:10px;color:var(--mute);letter-spacing:1px;text-align:right;line-height:1.3}
@@ -224,8 +227,9 @@
      tore the map. A transform is composited on the GPU and touches neither. */
   #dock{display:flex;flex-direction:column;will-change:transform;contain:layout paint}
   /* generous invisible grab area — the visible bar is 40px but the target is the full width */
-  #dockGrip{flex:0 0 auto;padding:12px 0;margin:-10px 0 4px;width:100%;
-    background:none;position:relative;touch-action:none;cursor:grab}
+  #dockGrip{flex:0 0 auto;padding:18px 0 14px;margin:-12px 0 2px;width:100%;
+    background:none;position:relative;touch-action:none;cursor:grab;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   #dockGrip:active{cursor:grabbing}
   #dockGrip::after{content:"";display:block;width:40px;height:5px;border-radius:3px;
     background:rgba(255,255,255,.26);margin:0 auto}
@@ -654,6 +658,17 @@
      frosted glass for flat translucent panels, flattens shadows, and stops ambient animation.
      Auto-enabled on low-core / low-memory devices; toggleable by hand. */
   html[data-lite="1"] *{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+  /* ── map-overlay elements never sample the backdrop, on any device ──
+     Each of these floats directly over the live map canvas. On iOS a backdrop-filter over
+     WebGL can sample a stale, mis-scaled frame and paint it back as a huge blurred fragment —
+     the giant road shield and mirrored street labels. Solid backgrounds, no sampling. */
+  #toast,#relock,#navbanner,#navPill,#roadPill,#speed,#trip,#compass,.fab,#dock,#dock #search,
+  #dock .mode,#dock .chip,#limitBadge,#signShield{
+    -webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+  #speed{background:rgba(24,26,31,.94) !important}
+  .fab{background:rgba(26,28,34,.94) !important}
+  #dock .mode,#dock .chip{background:rgba(38,41,48,.96) !important}
+  #dock #search{background:rgba(48,51,58,.96) !important}
   html[data-lite="1"] .sheet,
   html[data-lite="1"] .panel,
   html[data-lite="1"] #navbanner,
