@@ -196,11 +196,25 @@
   #brandrow.searching #brand,#brandrow.searching #clock{display:none}
   #brandrow.searching #searchwrap{flex:1 1 100%}
   #searchClear{position:absolute;right:44px;top:50%;transform:translateY(-50%);border:none;background:var(--line);color:var(--text);width:22px;height:22px;border-radius:50%;font-size:13px;line-height:1;cursor:pointer;display:none}
-  #brandrow.searching #searchClear{display:flex;align-items:center;justify-content:center}
+  #dock.searching #searchClear{display:flex;align-items:center;justify-content:center}
   #search:focus{border-color:var(--nav-accent);box-shadow:inset 0 2px 6px rgba(0,0,0,.25), 0 0 0 3px var(--glow)}
   #searchbtn{position:absolute;right:5px;top:5px;bottom:5px;width:34px;border:none;border-radius:10px;background:var(--cone);color:#141619;font-size:15px;cursor:pointer;box-shadow:0 2px 8px rgba(255,106,31,.4)}
   #searchbtn:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
-  #results{position:absolute;top:50px;left:0;right:0;background:var(--panel-solid);border:1px solid var(--line);border-radius:14px;display:none;max-height:44vh;overflow-y:auto;z-index:1002;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+  /* the dock */
+  #dock{position:fixed;left:0;right:0;bottom:0;z-index:1000;
+    padding:6px 12px calc(10px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,rgba(8,9,11,.62),rgba(8,9,11,.94) 26%);
+    -webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);
+    border-top:1px solid var(--line);border-radius:20px 20px 0 0;
+    box-shadow:0 -12px 34px rgba(0,0,0,.45);
+    transition:transform .26s cubic-bezier(.4,0,.2,1)}
+  #dockGrip{width:38px;height:4px;border-radius:2px;background:rgba(255,255,255,.22);margin:2px auto 9px}
+  #dock #searchwrap{flex:none;width:100%}
+  #dock #search{font-size:17px;height:48px}          /* bigger target, no truncation */
+  #dock #modes{margin-top:8px}
+  #dock.collapsed{transform:translateY(calc(100% - 62px))}
+  body.driving #dock{transform:translateY(110%);pointer-events:none}
+  #results{position:absolute;top:auto;bottom:calc(100% + 8px);left:0;right:0;background:var(--panel-solid);border:1px solid var(--line);border-radius:14px;display:none;max-height:44vh;overflow-y:auto;z-index:1002;box-shadow:0 14px 40px rgba(0,0,0,.5)}
   .result{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--line);cursor:pointer}
   .result:last-child{border-bottom:none}
   .result:active{background:var(--panel-hi)}
@@ -309,7 +323,7 @@
   #compass small{font-family:var(--tech);font-size:8px;color:var(--mute)}
   #compass.hup{border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
 
-  #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(18px + env(safe-area-inset-bottom));z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
+  #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(var(--dockH,150px) + 12px);z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
   #fabs>*{pointer-events:auto;flex-shrink:0}
   /* 911 must never be the thing that scrolls away — pin it to the top of the rail */
 
@@ -712,23 +726,31 @@
   <div id="stripe"></div>
   <div id="brandrow">
     <div id="brand">Cone<b>Watch</b><span id="seasonPill" style="display:none;align-items:center;gap:4px;display:none;width:19px;height:19px;padding:0;border-radius:50%;background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;font-size:11px;line-height:1;align-items:center;justify-content:center;margin:0 0 0 7px;vertical-align:middle;position:relative;top:-1px;box-shadow:0 0 8px rgba(255,122,18,.5);flex:0 0 auto"></span><span id="verBadge">v—</span></div>
-    <div id="searchwrap">
-      <input id="search" type="text" placeholder="Where to?" autocomplete="off" enterkeyhint="search" />
-      <button id="searchClear" aria-label="Clear">✕</button>
-      <button id="searchbtn" aria-label="Search">→</button>
-      <div id="results" role="listbox"></div>
-    </div>
     <div id="clock"><span id="clockTime">--:--</span><br><span id="clockTheme">AUTO</span><br><span id="netDot" style="font-size:9px">●&nbsp;live</span></div>
   </div>
+  <button id="hdrToggle" aria-label="Collapse header">▲</button>
+</header>
+
+<!-- Search lives at the BOTTOM now. On a large phone the top of the screen is the one place a
+     thumb cannot reach while driving, and it was also the most crowded — the input was wedged
+     between the wordmark and the clock, which is why it truncated to "Where t...". Waze and
+     Apple Maps both anchor search to the bottom for the same reason. -->
+<div id="dock">
+  <div id="dockGrip" role="button" aria-label="Collapse search"></div>
+  <div id="searchwrap">
+    <input id="search" type="text" placeholder="Where to?" autocomplete="off" enterkeyhint="search" />
+    <button id="searchClear" aria-label="Clear">✕</button>
+    <button id="searchbtn" aria-label="Search">→</button>
+    <div id="results" role="listbox"></div>
+  </div>
+  <div id="quick" style="display:none;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
   <div id="modes">
     <button class="mode on" data-mode="car" aria-label="Drive">🚗</button>
     <button class="mode" data-mode="bike" aria-label="Bike">🚲</button>
     <button class="mode" data-mode="foot" aria-label="Walk">🚶</button>
     <button class="mode" data-mode="hike" aria-label="Mountain / trail">⛰️</button>
   </div>
-  <div id="quick" style="display:none;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
-  <button id="hdrToggle" aria-label="Collapse header">▲</button>
-</header>
+</div>
 
 <div id="navbanner" role="status">
   <div class="nb-btns"><button id="voiceBtn">🔊</button><button id="shareEta">Share</button><button id="ovBtn">Map</button><button id="hudBtn">HUD</button><button id="endnav">End</button></div>

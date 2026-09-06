@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v204";
+const APP_VERSION="v205";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2521,6 +2521,10 @@ function layoutRadial(animate){
     var r=(i<4?r1:r2), ang=angs[i%4]*Math.PI/180;
     var x=g.cx+r*Math.cos(ang), y=g.cy-r*Math.sin(ang);
     if(y<top+g.sz/2) y=top+g.sz/2;                  // never tuck a button under the header
+    /* The near-vertical arm of the arc put a tool directly over the 911 button sitting above
+       this one in the rail. Keep every item clear to the LEFT of the rail instead. */
+    var railX=g.cx-g.sz*0.95;
+    if(x>railX) x=railX;
     el.style.left=(g.cx-g.sz/2)+"px";
     el.style.top=(g.cy-g.sz/2)+"px";
     el.style.margin="0";
@@ -4348,7 +4352,30 @@ document.querySelectorAll("#unitChips .chip").forEach(c=>c.classList.toggle("on"
 
 
 /* ═══════════ v5: back-gesture panel closing + dynamic header layout ═══════════ */
-function layout(){try{document.documentElement.style.setProperty("--hdrH",($("hdr").offsetHeight+10)+"px");}catch{}}
+/* Tap the grip to drop the dock to just the search bar, drag-free. Collapsed state persists,
+   because someone who wants the map uncluttered wants it that way next time too. */
+try{
+  var _g=document.getElementById("dockGrip"), _dk=document.getElementById("dock");
+  if(_g&&_dk){
+    if(localStorage.getItem("cw_dock")==="0") _dk.classList.add("collapsed");
+    _g.addEventListener("click",function(){
+      var c=_dk.classList.toggle("collapsed");
+      try{ localStorage.setItem("cw_dock", c?"0":"1"); }catch(e){}
+      try{ layout(); }catch(e){}
+    });
+  }
+}catch(e){}
+function layout(){
+  try{ document.documentElement.style.setProperty("--hdrH",($("hdr").offsetHeight+10)+"px"); }catch{}
+  /* The FAB rail is anchored to the dock, so the dock has to be measured too — and it reports
+     zero while driving, when the dock slides off screen and the rail should reclaim that space. */
+  try{
+    var d=$("dock"), hh=0;
+    if(d && !document.body.classList.contains("driving")) hh=d.offsetHeight;
+    document.documentElement.style.setProperty("--dockH",hh+"px");
+  }catch{}
+}
+try{ window.addEventListener("resize",function(){ try{layout();}catch(e){} }); }catch(e){}
 window.addEventListener("resize",layout); setTimeout(layout,300); setTimeout(layout,1500);
 function closeAllUI(){
   closeSheets();
@@ -5222,8 +5249,9 @@ async function readRoadSign(){
 (function(){
   const s=$("search"), row=document.getElementById("brandrow");
   if(!s||!row)return;
-  s.addEventListener("focus",()=>{row.classList.add("searching");});
-  s.addEventListener("blur",()=>{ setTimeout(()=>{ if(!$("results").matches(":hover"))row.classList.remove("searching"); },180); });
+  var dock=$("dock");
+  s.addEventListener("focus",()=>{ row.classList.add("searching"); if(dock)dock.classList.add("searching"); });
+  s.addEventListener("blur",()=>{ setTimeout(()=>{ if(!$("results").matches(":hover")){ row.classList.remove("searching"); if(dock)dock.classList.remove("searching"); } },180); });
   // keep the caret end in view as you type long addresses
   s.addEventListener("input",()=>{ try{s.scrollLeft=s.scrollWidth;}catch(e){} });
   const clr=$("searchClear");
