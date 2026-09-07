@@ -72,7 +72,9 @@ async function precacheTiles(urls){
       }catch(err){}
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  /* Two workers, not four. This runs while the driver is still using the app, and four parallel
+     tile fetches on one cell connection starve the live map of the tiles it needs right now. */
+  await Promise.all([worker(), worker()]);
   await trimTiles();
   return ok;
 }

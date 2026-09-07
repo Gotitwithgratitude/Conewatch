@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v220";
+const APP_VERSION="v221";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2091,6 +2091,72 @@ async function startNavigation(){
   toast("Navigation started — drive safe. Screen will stay awake.");
   try{ maybeShowTiltHint(); }catch(e){}
 }
+
+/* ═══════════ pull-to-dismiss ═══════════
+   One gesture language everywhere: whatever is covering the screen, dragging it down puts it
+   away. Same commit threshold and same finger-following as the search sheet, so the whole app
+   behaves the same way rather than each surface having its own rules.
+   Guarded three ways: it only starts at the top of a scrollable, it only commits past 90px, and
+   the click that would follow is swallowed so nothing fires behind the gesture. */
+function attachPullToDismiss(el, onDismiss, opts){
+  if(!el || el.__cwPull) return;
+  el.__cwPull = true;
+  opts = opts || {};
+  var THRESH = opts.threshold || 90;
+  var startY=0, armed=false, live=false, base="";
+  function pos(e){ return e.clientY; }
+  el.addEventListener("pointerdown", function(e){
+    if(e.target.closest("input,textarea,select")) return;
+    var sc=e.target.closest("[data-scroll],.sheet,#dockMore");
+    if(sc && sc.scrollTop>0) return;                 // let content scroll first
+    if(opts.canStart && !opts.canStart()) return;
+    armed=true; live=false; startY=pos(e); base=el.style.transition;
+  });
+  el.addEventListener("pointermove", function(e){
+    if(!armed && !live) return;
+    var dy=pos(e)-startY;
+    if(!live){
+      if(dy<10) return;                              // upward or tiny: not this gesture
+      live=true; armed=false;
+      el.style.transition="none";
+      try{ el.setPointerCapture(e.pointerId); }catch(err){}
+    }
+    var eased=Math.min(dy, THRESH*2.2);
+    el.style.transform="translateY("+eased+"px)";
+    el.style.opacity=String(Math.max(.45, 1-(eased/(THRESH*3))));
+  });
+  function end(e){
+    if(!live){ armed=false; return; }
+    live=false; armed=false;
+    var dy=pos(e||{clientY:startY})-startY;
+    el.style.transition="transform .26s cubic-bezier(.32,.72,0,1),opacity .2s";
+    el.style.transform=""; el.style.opacity="";
+    window.addEventListener("click",function h(ev){
+      ev.stopPropagation(); ev.preventDefault();
+      window.removeEventListener("click",h,true);
+    },true);
+    if(dy>THRESH){ try{ onDismiss(); }catch(err){} }
+  }
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", function(){ end(null); });
+}
+
+/* nav banner: pull down to end the drive. 130px rather than 90 — ending navigation mid-route is
+   not something to trigger by brushing the screen. */
+try{
+  window.addEventListener("load",function(){
+    try{
+      attachPullToDismiss($("navbanner"), function(){
+        endNavigation();
+        toast("Navigation ended",2000);
+      }, { threshold:130, canStart:function(){ return !!S.navigating; } });
+      document.querySelectorAll(".sheet").forEach(function(sh){
+        attachPullToDismiss(sh, function(){ try{ closeSheets(); }catch(e){} });
+      });
+    }catch(e){}
+  });
+}catch(e){}
+
 function endNavigation(){
   S.navigating=false;S.headingUp=false;S.remoteStart=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
   try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
