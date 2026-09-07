@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v223";
+const APP_VERSION="v224";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1097,9 +1097,86 @@ function poiIcon(r){
   if(/\b(bank|credit union|atm)\b/.test(s))return["🏦","#2FA37A"];
   return["📍","#FF4B6E"];
 }
+
+/* ═══════════ typo-tolerant, distance-aware result ranking ═══════════
+   A driver searching "Zerbis" for Zerbo's got a list of villages in Lombardy, Corsica and
+   Slovakia — every one of them a better *string* match than the local store, and every one of
+   them four thousand miles away. Two things were missing: the geocoder ranks by name similarity
+   with no idea that this is a driving app, and an exact-substring test cannot survive a single
+   wrong letter.
+
+   So: score every candidate on how close the name is (allowing for typos) AND how far away it
+   is, and let distance dominate. Nothing 4000 miles away outranks something down the road. */
+
+/* Levenshtein, capped early — we only care whether a name is within a couple of edits, so the
+   moment the distance exceeds the cap we can stop instead of filling the whole matrix. */
+function _edit(a,b,cap){
+  a=a||""; b=b||"";
+  if(a===b) return 0;
+  var la=a.length, lb=b.length;
+  if(Math.abs(la-lb)>cap) return cap+1;
+  var prev=new Array(lb+1), cur=new Array(lb+1), i, j;
+  for(j=0;j<=lb;j++) prev[j]=j;
+  for(i=1;i<=la;i++){
+    cur[0]=i; var best=cur[0];
+    for(j=1;j<=lb;j++){
+      var cost=(a.charCodeAt(i-1)===b.charCodeAt(j-1))?0:1;
+      cur[j]=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost);
+      if(cur[j]<best) best=cur[j];
+    }
+    if(best>cap) return cap+1;                    // whole row already past the cap
+    var t=prev; prev=cur; cur=t;
+  }
+  return prev[lb];
+}
+
+/* How well does this name answer the query, typos included? 0 is perfect. */
+function _nameScore(name,q){
+  var n=_normPlace(name), s=_normPlace(q);
+  if(!n||!s) return 99;
+  if(n===s) return 0;
+  if(n.indexOf(s)===0) return 1;                  // "zerbos health foods" for "zerbos"
+  if(n.indexOf(s)!==-1) return 2;
+  // typo tolerance scales with word length: 1 edit for short words, 2 for longer ones
+  /* 6 characters is enough context that two edits are still almost certainly the same word —
+     "zerbis" vs "zerbo" is two edits and obviously the same place to a human. */
+  var cap = s.length>=6 ? 2 : (s.length>=4 ? 1 : 0);
+  if(cap){
+    var words=n.split(" ");
+    for(var i=0;i<words.length;i++){
+      var d=_edit(words[i],s,cap);
+      if(d<=cap) return 2+d;                      // "zerbis" -> "zerbos" lands here
+    }
+    if(_edit(n.slice(0,s.length+2),s,cap)<=cap) return 3;
+  }
+  return 99;
+}
+
+/* Distance is not a tiebreak in a car — it is most of the answer. */
+function smartRank(list,q){
+  if(!list||!list.length) return list||[];
+  var here=S.pos;
+  var scored=list.map(function(r,i){
+    var d = (here&&isFinite(r.lat)) ? distM(here,{lat:+r.lat,lng:+r.lng})/1609.34 : 9999;
+    var ns=_nameScore(r.name||r.label||"",q);
+    /* Distance bands rather than raw miles, so a place 3 miles away and one 8 miles away are treated
+       as equally "here" and sorted by name quality instead. */
+    var band = d<25 ? 0 : d<75 ? 1 : d<200 ? 3 : d<1000 ? 8 : 14;
+    return {r:r, i:i, score: band*2 + ns, d:d};
+  });
+  /* If anything sane is within driving range, drop the far-flung noise entirely. Somebody in
+     Detroit typing a store name does not want a hamlet in Emilia-Romagna. */
+  var near=scored.filter(function(x){ return x.d<200 && x.score<90; });
+  var use = near.length ? near : scored.filter(function(x){ return x.score<90; });
+  if(!use.length) use=scored;
+  use.sort(function(a,b){ return (a.score-b.score) || (a.d-b.d) || (a.i-b.i); });
+  return use.map(function(x){ return x.r; });
+}
+
 function renderResults(list){
   const box=$("results"); box.innerHTML="";
   const q=$("search").value.trim();
+  try{ if(q) list=smartRank(list,q); }catch(e){}
   if(!list||!list.length){
     if(q.length<3){box.style.display="none";return;}
     const div=document.createElement("div");div.className="result ricon";
