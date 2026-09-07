@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v225";
+const APP_VERSION="v226";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1189,6 +1189,25 @@ function _nameScore(name,q){
   // typo tolerance scales with word length: 1 edit for short words, 2 for longer ones
   /* 6 characters is enough context that two edits are still almost certainly the same word —
      "zerbis" vs "zerbo" is two edits and obviously the same place to a human. */
+  /* Multi-word queries were compared whole against single stored words, so "moms spaghetti"
+     could never fuzzy-match the word "spaghetti". Match token by token instead: every word the
+     driver typed has to find a home in the name, allowing for typos in each. */
+  var qw=s.split(" ").filter(Boolean), nw=n.split(" ").filter(Boolean);
+  if(qw.length>1){
+    var total=0, matched=0;
+    for(var q=0;q<qw.length;q++){
+      var t=qw[q], tcap = t.length>=6 ? 2 : (t.length>=4 ? 1 : 0), best=99;
+      for(var w=0;w<nw.length;w++){
+        if(nw[w]===t){ best=0; break; }
+        if(nw[w].indexOf(t)===0){ best=Math.min(best,1); continue; }
+        if(tcap){ var dd=_edit(nw[w],t,tcap); if(dd<=tcap) best=Math.min(best,1+dd); }
+      }
+      if(best<90){ matched++; total+=best; }
+    }
+    if(matched===qw.length) return 2+Math.min(3,total);   // every word found
+    if(matched>=qw.length-0 && qw.length>2 && matched>=qw.length-1) return 4;
+    return 99;
+  }
   var cap = s.length>=6 ? 2 : (s.length>=4 ? 1 : 0);
   if(cap){
     var words=n.split(" ");
@@ -5567,8 +5586,12 @@ function cacheGeocode(typed,res){
 /* Strip punctuation, collapse whitespace, drop a trailing city/state tail — "Pasadena
    Apartments, Detroit, MI" and "pasadena  apartments" both need to land on the same key. */
 function _normPlace(x){
+  /* Apostrophes were not in the strip list, so "Mom's Spaghetti" normalised to "mom's spaghetti"
+     and a driver typing "moms spaghetti" matched nothing. Curly and straight quotes both, plus
+     ampersands and the rest of the punctuation that shows up in business names. */
   return String(x||"").toLowerCase()
-    .replace(/[.,#()\-\/]/g," ")
+    .replace(/[\u2018\u2019\u201C\u201D'"`]/g,"")
+    .replace(/[.,#()\-\/&+:;!?]/g," ")
     .replace(/\s+/g," ")
     .trim();
 }
