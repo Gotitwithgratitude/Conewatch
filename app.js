@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v218";
+const APP_VERSION="v220";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -205,8 +205,13 @@ function applyTheme(force){
   const next=isDayNow()?"light":"dark";
   paintClock();
   var _tt=$("clockTheme");
-  if(_tt){ _tt.textContent=S.themeMode+(S.themeMode==="auto"?(next==="light"?" \u2600":" \u263e"):"");
-           _tt.className="cw-pill"+(S.themeMode==="auto"?"":" on"); }
+  if(_tt){
+    /* The glyph was appended as raw text, so the pill wrapped and the moon dropped onto a second
+       line under the word. Own span, nowrap on the pill, and a hair of optical lift. */
+    var _gl=(S.themeMode==="auto")?(next==="light"?"\u2600":"\u263e"):"";
+    _tt.innerHTML=S.themeMode+(_gl?'<span style="font-size:10px;position:relative;top:-.5px">'+_gl+'</span>':"");
+    _tt.className="cw-pill"+(S.themeMode==="auto"?"":" on");
+  }
 
   if(S.mapReady && mapStyleTheme!==next) swapMapStyle(next); // heal UI/map mismatch anytime
   if(next===S.themeNow && !force) return;
@@ -1500,7 +1505,9 @@ async function routeFetch(ptsArr){
     }
     toast("Couldn't apply avoidance — showing the normal route.",3000);
   }
-  return await osrmFetch(coordsStr,true);   // always request alternatives so the route picker has something to show
+  /* alternatives only when PLANNING. During an active reroute we skip them: one route computed
+     fast beats three computed slowly when the driver is already past the turn. */
+  return await osrmFetch(coordsStr, !(S.navigating && S.rerouting));
 }
 // toll/highway toggle chips in the route sheet (car mode only)
 function renderRouteOpts(){
@@ -1594,6 +1601,11 @@ function maybeWarmArea(){
     if(!S.pos||!navigator.onLine) return;
     var last=S._warmAt;
     if(last && distM(last,S.pos)<2000) return;
+    /* Hundreds of tile requests during the first seconds of a first visit compete with the map
+       for the same connection, which is exactly when the app feels broken. Warm only once the
+       map has gone idle and the app has been open long enough to be in use. */
+    if(!S._bootAt) S._bootAt=Date.now();
+    if(Date.now()-S._bootAt < 12000) { setTimeout(maybeWarmArea, 12000); return; }
     S._warmAt={lat:S.pos.lat,lng:S.pos.lng};
     precacheAround(S.pos,3000);
   }catch(e){}
@@ -1736,10 +1748,21 @@ async function fetchRoute(silent){
   // honors an explicitly chosen start.
   const _startPt=(S.navigating||silent)?S.pos:(S.origin||S.pos);
   try{
-    const data=await Promise.race([
+    /* Mid-drive, an 18-second wait is worse than a fast failure: the driver has travelled a
+       quarter mile by then and the answer is stale anyway. Reroutes time out at 6s and retry
+       once immediately — two fast attempts beat one slow one. */
+    const _navReroute = (S.navigating && silent);
+    const _budget = _navReroute ? 6000 : 18000;
+    let data=await Promise.race([
       routeFetch([_startPt,...S.stops,S.dest]),
-      new Promise(res=>setTimeout(()=>res({code:"Timeout"}),18000))     // never wait forever
+      new Promise(res=>setTimeout(()=>res({code:"Timeout"}),_budget))
     ]);
+    if(_navReroute && data && data.code==="Timeout"){
+      data=await Promise.race([
+        routeFetch([S.pos,...S.stops,S.dest]),          // retry from where we are NOW
+        new Promise(res=>setTimeout(()=>res({code:"Timeout"}),7000))
+      ]);
+    }
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
     if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
     // We already ask OSRM for alternatives=3 but only ever used routes[0] (the extras were
@@ -1747,8 +1770,13 @@ async function fetchRoute(silent){
     // the driver can pick the corridor, the way Google does and Apple doesn't.
     /* Pick by what the drive will actually cost, not just what OSRM predicts. A route two
        minutes quicker on paper but running through a reported closure is not the better route. */
-    var _scored=(data.routes||[]).slice().map(function(r){ r._sc=scoreRoute(r); return r; });
-    _scored.sort(function(a,b){ return a._sc.total-b._sc.total; });
+    var _rts=data.routes||[];
+    var _scored;
+    if(_rts.length<2){ _scored=_rts.slice(); }          // nothing to compare — skip the scoring pass
+    else{
+      _scored=_rts.slice().map(function(r){ r._sc=scoreRoute(r); return r; });
+      _scored.sort(function(a,b){ return a._sc.total-b._sc.total; });
+    }
     S.routeAlts = _scored.slice(0,3);
     S.routeAltIdx = 0;
     const r=S.routeAlts[0]||data.routes[0];
@@ -2262,8 +2290,11 @@ function navTick(){
       // Distance far off → react fast (1-2 frames). Heading-only ("turnedOff") needs 2
       // sustained frames so one GPS blip on a divided road can't fake a wrong turn. And inside
       // an ambiguous interchange we only reroute if truly far off (dR>130), never on heading alone.
-      const need = (dR>130) ? 1 : (turnedOff && dR<=thresh ? 2 : 2);
-      if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>7000){
+      /* GPS ticks about once a second, so every frame we wait is a second of driving. Anything
+         clearly off the line fires on the FIRST frame; only the heading-based signal still waits
+         for a second frame, because that is the one a single GPS blip can fake. */
+      const need = (dR>thresh*1.4 || dR>130) ? 1 : (turnedOff && dR<=thresh ? 2 : 1);
+      if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>2500){
         S.offRouteCount=0;S.lastReroute=Date.now();
         toast("Off route — rerouting…",1400);speak("Rerouting.");fetchRoute(true);
       }
@@ -2990,11 +3021,24 @@ document.addEventListener("visibilitychange",function(){
   if(document.hidden){ stopRealtime(); }               // no socket held open in the background
   else { syncHazards(); startRealtime(); }
 });
+/* Building every marker in one pass is a single long task on the main thread — on a phone
+   opening the link for the first time it lands right when the map is still painting, and the UI
+   is frozen until it finishes. Twelve at a time, one batch per frame: same markers, no stall. */
+function addMarkersChunked(list){
+  var i=0;
+  function batch(){
+    var end=Math.min(i+12,list.length);
+    for(;i<end;i++){ try{ addHazardMarker(list[i]); }catch(e){} }
+    if(i<list.length) requestAnimationFrame(batch);
+    else try{ cullMarkers(); }catch(e){}
+  }
+  requestAnimationFrame(batch);
+}
 async function loadSharedHazards(){
   if(!S.sb.url||!S.sb.key){toast("Add your Supabase URL + key first.");return;}
   try{
     const rows=await (await fetch(`${S.sb.url}/rest/v1/hazards?select=*&order=created_at.desc&limit=300`,{headers:sbH()})).json();
-    if(Array.isArray(rows)){const keep=clusterHazards(rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); }));hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;keep.forEach(addHazardMarker);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
+    if(Array.isArray(rows)){const keep=clusterHazards(rows.filter(function(r){ return !r.cleared_at && notExpired(r) && notDismissed(r); }));hzMarkers.forEach(m=>m.remove());hzMarkers.length=0;S.hazards=keep;addMarkersChunked(keep);if(S.heatOn)refreshHeat();toast(`Loaded ${keep.length} shared reports ✓`);}
   }catch{toast("Couldn't reach Supabase.");}
 }
 
@@ -4677,6 +4721,34 @@ try{
   });
   _mo.observe(document.body,{attributes:true,attributeFilter:["class"]});
 }catch(e){}
+/* Every hazard is a DOM marker, and MapLibre repositions all of them on every frame of every
+   pan. At 58 reports that is 58 style writes per frame competing with the map itself. Markers
+   outside the viewport cannot be seen, so hide them — hidden elements still get repositioned but
+   cost nothing to paint, which is where the time actually goes. */
+function cullMarkers(){
+  try{
+    if(!map||!S.mapReady) return;
+    var b=map.getBounds();
+    if(!b) return;
+    var pad=0.02;
+    var w=b.getWest()-pad, e=b.getEast()+pad, so=b.getSouth()-pad, n=b.getNorth()+pad;
+    (S.hazards||[]).forEach(function(h){
+      if(!h||!h._marker) return;
+      var vis=(h.lng>=w&&h.lng<=e&&h.lat>=so&&h.lat<=n);
+      var el=h._marker.getElement&&h._marker.getElement();
+      if(el && el.style.visibility!==(vis?"":"hidden")) el.style.visibility=vis?"":"hidden";
+    });
+  }catch(e){}
+}
+try{
+  var _cullT=null;
+  window.addEventListener("load",function(){
+    try{
+      map.on("moveend",function(){ clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,90); });
+      map.on("zoomend",function(){ clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,90); });
+    }catch(e){}
+  });
+}catch(e){}
 function layout(){
   try{ document.documentElement.style.setProperty("--hdrH",($("hdr").offsetHeight+10)+"px"); }catch{}
   /* The FAB rail is anchored to the dock, so the dock has to be measured too — and it reports
@@ -5657,13 +5729,27 @@ function showInstallBanner(force){
   if(isIOSdev()){ $("installGo").style.display="none"; $("iosSteps").style.display="block"; $("installMsg").textContent="Opens like a real app — no browser bar, one tap to launch."; }
   else if(deferredInstall){ $("installGo").style.display=""; $("iosSteps").style.display="none"; var _a0=$("androidSteps"); if(_a0)_a0.style.display="none"; }
   else if(!force){ return; }
-  else if(isAndroidDev()){
+  else if(isAndroidDev() || /android/i.test(navigator.userAgent)){
     /* beforeinstallprompt is unreliable — it fires once per load, only when Chrome decides the
        install criteria are met, and never at all in Firefox or Samsung Internet. Android users
        were being handed a vague "check your browser menu" and nothing else. */
     $("installGo").style.display="none"; $("iosSteps").style.display="none";
     var _as=$("androidSteps"); if(_as) _as.style.display="block";
     $("installMsg").textContent="Opens like a real app — no browser bar, one tap to launch.";
+    /* Chrome only fires beforeinstallprompt once per page load and only when it decides the
+       criteria are met, so the button often never appears. Offer a reload as the second chance
+       rather than leaving an Android user with nothing actionable. */
+    try{
+      var _as2=$("androidSteps");
+      if(_as2 && !_as2.querySelector(".cw-reload")){
+        var rb=document.createElement("button");
+        rb.className="btn ghost cw-reload";
+        rb.style.cssText="margin-top:10px;width:100%";
+        rb.textContent="Reload — sometimes Chrome offers Install after a refresh";
+        rb.onclick=function(){ location.reload(); };
+        _as2.appendChild(rb);
+      }
+    }catch(e){}
   }
   else { $("installGo").style.display="none"; $("iosSteps").style.display="none"; $("installMsg").textContent="In your browser menu, choose \u201CInstall app\u201D or \u201CAdd to Home Screen.\u201D"; }
   b.style.display="block";
