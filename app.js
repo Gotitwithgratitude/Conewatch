@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v221";
+const APP_VERSION="v222";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1974,8 +1974,29 @@ function renderRouteSheet(r){
   const mpg=parseFloat((el("mpg")||{}).value)||22,gas=parseFloat((el("gasPrice")||{}).value)||2.89;
   const gal=(r.distance/1609.34)/mpg,fuel=(gal*gas).toFixed(2);
   const curve=curveScore(r.geometry.coordinates);
+  /* The route card listed fuel, curves, weather and elevation — everything except the thing this
+     app exists for. Count the reports actually sitting on this line before the driver commits. */
+  const onRoute=(function(){
+    try{
+      const co=r.geometry.coordinates||[];
+      if(!co.length) return null;
+      const hits=(S.hazards||[]).filter(function(h){
+        if(!h||!isFinite(h.lat)||!notDismissed(h)) return false;
+        for(let i=0;i<co.length;i+=3){                       // every 3rd vertex is plenty at 60m
+          if(distM({lat:co[i][1],lng:co[i][0]},{lat:h.lat,lng:h.lng})<60) return true;
+        }
+        return false;
+      });
+      if(!hits.length) return {n:0,txt:"Clear — nothing reported"};
+      const by={}; hits.forEach(function(h){ by[h.type]=(by[h.type]||0)+1; });
+      const parts=Object.keys(by).sort(function(a,b){return by[b]-by[a];}).slice(0,3)
+        .map(function(k){ const m=HZ_META[k]||{emoji:"⚠️",label:k}; return m.emoji+" "+by[k]; });
+      return {n:hits.length,txt:parts.join("  ")+"  ·  "+hits.length+" total"};
+    }catch(e){ return null; }
+  })();
   if(el("tripStats")) $("tripStats").innerHTML=`
     <div class="kv"><span>Est. fuel cost</span><span>$${fuel} (${gal.toFixed(1)} gal @ ${mpg} mpg)</span></div>
+    ${onRoute?`<div class="kv"><span>Hazards on route</span><span style="color:${onRoute.n?"var(--orange,#FF8A2B)":"var(--green,#46C08A)"}">${onRoute.txt}</span></div>`:""}
     <div class="kv"><span>Road character</span><span>${curve.label} · ${curve.turns} sharp turns</span></div>
     <div class="kv"><span>Weather at destination</span><span id="wxDest">loading…</span></div>
     <div class="kv"><span>Elevation</span><span id="elevStat">loading…</span></div>`;
@@ -2111,6 +2132,10 @@ function attachPullToDismiss(el, onDismiss, opts){
     if(sc && sc.scrollTop>0) return;                 // let content scroll first
     if(opts.canStart && !opts.canStart()) return;
     armed=true; live=false; startY=pos(e); base=el.style.transition;
+    /* A tall sheet is mostly scroll surface. Even sitting at scrollTop 0, the browser claims a
+       downward drag as a scroll before our handler can commit — so the sheet never moved. Lock
+       scrolling for the duration of the press and hand it back on release. */
+    if(el.scrollHeight>el.clientHeight){ el.dataset.cwOv=el.style.overflowY||""; el.style.overflowY="hidden"; }
   });
   el.addEventListener("pointermove", function(e){
     if(!armed && !live) return;
@@ -2125,7 +2150,11 @@ function attachPullToDismiss(el, onDismiss, opts){
     el.style.transform="translateY("+eased+"px)";
     el.style.opacity=String(Math.max(.45, 1-(eased/(THRESH*3))));
   });
+  function restoreScroll(){
+    if(el.dataset.cwOv!==undefined){ el.style.overflowY=el.dataset.cwOv; delete el.dataset.cwOv; }
+  }
   function end(e){
+    restoreScroll();
     if(!live){ armed=false; return; }
     live=false; armed=false;
     var dy=pos(e||{clientY:startY})-startY;
@@ -2139,6 +2168,7 @@ function attachPullToDismiss(el, onDismiss, opts){
   }
   el.addEventListener("pointerup", end);
   el.addEventListener("pointercancel", function(){ end(null); });
+  el.addEventListener("pointerleave", function(){ if(!live) restoreScroll(); });
 }
 
 /* nav banner: pull down to end the drive. 130px rather than 90 — ending navigation mid-route is
