@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v226";
+const APP_VERSION="v227";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1858,7 +1858,15 @@ function restoreRouteLocal(){
     S.steps=d.steps||[]; S.stepIdx=0; S.peekIdx=null;
     S.dest=d.dest||null; S.destName=d.destName||"";
     try{ ensureRouteLayers(); map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch(e){}
-    toast("Offline — your last route is still here.",3400);
+    /* Drawing the line without arming guidance left a driver staring at a route with no turn
+       instructions — the one thing they actually needed. If the stored route carries steps,
+       turn-by-turn works with no network at all: the maneuvers are already on the phone. */
+    if((S.steps||[]).length){
+      try{ openSheet("routeSheet"); renderRouteSheet(S.route); }catch(e){}
+      toast("Offline — your last route is here, turn-by-turn included.",4000);
+    } else {
+      toast("Offline — your last route is still here.",3400);
+    }
     return true;
   }catch(e){ return false; }
 }
@@ -4994,6 +5002,7 @@ function cullMarkers(){
     if(!b) return;
     var pad=0.02;
     var w=b.getWest()-pad, e=b.getEast()+pad, so=b.getSouth()-pad, n=b.getNorth()+pad;
+    if(S._mkHidden) return;                     // a gesture is in flight; leave them parked
     (S.hazards||[]).forEach(function(h){
       if(!h||!h._marker) return;
       var vis=(h.lng>=w&&h.lng<=e&&h.lat>=so&&h.lat<=n);
@@ -5006,8 +5015,24 @@ try{
   var _cullT=null;
   window.addEventListener("load",function(){
     try{
-      map.on("moveend",function(){ clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,90); });
-      map.on("zoomend",function(){ clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,90); });
+      /* Culling on moveend only helped AFTER the gesture. During a pan, pinch or rotate MapLibre
+         repositions every marker on every frame — 58 DOM elements fighting the map for the main
+         thread, which is exactly the sluggish drag the driver feels. Park them for the duration
+         of the gesture and bring them back when the hand comes off. */
+      map.on("movestart",function(){
+        try{
+          if(S._mkHidden) return; S._mkHidden=true;
+          (S.hazards||[]).forEach(function(h){
+            var el=h&&h._marker&&h._marker.getElement&&h._marker.getElement();
+            if(el) el.style.visibility="hidden";
+          });
+        }catch(e){}
+      });
+      function _unpark(){ S._mkHidden=false; clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,60); }
+      map.on("moveend",_unpark);
+      map.on("zoomend",_unpark);
+      map.on("rotateend",_unpark);
+      map.on("pitchend",_unpark);
     }catch(e){}
   });
 }catch(e){}
