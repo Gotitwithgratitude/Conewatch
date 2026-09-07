@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v222";
+const APP_VERSION="v223";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1023,7 +1023,19 @@ function dedupeSuggest(list){
   return out;
 }
 async function suggest(q){
-  if(!navigator.onLine){ renderResults(offlineMatches(q)); return; }
+  if(!navigator.onLine){
+    var base=offlineMatches(q);
+    renderResults(base);
+    // the index may still be loading on the first offline search; repaint when it lands
+    loadPoiIndex().then(function(idx){
+      if(!idx) return;
+      var extra=searchPoiIndex(q,6).map(function(p){
+        return {name:p.name,label:(POI_CAT_ICON[p.cat]||"\uD83D\uDCCD")+" Offline map",lat:p.lat,lng:p.lng};
+      });
+      if(extra.length) renderResults(base.concat(extra));
+    });
+    return;
+  }
   if(acCache.has(q)){renderResults(acCache.get(q));return;}
   if(acAbort) acAbort.abort();
   acAbort=new AbortController();
@@ -5206,9 +5218,14 @@ async function forceGeocode(q){
     if(cached){ confirmDestination(cached,q); toast("📍 Saved location (offline)",3000); return; }
     var local=lookupAnyLocal(q);
     if(local){ confirmDestination(local,q); toast("📍 "+local.label+" — from places saved on this phone",3400); return; }
-    /* Nothing on the device has coordinates for this name, and without signal there is no way to
-       find out where it is. Say that plainly rather than implying the driver did something wrong. */
-    toast("Offline — this phone has no location saved for \""+q+"\". Nothing to route to until you have signal.",5000);
+    /* Nothing the driver has personally touched matches. Fall through to the bundled index — the
+       only source on the device that knows about a place they have never searched for. */
+    loadPoiIndex().then(function(idx){
+      var hit = idx ? searchPoiIndex(q,1)[0] : null;
+      if(hit){ confirmDestination({lat:hit.lat,lng:hit.lng},hit.name);
+               toast("\uD83D\uDCCD "+hit.name+" — offline map data",3400); return; }
+      toast("Offline — this phone has no location saved for \""+q+"\". Nothing to route to until you have signal.",5000);
+    });
     return;
   }
   toast("Locating address…",1600);
@@ -5430,6 +5447,76 @@ function lookupCachedGeocode(typed){
    the same way last time. Widen it to everything on the device that has coordinates: past
    geocodes by partial name, Discover results cached by the patch layer, recents, home and work.
    None of this is a network call; it is all already sitting in localStorage. */
+
+/* ═══════════ offline POI index ═══════════
+   A packed, static list of named places for the metro, served same-origin so the service worker
+   caches it with the app shell. This is the piece that makes search work with zero signal for a
+   place you have never looked up before — the one gap v198 could not close, because a name the
+   phone has never seen has no coordinates anywhere on the device.
+
+   Format is deliberately dumb and small: a flat array of [name, lat, lng, cat], coordinates
+   quantised to 5dp (~1m), sorted by name so a prefix scan can stop early. No index structure to
+   build at load, no parse cost beyond JSON itself.
+
+   Loading is lazy and one-shot: the file is only fetched the first time an offline lookup misses
+   everything local, so a driver who never searches offline never pays for it. */
+var POI_URL = "/poi-detroit.json";
+var _poiIdx = null, _poiLoading = null, _poiFailed = false;
+
+function loadPoiIndex(){
+  if(_poiIdx) return Promise.resolve(_poiIdx);
+  if(_poiFailed) return Promise.resolve(null);
+  if(_poiLoading) return _poiLoading;
+  _poiLoading = fetch(POI_URL, {cache:"force-cache"})
+    .then(function(r){ if(!r.ok) throw new Error("http "+r.status); return r.json(); })
+    .then(function(d){
+      var rows = Array.isArray(d) ? d : (d && d.p) || [];
+      _poiIdx = rows;
+      try{ console.log("ConeWatch: POI index "+rows.length+" places"); }catch(e){}
+      return _poiIdx;
+    })
+    .catch(function(){ _poiFailed=true; return null; })   // no index shipped yet: stay silent
+    .finally(function(){ _poiLoading=null; });
+  return _poiLoading;
+}
+/* Warm it once the app is idle and online, so the file is already in the SW cache by the time
+   somebody actually needs it in a dead zone. Never on the critical path. */
+try{
+  window.addEventListener("load",function(){
+    setTimeout(function(){ if(navigator.onLine) loadPoiIndex(); }, 15000);
+  });
+}catch(e){}
+
+var POI_CAT_ICON = {
+  fuel:"\u26FD", restaurant:"\uD83C\uDF7D\uFE0F", cafe:"\u2615", bar:"\uD83C\uDF7A",
+  pharmacy:"\uD83D\uDC8A", hospital:"\uD83C\uDFE5", bank:"\uD83C\uDFE6",
+  shop:"\uD83D\uDECD\uFE0F", grocery:"\uD83D\uDED2", hotel:"\uD83C\uDFE8",
+  park:"\uD83C\uDF33", school:"\uD83C\uDFEB", police:"\uD83D\uDE94", parking:"\uD83C\uDD7F\uFE0F"
+};
+
+/* Scan the index for a query. Ranked the same way lookupAnyLocal ranks: exact, then prefix, then
+   contains, distance as the tiebreak — so a result from the index and a result from a recent are
+   ordered against each other consistently. */
+function searchPoiIndex(typed, limit){
+  var q=_normPlace(typed); if(!q||q.length<2||!_poiIdx) return [];
+  var out=[], n=_poiIdx.length, cap=limit||8;
+  for(var i=0;i<n;i++){
+    var row=_poiIdx[i]; if(!row) continue;
+    var nm=String(row[0]||""), nn=_normPlace(nm);
+    if(!nn) continue;
+    var score;
+    if(nn===q) score=0;
+    else if(nn.indexOf(q)===0) score=1;
+    else if(nn.indexOf(q)!==-1) score=2;
+    else continue;
+    var lat=row[1], lng=row[2];
+    var d=S.pos?distM(S.pos,{lat:lat,lng:lng}):0;
+    out.push({name:nm,lat:lat,lng:lng,cat:row[3]||"",_s:score,_d:d});
+  }
+  out.sort(function(a,b){ return (a._s-b._s)||(a._d-b._d); });
+  return out.slice(0,cap);
+}
+
 function lookupAnyLocal(typed){
   /* Matching was one-directional and raw: it only fired when the stored name CONTAINED the
      query, so a recent saved as "Pasadena Apartments, Detroit" missed when you typed the fuller

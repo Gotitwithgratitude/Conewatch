@@ -13,6 +13,9 @@ const CACHE = "conewatch-cache-v2";
 const TILES = "conewatch-tiles-v2";   // v1 purged: it held unverifiable opaque responses
 const TILE_CAP = 1400;                 // ~50-90MB of 256px tiles; trimmed oldest-first
 const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/apple-touch-icon.png","/icon-512.png"];
+/* The POI index is same-origin and immutable, so it falls into the cache-first branch below with
+   images and CSS. Deliberately NOT in PRECACHE: it is the largest asset in the app and a first
+   visit should not pay for it before the map has even drawn. It gets cached on first fetch. */
 
 /* Only these hosts serve map tiles. Everything else cross-origin is live data and must not be
    served from cache — a cached hazard or a cached route would be worse than no answer at all. */
@@ -91,6 +94,8 @@ self.addEventListener("message", (e) => {
 });
 
 function isCode(url) {
+  // the POI index is data, not code: it must be cache-first, never network-first
+  if (url.pathname === "/poi-detroit.json") return false;
   return url.pathname.endsWith(".js") || url.pathname.endsWith(".html") || url.pathname === "/" || url.pathname.endsWith(".json");
 }
 
