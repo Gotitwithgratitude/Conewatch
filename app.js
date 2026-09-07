@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v224";
+const APP_VERSION="v225";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1074,6 +1074,17 @@ async function suggest(q){
   // result is what gets stored). Caching a pre-GPS-lock result would poison this query
   // for the whole session — every retype would serve the OSM-only list.
   if(S.pos){ acCache.set(q,all); if(acCache.size>60) acCache.delete(acCache.keys().next().value); }
+  /* Merge in fuzzy hits from this phone's own history. A typo the geocoder cannot resolve is
+     usually a place the driver has already been. */
+  try{
+    var fz=localFuzzyMatches(q,4);
+    if(fz.length){
+      var have={};
+      all.forEach(function(r){ have[_normPlace(r.name)]=1; });
+      var add=fz.filter(function(f){ return !have[_normPlace(f.name)]; });
+      if(add.length) all=add.concat(all);
+    }
+  }catch(e){}
   renderResults(all);
 }
 /* Every test here was a bare substring, so brand and category words matched inside unrelated
@@ -1096,6 +1107,44 @@ function poiIcon(r){
   if(/\b(school|college|university|academy|library)\b/.test(s))return["🎓","#3B82F6"];
   if(/\b(bank|credit union|atm)\b/.test(s))return["🏦","#2FA37A"];
   return["📍","#FF4B6E"];
+}
+
+
+/* ═══════════ your own history is the best spellchecker ═══════════
+   v224 ranked what the geocoder returned. It cannot rescue "Summerset mall", because the
+   geocoder never returns Somerset Mall for that string — no amount of re-sorting an empty set
+   helps. But the phone already knows the answer: Somerset Mall is sitting in this driver's
+   recents. Nobody has a better dictionary of the places THIS person searches for than the list
+   of places they have already searched for.
+
+   So every online search also runs a fuzzy pass over recents, saved places, past geocodes and
+   the Discover cache, and injects anything close to the top. Costs nothing — it is a few
+   hundred strings in localStorage — and it fixes the typo case the network cannot. */
+function localFuzzyMatches(q, limit){
+  var s=_normPlace(q); if(!s||s.length<3) return [];
+  var out=[], seen={};
+  function consider(name,lat,lng,tag){
+    if(!isFinite(lat)||!isFinite(lng)) return;
+    var score=_nameScore(name,q);
+    if(score>=90) return;
+    var k=_normPlace(name)+"|"+(+lat).toFixed(3);
+    if(seen[k]) return; seen[k]=1;
+    out.push({name:name,label:tag,lat:+lat,lng:+lng,_fz:score,
+              _d:S.pos?distM(S.pos,{lat:+lat,lng:+lng}):0});
+  }
+  try{ (QK.recents||[]).forEach(function(r){ consider(r.name,r.lat,r.lng,"Recent"); }); }catch(e){}
+  try{ (QK.favorites||[]).forEach(function(r){ consider(r.name,r.lat,r.lng,"Saved"); }); }catch(e){}
+  try{ if(QK.home) consider("Home",QK.home.lat,QK.home.lng,"Saved");
+       if(QK.work) consider("Work",QK.work.lat,QK.work.lng,"Saved"); }catch(e){}
+  try{ var c=JSON.parse(localStorage.getItem("cw_geo")||"{}");
+    for(var k in c){ var v=c[k]; consider(v.label||k, v.lat, v.lng, "Searched before"); }
+  }catch(e){}
+  try{ var p=JSON.parse(localStorage.getItem("cw_poi")||"{}");
+    for(var pk in p){ var els=(p[pk]&&p[pk].els)||[];
+      for(var i=0;i<els.length;i++) consider(els[i].name, els[i].lat, els[i].lng, "Nearby"); }
+  }catch(e){}
+  out.sort(function(a,b){ return (a._fz-b._fz)||(a._d-b._d); });
+  return out.slice(0, limit||4);
 }
 
 /* ═══════════ typo-tolerant, distance-aware result ranking ═══════════
@@ -2748,6 +2797,15 @@ function layoutRadial(animate){
        this one in the rail. Keep every item clear to the LEFT of the rail instead. */
     var railX=g.cx-g.sz*0.95;
     if(x>railX) x=railX;
+    /* Also keep clear of the speed/trip/compass cluster on the left and of the driver's own
+       puck in the middle — a tool sitting on top of either is unreadable and untappable. */
+    try{
+      var cl=document.getElementById("cluster");
+      if(cl){ var cr=cl.getBoundingClientRect();
+        if(x-g.sz*0.5 < cr.right+8 && y+g.sz*0.5 > cr.top-8) x = cr.right+8+g.sz*0.5; }
+      var cxm=window.innerWidth/2, cym=window.innerHeight*0.52;
+      if(Math.abs(x-cxm)<g.sz*0.8 && Math.abs(y-cym)<g.sz*0.8) y = cym - g.sz*1.1;
+    }catch(e){}
     /* and never let one drop onto the dock */
     var dockTop=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150);
     if(y>dockTop-g.sz*0.75) y=dockTop-g.sz*0.75;
