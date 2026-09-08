@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v240";
+const APP_VERSION="v241";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2222,6 +2222,7 @@ try{
   setTimeout(function(){ _areaPoll(); _areaTick=setInterval(_areaPoll, 150000); }, 40000);
 }catch(e){}
 window.cwCacheAreaNow=function(){ return captureAreaGraph(true); };
+window.cwDeclination=function(){ return {declination:_decl,samples:_declN,osCorrected:_declNative}; };
 
 /* ═══════════ offline routing, session 2 of 3: local A* ═══════════
    Routes across a cached corridor graph with no network. Session 3 wires this to the off-route
@@ -4457,13 +4458,79 @@ document.querySelectorAll(".mode").forEach(b=>b.onclick=()=>{
 });
 
 /* ═══════════ compass & motion sensors ═══════════ */
+/* ═══════════ true north without a model, a key, or a network ═══════════
+   The magnetometer reads MAGNETIC north. True north differs by the local declination — about
+   7.5 deg in Detroit, over 20 in Alaska, near zero in Florida — so a raw magnetic heading
+   labelled "N" is simply wrong, by a different amount everywhere.
+
+   The usual fix is the World Magnetic Model, but NOAA's declination API requires registration,
+   and a key shipped in a public PWA is a key that leaks. Embedding the model means carrying its
+   coefficient table and reissuing the app every five years.
+
+   There is a better source already on board. While the car is MOVING, two independent headings
+   exist at once: GPS course over ground, which is true north by definition and needs no model,
+   and the magnetometer, which is magnetic. Their difference IS the local declination. Learn it
+   on the move, apply it when stopped. Self-calibrating, works anywhere on Earth, costs nothing.
+
+   iOS is a special case worth honouring: webkitCompassHeading is ALREADY true-north corrected
+   by the OS, so on iOS there is nothing to learn and nothing to add. */
+var _decl=null, _declN=0, _declNative=false;
+try{ var _dv=JSON.parse(localStorage.getItem("cw_decl")||"null");
+     if(_dv && isFinite(_dv.d)){ _decl=_dv.d; _declN=_dv.n||1; } }catch(e){}
+function _angDiff(a,b){ return ((a-b+540)%360)-180; }
+function learnDeclination(){
+  try{
+    if(_declNative) return;                       // iOS already gives true north
+    if(S.compass===null||S.course===null) return;
+    if(S.speedMph<12) return;                     // below this, GPS course is noise, not a heading
+    var d=_angDiff(S.course,S.compass);
+    if(Math.abs(d)>45) return;                    // declination is never this large: bad sample
+    // Slow rolling average. Each sample is one noisy pass through a magnetically messy city;
+    // only the accumulation of many is worth trusting.
+    _decl = (_decl===null) ? d : (_decl*0.94 + d*0.06);
+    _declN++;
+    if(_declN%25===0){ try{ localStorage.setItem("cw_decl",JSON.stringify({d:_decl,n:_declN,t:Date.now()})); }catch(e){} }
+  }catch(e){}
+}
+/* The heading we actually display: true north when we can justify it, magnetic otherwise —
+   and the UI says which, rather than claiming true north it cannot deliver. */
+function trueHeading(){
+  if(S.course!==null && S.speedMph>=3) return {deg:S.course,tn:true};       // course IS true north
+  if(S.compass===null) return {deg:null,tn:false};
+  if(_declNative) return {deg:S.compass,tn:true};                          // iOS-corrected
+  if(_decl!==null && _declN>=8) return {deg:(S.compass+_decl+360)%360,tn:true};
+  return {deg:S.compass,tn:false};                                         // magnetic, still learning
+}
+function _compassTicks(){
+  var g=document.getElementById("compTicks");
+  if(!g||g.childNodes.length) return;
+  var out="";
+  for(var a=0;a<360;a+=15){
+    var maj=(a%45===0);
+    var r1=maj?31:34, r2=38;
+    var rad=(a-90)*Math.PI/180;
+    var x1=50+Math.cos(rad)*r1, y1=50+Math.sin(rad)*r1;
+    var x2=50+Math.cos(rad)*r2, y2=50+Math.sin(rad)*r2;
+    out+='<line class="cw-tick'+(maj?" maj":"")+'" x1="'+x1.toFixed(2)+'" y1="'+y1.toFixed(2)+
+         '" x2="'+x2.toFixed(2)+'" y2="'+y2.toFixed(2)+'"/>';
+  }
+  g.innerHTML=out;
+}
 function updateCompassUI(){
-  const deg=S.course!==null?S.course:(S.compass!==null?S.compass:null);
-  if(deg===null){$("compDeg").textContent="N";return;}
+  try{ _compassTicks(); }catch(e){}
+  var h=trueHeading();
+  var deg=h.deg;
+  var lab=$("compDeg"), dial=document.getElementById("compDial"), box=$("compass");
+  if(deg===null){ if(lab) lab.textContent="—"; return; }
   const dirs=["N","NE","E","SE","S","SW","W","NW"];
-  $("compDeg").textContent=`${dirs[Math.round(deg/45)%8]} ${Math.round(deg)}°`;
-  $("needle").style.transform=`rotate(${-(map?map.getBearing():0)+(S.headingUp?0:deg)}deg)`;
-  $("compass").classList.toggle("hup",S.headingUp);
+  // The suffix is the honest part: T = true north, M = still magnetic while it calibrates.
+  if(lab) lab.textContent=dirs[Math.round(deg/45)%8]+" "+Math.round(deg)+"°"+(h.tn?"":" M");
+  /* The DIAL rotates, not the needle. A compass needle holds still against the world while the
+     card turns under it — rotating the needle instead is the tell that it is a widget, not an
+     instrument. So: counter-rotate the whole card by the heading and the map's bearing. */
+  var rot = -(map?map.getBearing():0) - (S.headingUp?0:deg);
+  if(dial) dial.style.transform="rotate("+rot.toFixed(1)+"deg)";
+  if(box){ box.classList.toggle("hup",S.headingUp); box.classList.toggle("tn",!!h.tn); }
 }
 $("compass").onclick=async()=>{
   await requestMotion();
@@ -4486,9 +4553,10 @@ async function requestMotion(){
   }catch{}
   motionGranted=true;
   window.addEventListener("deviceorientation",(e)=>{
-    if(e.webkitCompassHeading!==undefined)S.compass=e.webkitCompassHeading;
+    if(e.webkitCompassHeading!==undefined){ S.compass=e.webkitCompassHeading; _declNative=true; }
     else if(e.alpha!==null)S.compass=(360-e.alpha)%360;
     if(S.speedMph<2&&S.compass!==null&&!S.navigating)S.course=S.compass;
+    try{ learnDeclination(); }catch(err){}
     updateCompassUI();
   });
   window.addEventListener("devicemotion",onMotion);
@@ -5843,7 +5911,9 @@ try{
                    "newest  "+(x.n||0)+" nodes / "+(x.ways||0)+" ways\n"+
                    "to      "+((x.destName||"?").slice(0,18))+"\n"+
                    "age     "+Math.round((Date.now()-x.t)/60000)+" min"+
-                   (_offTxt?("\noffline "+_offTxt):"");
+                   (_offTxt?("\noffline "+_offTxt):"")+
+                   "\ndecl    "+(_declNative?"OS true north":
+                      (_decl===null?"learning…":(_decl.toFixed(1)+"\u00B0 / "+_declN+" samples")));
           // probe the A* path against the live position so the panel proves the search works
           // on real OSM data, not just the synthetic grids it was unit-tested on
           try{

@@ -420,11 +420,60 @@
   #speed.over .v{color:var(--red)}
   #trip{background:var(--panel-solid);border:1px solid var(--line);border-radius:12px;padding:4px 12px;font-family:var(--tech);font-size:10px;color:var(--mute);text-align:center}
   #trip b{color:var(--text);font-size:13px}
-  #compass{width:54px;height:54px;border-radius:50%;background:var(--btn-face);border:1px solid var(--edge);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--btn-shadow)}
-  #compass:active{box-shadow:var(--btn-pressed)}
-  #needle{font-size:18px;transition:transform .2s;line-height:1;color:var(--nav-accent)}
-  #compass small{font-family:var(--tech);font-size:8px;color:var(--mute)}
-  #compass.hup{border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
+  /* ═══════════ holographic compass ═══════════
+     Drawn as SVG rather than a glyph: it has to stay crisp at any pixel ratio and every moving
+     part needs to be addressable. The look is "instrument under glass" — a lit dial you read
+     through, not a flat icon pasted on the map. */
+  :root{ --cw-hue:#6FF3D0; }
+  #compass{position:relative;width:74px;height:74px;border-radius:50%;
+    background:radial-gradient(circle at 50% 34%, rgba(30,44,48,.92), rgba(10,14,17,.94));
+    border:1px solid rgba(120,240,210,.22);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:var(--btn-shadow), 0 0 16px rgba(80,230,190,.13), inset 0 0 18px rgba(70,220,190,.07);
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  #compass:active{transform:scale(.96)}
+  #compRose{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .cw-rim{fill:none;stroke:rgba(120,240,210,.30);stroke-width:1}
+  .cw-rim2{fill:none;stroke:rgba(120,240,210,.13);stroke-width:.6}
+  .cw-tick{stroke:rgba(150,250,220,.42);stroke-width:1;stroke-linecap:round}
+  .cw-tick.maj{stroke:rgba(175,255,235,.85);stroke-width:1.7}
+  .cw-card{fill:rgba(190,255,240,.80);font:700 9.5px var(--tech,ui-monospace,monospace);
+    text-anchor:middle;dominant-baseline:middle;letter-spacing:.5px}
+  .cw-card.cw-n{fill:#8CFFD8;font-size:11px}
+  /* Chromatic split: a cyan and a magenta ghost either side of a white core. It is the cheapest
+     honest cue for "projected light" — a single flat needle reads as a sticker. */
+  .cw-nd{transform-origin:50px 50px}
+  .cw-nd-a{fill:rgba(80,240,255,.62);transform:translate(-.7px,0)}
+  .cw-nd-b{fill:rgba(255,90,190,.52);transform:translate(.7px,0)}
+  .cw-nd-m{fill:#EAFFF9}
+  .cw-tail{fill:rgba(140,220,215,.30)}
+  .cw-hub{fill:#DFFFF6}
+  .cw-hub-ring{fill:none;stroke:rgba(140,250,220,.45);stroke-width:.9}
+  #compDial{transform-origin:50px 50px;transition:transform .22s cubic-bezier(.22,.8,.3,1)}
+  #compSweep{transform-origin:50px 50px;animation:cwSweepSpin 5.5s linear infinite;opacity:.75}
+  @keyframes cwSweepSpin{to{transform:rotate(360deg)}}
+  #compass small{position:absolute;bottom:9px;left:0;right:0;text-align:center;
+    font-family:var(--tech);font-size:7.5px;letter-spacing:.4px;
+    color:rgba(180,255,238,.82);text-shadow:0 0 6px rgba(90,240,200,.55);pointer-events:none}
+  #compass.hup{border-color:rgba(140,255,220,.55);
+    box-shadow:var(--btn-shadow),0 0 22px rgba(90,240,200,.30),inset 0 0 20px rgba(70,220,190,.12)}
+  /* True-north state: the app has learned the local declination and is correcting for it. */
+  #compass.tn .cw-card.cw-n{fill:#B8FFE8}
+  #compass.tn small{color:rgba(200,255,244,.95)}
+  /* A dial spinning under the map is exactly the kind of always-on animation that costs frames
+     on a low-end phone, so lite mode stops the sweep and the eased rotation. */
+  html[data-lite="1"] #compSweep{animation:none;opacity:.25}
+  html[data-lite="1"] #compDial{transition:none}
+  @media (prefers-reduced-motion:reduce){ #compSweep{animation:none;opacity:.3} }
+  [data-theme="light"] #compass{
+    background:radial-gradient(circle at 50% 34%, rgba(250,253,252,.94), rgba(226,238,236,.96));
+    border-color:rgba(20,120,100,.28)}
+  [data-theme="light"] .cw-card{fill:rgba(12,70,60,.85)}
+  [data-theme="light"] .cw-card.cw-n{fill:#0B7A62}
+  [data-theme="light"] .cw-nd-m{fill:#0E1A18}
+  [data-theme="light"] .cw-tick{stroke:rgba(12,80,68,.40)}
+  [data-theme="light"] .cw-tick.maj{stroke:rgba(10,70,60,.75)}
+  [data-theme="light"] #compass small{color:rgba(10,70,60,.85);text-shadow:none}
 
   #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(var(--dockH,150px) + 12px);z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
   #fabs>*{pointer-events:auto;flex-shrink:0}
@@ -973,7 +1022,42 @@
   <div id="speed" aria-label="Speedometer"><span class="v" id="speedV">0</span><span class="u">mph</span></div>
   <div id="limitBadge" style="display:none;background:#fff;color:#111;border:2.5px solid #111;border-radius:9px;padding:4px 10px 5px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.4);line-height:1.05"><span style="font-size:8.5px;font-weight:800;letter-spacing:.4px;display:block">SPEED<br>LIMIT</span><b id="limitNum" style="font-family:var(--display);font-size:22px">--</b></div>
   <div id="trip"><b id="tripMi">0.0</b> TRIP MI</div>
-  <div id="compass" title="Toggle heading-up"><span id="needle">▲</span><small id="compDeg">N</small></div>
+  <div id="compass" title="Toggle heading-up">
+    <svg id="compRose" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <radialGradient id="cwGlass" cx="50%" cy="38%" r="72%">
+          <stop offset="0%" stop-color="rgba(140,255,220,.16)"/>
+          <stop offset="62%" stop-color="rgba(60,150,190,.07)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+        </radialGradient>
+        <linearGradient id="cwSweep" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--cw-hue)" stop-opacity=".55"/>
+          <stop offset="100%" stop-color="var(--cw-hue)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="url(#cwGlass)"/>
+      <circle cx="50" cy="50" r="45.5" class="cw-rim"/>
+      <circle cx="50" cy="50" r="38.5" class="cw-rim2"/>
+      <!-- the sweep sits UNDER the dial so it reads as light behind glass, not an overlay -->
+      <g id="compSweep"><path d="M50 50 L50 6 A44 44 0 0 1 76 15 Z" fill="url(#cwSweep)"/></g>
+      <!-- everything that must stay oriented to the world lives in this one rotated group -->
+      <g id="compDial">
+        <g id="compTicks"></g>
+        <text x="50" y="16.5" class="cw-card cw-n">N</text>
+        <text x="86" y="53.5" class="cw-card">E</text>
+        <text x="50" y="90.5" class="cw-card">S</text>
+        <text x="14" y="53.5" class="cw-card">W</text>
+        <!-- split needle: the two halves are offset a hair to fake chromatic fringing -->
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-a"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-b"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-m"/>
+        <path d="M50 80 L56 48 L50 53 L44 48 Z" class="cw-tail"/>
+      </g>
+      <circle cx="50" cy="50" r="3.2" class="cw-hub"/>
+      <circle cx="50" cy="50" r="6.4" class="cw-hub-ring"/>
+    </svg>
+    <small id="compDeg">N</small>
+  </div>
 </div>
 
 <div id="radialScrim"></div>
