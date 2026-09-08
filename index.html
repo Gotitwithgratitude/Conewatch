@@ -562,9 +562,24 @@
     overflow:visible;animation:none}
   body[data-tools="radial"] #moreFabs.open .fab{position:fixed;z-index:999}
   /* a soft scrim behind the fan so the icons stay readable over a busy map */
-  #radialScrim{position:fixed;inset:0;z-index:997;display:none;background:radial-gradient(circle at var(--rx,90%) var(--ry,72%),rgba(6,8,12,.55) 0,rgba(6,8,12,.28) 34%,transparent 62%);
-    -webkit-backdrop-filter:blur(1.5px);backdrop-filter:blur(1.5px)}
+  /* The scrim was a soft vignette that barely touched the map, so translucent tool buttons sat
+     on top of street labels and were genuinely hard to read. Now it dims the whole screen and
+     blurs properly — the map recedes, the tray reads, and it's obvious the app is in a mode. */
+  #radialScrim{position:fixed;inset:0;z-index:997;display:none;
+    background:radial-gradient(circle at var(--rx,80%) var(--ry,60%),rgba(4,6,10,.72) 0,rgba(4,6,10,.62) 42%,rgba(4,6,10,.50) 100%);
+    -webkit-backdrop-filter:blur(7px) saturate(.75);backdrop-filter:blur(7px) saturate(.75)}
   body[data-tools="radial"] #radialScrim.on{display:block}
+  /* Opaque while open. Glass is right for a lone button floating over the map; it is wrong for a
+     dense grid, where every icon competes with whatever street happens to be underneath it. */
+  #moreFabs.open .fab{
+    background:rgba(26,29,35,.97);
+    border-color:rgba(255,255,255,.16);
+    box-shadow:0 8px 24px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.35);
+    -webkit-backdrop-filter:none;backdrop-filter:none}
+  [data-theme="light"] #moreFabs.open .fab{
+    background:rgba(252,253,254,.98);
+    border-color:rgba(0,0,0,.14);
+    box-shadow:0 8px 24px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.06)}
   @media (prefers-reduced-motion:reduce){#moreFabs.open{animation:none}}
   /* saved + recent destination chips: truncate with an ellipsis instead of a hard cut */
   #quick .chip{max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

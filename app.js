@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v245";
+const APP_VERSION="v246";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3826,94 +3826,58 @@ function layoutRadial(animate){
   var tray=$("moreFabs"); if(!tray) return;
   var g=_radialGeom(); if(!g) return;
   var kids=Array.prototype.slice.call(tray.children);
-  /* Give every item its own angle instead of reusing four across two rings. With eight tools the
-     old scheme stacked pairs on the same bearing and relied on the radius to separate them —
-     which the clamps below then undid. */
-  var n=kids.length;
-  var A0=98, A1=192;
-  var angs=[];
-  for(var _i=0;_i<n;_i++) angs.push(n>1 ? A0+(A1-A0)*(_i/(n-1)) : (A0+A1)/2);
-  var r1=g.sz*2.15, r2=g.sz*3.45;
-  var top=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160)+10;
+  var n=kids.length; if(!n) return;
+
+  /* A GRID, not a scatter.
+     The radial fan looked good with three or four tools and fell apart at eight: the arc had to
+     sprawl across the middle of the map to fit them, which put buttons over the driver's own
+     puck and over street labels, and no amount of collision-separation fixes a shape that is
+     simply too big. Buttons also had to be clamped away from the rail, the cluster and the dock,
+     and every clamp bent the arc further out of shape.
+     A tight grid tucked above the ⋯ button that opened it has none of those problems: it is
+     compact, it reads as a menu, its position is predictable, and it leaves the map visible. */
+  var cols = n>6 ? 3 : 2;
+  var rows = Math.ceil(n/cols);
+  var gapX = g.sz*1.20, gapY = g.sz*1.20;
+  // bottom-right of the grid sits just above the anchor, right-aligned to the rail
+  var rightX = g.cx;
+  var bottomY = g.cy - g.sz*1.35;
+  var top=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160)+10+g.sz/2;
+  // if the grid would run under the header, push it down rather than let it clip
+  var gridH=(rows-1)*gapY;
+  if(bottomY-gridH < top) bottomY = top+gridH;
+
   var scrim=$("radialScrim");
-  if(scrim){ scrim.style.setProperty("--rx",g.cx+"px"); scrim.style.setProperty("--ry",g.cy+"px"); scrim.classList.add("on"); }
-  var placed=[];
-  kids.forEach(function(el,i){
-    // alternate rings so neighbours on adjacent bearings are also at different distances
-    var r=((i%2)?r2:r1), ang=angs[i]*Math.PI/180;
-    var x=g.cx+r*Math.cos(ang), y=g.cy-r*Math.sin(ang);
-    if(y<top+g.sz/2) y=top+g.sz/2;                  // never tuck a button under the header
-    /* The near-vertical arm of the arc put a tool directly over the 911 button sitting above
-       this one in the rail. Keep every item clear to the LEFT of the rail instead. */
-    var railX=g.cx-g.sz*0.95;
-    if(x>railX) x=railX;
-    /* Also keep clear of the speed/trip/compass cluster on the left and of the driver's own
-       puck in the middle — a tool sitting on top of either is unreadable and untappable. */
-    try{
-      var cl=document.getElementById("cluster");
-      if(cl){ var cr=cl.getBoundingClientRect();
-        if(x-g.sz*0.5 < cr.right+8 && y+g.sz*0.5 > cr.top-8) x = cr.right+8+g.sz*0.5; }
-      var cxm=window.innerWidth/2, cym=window.innerHeight*0.52;
-      if(Math.abs(x-cxm)<g.sz*0.8 && Math.abs(y-cym)<g.sz*0.8) y = cym - g.sz*1.1;
-    }catch(e){}
-    /* and never let one drop onto the dock */
-    var dockTop=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150);
-    if(y>dockTop-g.sz*0.75) y=dockTop-g.sz*0.75;
-    if(x<g.sz*0.62) x=g.sz*0.62;                    // and never off the left edge
-    placed.push({el:el,x:x,y:y,i:i});
-  });
-  /* THE OVERLAP FIX. Every clamp above is applied to one button in isolation — against the rail,
-     the cluster, the centre puck, the dock — so two buttons clamped by the same edge land on the
-     same pixel and stack. Nothing was ever comparing siblings. This pushes any overlapping pair
-     apart along the line between them, a few passes, then re-applies the hard screen bounds so
-     separation can't shove one off-screen. */
-  var minD=g.sz*1.12, top2=top+g.sz/2;
-  var dockTop2=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150)-g.sz*0.75;
-  for(var pass=0;pass<14;pass++){
-    var moved=false;
-    for(var a2=0;a2<placed.length;a2++){
-      for(var b2=a2+1;b2<placed.length;b2++){
-        var p=placed[a2], q=placed[b2];
-        var dx=q.x-p.x, dy=q.y-p.y;
-        var d=Math.sqrt(dx*dx+dy*dy);
-        if(d>=minD) continue;
-        moved=true;
-        /* Exactly coincident. Using one fixed direction for every pair makes the whole pile
-           spread along a single line and it never resolves; deriving the direction from the
-           index fans them apart instead. Golden-angle spacing so no two indices agree. */
-        if(d<0.001){ var th=(a2*2.39996); dx=Math.cos(th); dy=Math.sin(th); d=1; }
-        var push=(minD-d)/2, ux=dx/d, uy=dy/d;
-        p.x-=ux*push; p.y-=uy*push;
-        q.x+=ux*push; q.y+=uy*push;
-      }
-    }
-    placed.forEach(function(p){
-      if(p.y<top2) p.y=top2;
-      if(p.y>dockTop2) p.y=dockTop2;
-      if(p.x>g.cx-g.sz*0.95) p.x=g.cx-g.sz*0.95;
-      if(p.x<g.sz*0.62) p.x=g.sz*0.62;
-    });
-    if(!moved) break;
+  if(scrim){
+    scrim.style.setProperty("--rx",rightX+"px");
+    scrim.style.setProperty("--ry",(bottomY-gridH/2)+"px");
+    scrim.classList.add("on");
   }
-  placed.forEach(function(p){
-    var el=p.el, i=p.i, x=p.x, y=p.y;
+  kids.forEach(function(el,i){
+    /* fill bottom-up, right-to-left: the first tool lands closest to the thumb that opened the
+       tray, not furthest from it */
+    var r=Math.floor(i/cols), c=i%cols;
+    var x=rightX - c*gapX;
+    var y=bottomY - r*gapY;
+    if(x<g.sz*0.62) x=g.sz*0.62;
     el.style.left=(g.cx-g.sz/2)+"px";
     el.style.top=(g.cy-g.sz/2)+"px";
     el.style.margin="0";
+    var dx=x-g.cx, dy=y-g.cy;
     if(animate){
       el.style.transition="none";
       el.style.transform="translate(0,0) scale(.4)";
       el.style.opacity="0";
-      (function(el2,dx,dy,d){
+      (function(el2,dx2,dy2,d){
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
-          el2.style.transition="transform .26s cubic-bezier(.2,.9,.25,1.25) "+d+"ms, opacity .16s linear "+d+"ms";
-          el2.style.transform="translate("+dx+"px,"+dy+"px) scale(1)";
+          el2.style.transition="transform .24s cubic-bezier(.2,.9,.25,1.2) "+d+"ms, opacity .14s linear "+d+"ms";
+          el2.style.transform="translate("+dx2+"px,"+dy2+"px) scale(1)";
           el2.style.opacity="1";
         }); });
-      })(el, x-g.cx, y-g.cy, i*22);
+      })(el, dx, dy, i*18);
     }else{
       el.style.transition="transform .16s ease-out";
-      el.style.transform="translate("+(x-g.cx)+"px,"+(y-g.cy)+"px) scale(1)";
+      el.style.transform="translate("+dx+"px,"+dy+"px) scale(1)";
       el.style.opacity="1";
     }
   });
