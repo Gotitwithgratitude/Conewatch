@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v232";
+const APP_VERSION="v233";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1813,6 +1813,210 @@ function maybeWarmArea(){
     precacheAround(S.pos,3000);
   }catch(e){}
 }
+/* ═══════════ offline corridor graph (session 1 of 3: capture + storage) ═══════════
+   Goal of the whole subproject: when you drift off-route and the network is gone, reroute
+   locally instead of dying. This first piece only CAPTURES the raw material — it fetches the
+   road network around a route while we still have signal and stores it. Nothing routes against
+   it yet; A* and the reroute hook come next.
+
+   Scoped deliberately to the route corridor rather than the whole city. A metro-wide graph is
+   hundreds of thousands of segments, tens of MB, and a download wait — which would break the
+   "free, no download, no account" promise the app is built on. The corridor is the part you
+   can actually drive off of, and it's a few thousand segments.
+
+   Stored in IndexedDB, not localStorage: localStorage is ~5MB total, synchronous (so writing a
+   big graph would jank the map mid-drive), and already carrying the route library, POI cache
+   and signal cache. */
+var CWDB_NAME="conewatch", CWDB_VER=1, CWDB_STORE="corridors";
+var _cwdb=null;
+function cwdbOpen(){
+  if(_cwdb) return Promise.resolve(_cwdb);
+  return new Promise(function(res,rej){
+    try{
+      if(!window.indexedDB) return rej(new Error("no idb"));
+      var rq=indexedDB.open(CWDB_NAME,CWDB_VER);
+      rq.onupgradeneeded=function(e){
+        var db=e.target.result;
+        if(!db.objectStoreNames.contains(CWDB_STORE)){
+          var st=db.createObjectStore(CWDB_STORE,{keyPath:"key"});
+          st.createIndex("t","t");                 // lets us evict oldest without scanning values
+        }
+      };
+      rq.onsuccess=function(){ _cwdb=rq.result; res(_cwdb); };
+      rq.onerror=function(){ rej(rq.error||new Error("idb open failed")); };
+    }catch(e){ rej(e); }
+  });
+}
+function cwdbPut(rec){
+  return cwdbOpen().then(function(db){
+    return new Promise(function(res,rej){
+      var tx=db.transaction(CWDB_STORE,"readwrite");
+      tx.objectStore(CWDB_STORE).put(rec);
+      tx.oncomplete=function(){ res(true); };
+      tx.onerror=function(){ rej(tx.error); };
+    });
+  });
+}
+function cwdbGet(key){
+  return cwdbOpen().then(function(db){
+    return new Promise(function(res,rej){
+      var tx=db.transaction(CWDB_STORE,"readonly");
+      var rq=tx.objectStore(CWDB_STORE).get(key);
+      rq.onsuccess=function(){ res(rq.result||null); };
+      rq.onerror=function(){ rej(rq.error); };
+    });
+  });
+}
+function cwdbAll(){
+  return cwdbOpen().then(function(db){
+    return new Promise(function(res,rej){
+      var tx=db.transaction(CWDB_STORE,"readonly");
+      var rq=tx.objectStore(CWDB_STORE).getAll();
+      rq.onsuccess=function(){ res(rq.result||[]); };
+      rq.onerror=function(){ rej(rq.error); };
+    });
+  });
+}
+function cwdbDel(key){
+  return cwdbOpen().then(function(db){
+    return new Promise(function(res){
+      var tx=db.transaction(CWDB_STORE,"readwrite");
+      tx.objectStore(CWDB_STORE).delete(key);
+      tx.oncomplete=function(){ res(true); };
+      tx.onerror=function(){ res(false); };
+    });
+  });
+}
+
+/* Keep only a handful of corridors. Each is a few hundred KB; without eviction a month of
+   commuting would quietly fill the origin's storage quota and start getting the whole app
+   evicted by the browser rather than just the oldest corridor. */
+var CORRIDOR_KEEP=6;
+async function corridorEvict(){
+  try{
+    var all=await cwdbAll();
+    if(all.length<=CORRIDOR_KEEP) return;
+    all.sort(function(a,b){ return b.t-a.t; });
+    for(var i=CORRIDOR_KEEP;i<all.length;i++) await cwdbDel(all[i].key);
+  }catch(e){}
+}
+
+/* Which OSM ways count as drivable, and what they cost. Weight is a speed proxy: A* multiplies
+   segment length by it, so a residential street costs more per metre than a trunk road and the
+   search prefers sensible roads instead of cutting through side streets. Service roads and
+   alleys are included but heavily penalised — you sometimes genuinely need them to get out of a
+   parking lot, but they should never be chosen for through travel. */
+var ROAD_W={
+  motorway:1.0, motorway_link:1.3, trunk:1.05, trunk_link:1.35,
+  primary:1.15, primary_link:1.45, secondary:1.3, secondary_link:1.6,
+  tertiary:1.5, tertiary_link:1.8, unclassified:1.9, residential:2.0,
+  living_street:3.0, service:3.4
+};
+function corridorKey(r){
+  try{
+    var co=r.geometry.coordinates;
+    var a=co[0], b=co[co.length-1];
+    return "c:"+a[1].toFixed(3)+","+a[0].toFixed(3)+">"+b[1].toFixed(3)+","+b[0].toFixed(3);
+  }catch(e){ return null; }
+}
+/* Overpass caps out on a single giant bbox for a long route, and a route bbox is mostly empty
+   space anyway (a 10km diagonal trip spans a huge rectangle it never enters). So we walk the
+   polyline and emit a chain of small boxes that actually hug the road. */
+function corridorBoxes(coords,padDeg){
+  var boxes=[], i=0, STRIDE=60;
+  while(i<coords.length){
+    var slice=coords.slice(i, Math.min(coords.length, i+STRIDE+1));
+    if(slice.length<2){ break; }
+    var minLat=90,maxLat=-90,minLng=180,maxLng=-180;
+    slice.forEach(function(c){
+      if(c[1]<minLat)minLat=c[1]; if(c[1]>maxLat)maxLat=c[1];
+      if(c[0]<minLng)minLng=c[0]; if(c[0]>maxLng)maxLng=c[0];
+    });
+    boxes.push([minLat-padDeg,minLng-padDeg,maxLat+padDeg,maxLng+padDeg]);
+    i+=STRIDE;
+  }
+  return boxes.slice(0,14);            // hard ceiling: a cross-country route is not a corridor
+}
+/* Build the node/edge graph. Nodes are deduped by OSM id, so a junction shared by two ways
+   becomes ONE node with edges from both — which is the entire point; without that dedup the
+   "graph" is a pile of disconnected polylines and A* can never turn a corner. */
+function buildCorridorGraph(elements){
+  var nodes={}, adj={}, ways=0;
+  (elements||[]).forEach(function(el){
+    if(el.type==="node" && isFinite(el.lat) && isFinite(el.lon)) nodes[el.id]=[+el.lon.toFixed(6),+el.lat.toFixed(6)];
+  });
+  (elements||[]).forEach(function(el){
+    if(el.type!=="way" || !el.nodes || el.nodes.length<2) return;
+    var t=el.tags||{};
+    var w=ROAD_W[t.highway];
+    if(!w) return;
+    if(t.access==="private"||t.access==="no") return;
+    // oneway:-1 means the way is digitised backwards; treat it as one-way in reverse
+    var rev = (t.oneway==="-1");
+    var one = rev || t.oneway==="yes" || t.oneway==="true" || t.oneway==="1" || t.junction==="roundabout";
+    ways++;
+    for(var i=0;i<el.nodes.length-1;i++){
+      var a=el.nodes[i], b=el.nodes[i+1];
+      if(!nodes[a]||!nodes[b]) continue;
+      if(rev){ var tmp=a; a=b; b=tmp; }
+      (adj[a]||(adj[a]=[])).push([b,w]);
+      if(!one) (adj[b]||(adj[b]=[])).push([a,w]);
+    }
+  });
+  // drop nodes no drivable edge touches — they are most of the payload and none of the value
+  var keep={};
+  for(var k in adj){
+    keep[k]=nodes[k];
+    adj[k].forEach(function(e){ keep[e[0]]=nodes[e[0]]; });
+  }
+  for(var k2 in keep){ if(!keep[k2]) delete keep[k2]; }
+  return {nodes:keep,adj:adj,ways:ways};
+}
+var _corridorBusy=false;
+async function captureCorridorGraph(r){
+  if(_corridorBusy) return null;
+  var of=window.overpassFetch;
+  if(typeof of!=="function" || !navigator.onLine) return null;
+  var key=corridorKey(r); if(!key) return null;
+  try{
+    var have=await cwdbGet(key);
+    if(have && Date.now()-have.t < 7*864e5) return have;      // fresh enough; roads change slowly
+  }catch(e){}
+  _corridorBusy=true;
+  try{
+    var co=r.geometry.coordinates||[];
+    if(co.length<2) return null;
+    var boxes=corridorBoxes(co, 0.0042);                      // ~450m each side of the line
+    var all=[];
+    for(var i=0;i<boxes.length;i++){
+      var b=boxes[i];
+      var q="[out:json][timeout:25];way("+b.join(",")+')["highway"];out body;>;out skel qt;';
+      try{
+        var d=await of(q);
+        if(d && d.elements) all=all.concat(d.elements);
+      }catch(e){ /* one box failing shouldn't void the corridor — the rest still routes */ }
+    }
+    if(!all.length) return null;
+    var g=buildCorridorGraph(all);
+    var nodeCount=Object.keys(g.nodes).length;
+    if(nodeCount<20) return null;                             // too thin to be useful
+    var rec={key:key,t:Date.now(),dest:S.dest||null,destName:S.destName||"",
+             nodes:g.nodes,adj:g.adj,ways:g.ways,n:nodeCount};
+    await cwdbPut(rec);
+    await corridorEvict();
+    try{ console.log("ConeWatch corridor cached:",key,nodeCount,"nodes /",g.ways,"ways"); }catch(e){}
+    return rec;
+  }catch(e){ try{ console.log("corridor capture failed",e); }catch(_){} return null; }
+  finally{ _corridorBusy=false; }
+}
+/* Console helper so this session's work is inspectable without a UI:
+   await cwCorridors()  →  what is actually stored. */
+window.cwCorridors=async function(){
+  try{
+    var all=await cwdbAll();
+    return all.map(function(x){ return {key:x.key,dest:x.destName,nodes:x.n,ways:x.ways,age:Math.round((Date.now()-x.t)/60000)+"m"}; });
+  }catch(e){ return "idb unavailable: "+e; }
+};
 function precacheCorridor(r){
   try{
     if(!r||!r.geometry||!r.geometry.coordinates) return;
@@ -1996,6 +2200,8 @@ async function fetchRoute(silent){
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     try{refreshRouteCondition();}catch(e){}
     try{ saveRouteLocal(r); precacheCorridor(r); }catch(e){}
+    // graph capture is background work: delay it so it never contends with rendering the route
+    try{ setTimeout(function(){ captureCorridorGraph(r); }, 4000); }catch(e){}
     if(!silent){
       const b=r.geometry.coordinates.reduce((bb,c)=>bb.extend(c),new maplibregl.LngLatBounds(r.geometry.coordinates[0],r.geometry.coordinates[0]));
       map.fitBounds(b,{padding:{top:160,bottom:90,left:50,right:50}});
