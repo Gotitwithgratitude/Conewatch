@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v246";
+const APP_VERSION="v247";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3828,53 +3828,67 @@ function layoutRadial(animate){
   var kids=Array.prototype.slice.call(tray.children);
   var n=kids.length; if(!n) return;
 
-  /* A GRID, not a scatter.
-     The radial fan looked good with three or four tools and fell apart at eight: the arc had to
-     sprawl across the middle of the map to fit them, which put buttons over the driver's own
-     puck and over street labels, and no amount of collision-separation fixes a shape that is
-     simply too big. Buttons also had to be clamped away from the rail, the cluster and the dock,
-     and every clamp bent the arc further out of shape.
-     A tight grid tucked above the ⋯ button that opened it has none of those problems: it is
-     compact, it reads as a menu, its position is predictable, and it leaves the map visible. */
-  var cols = n>6 ? 3 : 2;
-  var rows = Math.ceil(n/cols);
-  var gapX = g.sz*1.20, gapY = g.sz*1.20;
-  // bottom-right of the grid sits just above the anchor, right-aligned to the rail
-  var rightX = g.cx;
-  var bottomY = g.cy - g.sz*1.35;
-  var top=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160)+10+g.sz/2;
-  // if the grid would run under the header, push it down rather than let it clip
-  var gridH=(rows-1)*gapY;
-  if(bottomY-gridH < top) bottomY = top+gridH;
+  /* Tools are the whole screen while this is open, so lay them out as a centred panel rather
+     than something tucked into a corner. Two failures to avoid, both shipped already:
+       v244 fanned them on an arc, which had to sprawl across the map to fit eight and covered
+       the driver's own puck;
+       v246 gridded them but right-aligned the grid to the ⋯ button, so its right column shared
+       x with the rail and the bottom-right tool landed on top of the 911 button.
+     The fix for both is to compute the free space FIRST — everything left of the rail, below the
+     header, above the dock — and centre an evenly-spaced grid inside it. Nothing is positioned
+     relative to another control, so nothing can collide with one. */
+  var vw=window.innerWidth, vh=window.innerHeight;
+  var hdr=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160);
+  var dockH=(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150);
+  var railLeft=g.cx-g.sz/2;                       // the 911 / ⚠ / recentre column lives here
+  var padX=16, padTop=14, padBot=14;
+  var boxL=padX, boxR=railLeft-16;                // hard stop clear of the rail
+  var boxT=hdr+padTop, boxB=vh-dockH-padBot;
+  var boxW=Math.max(120,boxR-boxL), boxH=Math.max(120,boxB-boxT);
+
+  // choose the column count that best fills the box without forcing the cells too tight
+  var cols=Math.min(n, Math.max(2, Math.floor(boxW/(g.sz*1.34))));
+  var rows=Math.ceil(n/cols);
+  // shrink the step (never the button) if a tall grid would not otherwise fit
+  var stepX=Math.min(g.sz*1.46, boxW/Math.max(1,cols));
+  var stepY=Math.min(g.sz*1.46, boxH/Math.max(1,rows));
+
+  var gridW=(cols-1)*stepX, gridH=(rows-1)*stepY;
+  var startX=boxL+(boxW-gridW)/2;
+  var startY=boxT+(boxH-gridH)/2;
 
   var scrim=$("radialScrim");
   if(scrim){
-    scrim.style.setProperty("--rx",rightX+"px");
-    scrim.style.setProperty("--ry",(bottomY-gridH/2)+"px");
+    scrim.style.setProperty("--rx",(startX+gridW/2)+"px");
+    scrim.style.setProperty("--ry",(startY+gridH/2)+"px");
     scrim.classList.add("on");
   }
   kids.forEach(function(el,i){
-    /* fill bottom-up, right-to-left: the first tool lands closest to the thumb that opened the
-       tray, not furthest from it */
     var r=Math.floor(i/cols), c=i%cols;
-    var x=rightX - c*gapX;
-    var y=bottomY - r*gapY;
-    if(x<g.sz*0.62) x=g.sz*0.62;
+    /* Centre the final row's leftovers so a 3x3 holding 8 does not leave a lopsided gap —
+       the row reads as deliberate instead of truncated. */
+    var inRow=Math.min(cols, n-r*cols);
+    var rowW=(inRow-1)*stepX;
+    var x=boxL+(boxW-rowW)/2 + c*stepX;
+    var y=startY + r*stepY;
     el.style.left=(g.cx-g.sz/2)+"px";
     el.style.top=(g.cy-g.sz/2)+"px";
     el.style.margin="0";
     var dx=x-g.cx, dy=y-g.cy;
     if(animate){
       el.style.transition="none";
-      el.style.transform="translate(0,0) scale(.4)";
+      el.style.transform="translate(0,0) scale(.35)";
       el.style.opacity="0";
+      /* Stagger outward from the ⋯ that opened it, nearest first, so the grid assembles from
+         the thumb rather than all arriving at once. */
+      var delay=(r*cols+c)*20;
       (function(el2,dx2,dy2,d){
         requestAnimationFrame(function(){ requestAnimationFrame(function(){
-          el2.style.transition="transform .24s cubic-bezier(.2,.9,.25,1.2) "+d+"ms, opacity .14s linear "+d+"ms";
+          el2.style.transition="transform .30s cubic-bezier(.18,.92,.26,1.14) "+d+"ms, opacity .18s linear "+d+"ms";
           el2.style.transform="translate("+dx2+"px,"+dy2+"px) scale(1)";
           el2.style.opacity="1";
         }); });
-      })(el, dx, dy, i*18);
+      })(el, dx, dy, delay);
     }else{
       el.style.transition="transform .16s ease-out";
       el.style.transform="translate("+dx+"px,"+dy+"px) scale(1)";
