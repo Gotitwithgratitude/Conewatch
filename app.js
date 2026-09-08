@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v239";
+const APP_VERSION="v240";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -288,9 +288,14 @@ function rasterStyleObj(dark){
   // The dark canvas basemap tops out ~z16, which produced "Map data not yet available" while driving.
   // Night mode is rendered by darkening these tiles instead of swapping to a shallower source.
   const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  /* Dark mode used to knock 35% of the saturation out of the tiles. That is what made parks,
+     water and road classes collapse into the same grey — next to Apple Maps it reads as a dead
+     map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
+     brightness down, saturation slightly UP to hold colour through the darkening, contrast up
+     so road hierarchy survives it. */
   let paint = dark
-    ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12,"raster-opacity":1}
-    : {"raster-opacity":1};
+    ? {"raster-brightness-max":0.52,"raster-brightness-min":0.02,"raster-saturation":0.18,"raster-contrast":0.28,"raster-opacity":1}
+    : {"raster-saturation":0.10,"raster-contrast":0.10,"raster-opacity":1};
   let bgc = dark?"#0E1013":"#EAE6DF";
   /* THIS is the function styleFor() actually calls. Every seasonal treatment I wrote before
      went into rasterStyle() instead — a dead twin — which is why none of it ever appeared.
@@ -298,18 +303,28 @@ function rasterStyleObj(dark){
      so we stay on the street source and push it to dusk with paint properties only. */
   try{
     if(typeof seasonActive==="function" && seasonActive()){
+      /* The seasonal treatment used to hue-rotate the BASEMAP by -34deg, which swings every
+         green toward brown and is why the map read as beige mud next to Apple's. A season is
+         decoration; the map is the product. Tint the chrome, leave the map data legible — a
+         very light warm push only, no hue rotation. */
       paint = dark
-        ? {"raster-brightness-max":0.34,"raster-brightness-min":0.00,"raster-saturation":0.30,
-           "raster-contrast":0.42,"raster-hue-rotate":-34,"raster-opacity":1}
-        : {"raster-brightness-max":0.46,"raster-brightness-min":0.00,"raster-saturation":0.35,
-           "raster-contrast":0.40,"raster-hue-rotate":-34,"raster-opacity":1};
-      bgc = dark ? "#1A0E06" : "#6B4A2A";   // warm, matches the tinted tiles so gaps blend
+        ? {"raster-brightness-max":0.50,"raster-brightness-min":0.00,"raster-saturation":0.22,
+           "raster-contrast":0.34,"raster-hue-rotate":-8,"raster-opacity":1}
+        : {"raster-saturation":0.20,"raster-contrast":0.16,"raster-hue-rotate":-8,"raster-opacity":1};
+      bgc = dark ? "#141017" : "#EDE7E2";
     }
   }catch(e){}
+  /* THE SHARPNESS GAP. Esri serves 256px tiles and we declared tileSize 256, so one tile pixel
+     was stretched across three device pixels on a modern phone — that soft, smeared look next
+     to Apple's vector map. Declaring 128 makes MapLibre fetch one zoom level deeper for the
+     same view, so twice the pixel density lands in the same space. Costs ~4x the tile requests,
+     which is why it is applied only where the screen can actually show the difference. */
+  var _dpr = (typeof window!=="undefined" && window.devicePixelRatio) || 1;
+  var _ts = _dpr>=2 ? 128 : 256;
   return {version:8,
-    sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
+    sources:{basemap:{type:"raster",tiles:[url],tileSize:_ts,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
     layers:[{id:"bg",type:"background",paint:{"background-color":bgc}},
-            {id:"basemap",type:"raster",source:"basemap",paint:paint}]};
+            {id:"basemap",type:"raster",source:"basemap",paint:paint,layout:{visibility:"visible"}}]};
 }
 async function styleFor(theme){
   return rasterStyleObj(theme!=="light");   // raster PNG = reliably cacheable offline
