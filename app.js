@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v237";
+const APP_VERSION="v238";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1892,12 +1892,16 @@ function cwdbDel(key){
    commuting would quietly fill the origin's storage quota and start getting the whole app
    evicted by the browser rather than just the oldest corridor. */
 var CORRIDOR_KEEP=6;
+var AREA_KEEP=2;
 async function corridorEvict(){
   try{
     var all=await cwdbAll();
-    if(all.length<=CORRIDOR_KEEP) return;
-    all.sort(function(a,b){ return b.t-a.t; });
-    for(var i=CORRIDOR_KEEP;i<all.length;i++) await cwdbDel(all[i].key);
+    // Corridors and areas age out on separate budgets. A single shared list would let a busy
+    // week of driving evict the home-area graph, which is exactly the record worth keeping.
+    var cors=all.filter(function(x){ return x.kind!=="area"; }).sort(function(a,b){ return b.t-a.t; });
+    var areas=all.filter(function(x){ return x.kind==="area"; }).sort(function(a,b){ return (b.hits||0)-(a.hits||0) || b.t-a.t; });
+    for(var i=CORRIDOR_KEEP;i<cors.length;i++) await cwdbDel(cors[i].key);
+    for(var j=AREA_KEEP;j<areas.length;j++) await cwdbDel(areas[j].key);
   }catch(e){}
 }
 
@@ -1982,6 +1986,141 @@ function buildCorridorGraph(elements){
   for(var k2 in keep){ if(!keep[k2]) delete keep[k2]; }
   return {nodes:keep,adj:adj,ways:ways,names:names};
 }
+/* ═══════════ home-area graph ═══════════
+   The corridor cache only covers roads you have already routed along, so offline routing to a
+   place you have never driven returns nothing. This fixes that for the case that actually
+   matters: trips that start near where you already are. Most driving is local, so a graph
+   covering a few km around your usual spot covers most of what you would ever ask for offline
+   — without a region download, a permission prompt, or a wait, which is what full metro-wide
+   offline would cost and what the app's "free, nothing to install" promise cannot afford.
+
+   Captured in the background, on wifi, while parked. Never while driving: bandwidth and CPU
+   mid-drive belong to navigation. */
+var AREA_RADIUS_M=3000;
+var AREA_MAX_NODES=90000;                    // refuse a graph too big to hold or search quickly
+var AREA_TTL=21*864e5;                       // roads change slowly; three weeks is conservative
+
+/* Dwell tracking. We cache where you actually SPEND TIME, not wherever you happened to open the
+   app — one visit to a suburb should not evict the graph around your own street. Cells are
+   ~1.1km so a normal neighbourhood collapses to one or two of them. */
+var AREA_CELL=0.01;
+function _areaCellKey(lat,lng){ return Math.floor(lat/AREA_CELL)+"|"+Math.floor(lng/AREA_CELL); }
+function _areaCellCentre(k){
+  var p=k.split("|");
+  return {lat:(+p[0]+0.5)*AREA_CELL, lng:(+p[1]+0.5)*AREA_CELL};
+}
+function noteDwell(){
+  try{
+    if(!S.pos) return;
+    if(S.speedMph>4) return;                                   // moving through, not dwelling
+    var k=_areaCellKey(S.pos.lat,S.pos.lng);
+    var d={}; try{ d=JSON.parse(localStorage.getItem("cw_dwell")||"{}")||{}; }catch(e){ d={}; }
+    var now=Date.now();
+    var rec=d[k]||{n:0,t:0};
+    if(now-rec.t < 240000) return;                             // one credit per 4 min, not per tick
+    rec.n++; rec.t=now; d[k]=rec;
+    var keys=Object.keys(d);
+    if(keys.length>12){                                        // keep the table small and current
+      keys.sort(function(a,b){ return (d[a].n-d[b].n) || (d[a].t-d[b].t); });
+      while(keys.length>12) delete d[keys.shift()];
+    }
+    localStorage.setItem("cw_dwell",JSON.stringify(d));
+  }catch(e){}
+}
+function topDwellCell(){
+  try{
+    var d=JSON.parse(localStorage.getItem("cw_dwell")||"{}")||{};
+    var best=null,bn=0;
+    for(var k in d){ if(d[k].n>bn){ bn=d[k].n; best=k; } }
+    return (best && bn>=3) ? {key:best,hits:bn,centre:_areaCellCentre(best)} : null;
+  }catch(e){ return null; }
+}
+/* Wifi only, as far as the platform will tell us. navigator.connection is absent on iOS Safari,
+   so the honest fallback is: attempt it anyway, but only when parked and only once per TTL —
+   a few MB every three weeks is not something to ask permission for. */
+function _looksLikeWifi(){
+  try{
+    var c=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+    if(!c) return true;                                        // unknowable (iOS) — see comment
+    if(c.saveData) return false;                               // user asked for less data: obey
+    if(c.type) return c.type==="wifi"||c.type==="ethernet";
+    return c.effectiveType==="4g";                             // crude, but excludes 2g/3g
+  }catch(e){ return true; }
+}
+function areaKeyFor(cell){ return "a:"+cell.key; }
+/* Tile the radius into a grid of Overpass boxes. One 6km-wide query for every drivable way
+   times out on every mirror; a dozen small ones succeed independently and a single failure
+   costs one tile rather than the whole area. */
+function areaBoxes(centre,radiusM){
+  var dLat=radiusM/111320;
+  var dLng=radiusM/(111320*Math.max(0.2,Math.cos(centre.lat*Math.PI/180)));
+  var N=4, boxes=[];
+  for(var i=0;i<N;i++) for(var j=0;j<N;j++){
+    var s=centre.lat-dLat+(2*dLat)*(i/N),   n=centre.lat-dLat+(2*dLat)*((i+1)/N);
+    var w=centre.lng-dLng+(2*dLng)*(j/N),   e=centre.lng-dLng+(2*dLng)*((j+1)/N);
+    boxes.push([s,w,n,e]);
+  }
+  return boxes;
+}
+var _areaBusy=false;
+async function captureAreaGraph(force){
+  if(_areaBusy) return null;
+  var of=window.overpassFetch;
+  if(typeof of!=="function"||!navigator.onLine) return null;
+  if(!force){
+    if(S.navigating) return null;                              // never compete with a live drive
+    if(S.speedMph>4) return null;
+    if(!_looksLikeWifi()) return null;
+  }
+  var cell=topDwellCell();
+  if(!cell) return null;                                       // not enough dwell to know where "home" is
+  var key=areaKeyFor(cell);
+  try{
+    var have=await cwdbGet(key);
+    if(have && have.v===2 && Date.now()-have.t<AREA_TTL && !force) return have;
+  }catch(e){}
+  _areaBusy=true;
+  try{
+    var boxes=areaBoxes(cell.centre,AREA_RADIUS_M);
+    var all=[], failed=0;
+    for(var i=0;i<boxes.length;i++){
+      var b=boxes[i];
+      /* Deliberately excludes `service`: alleys, driveways and parking aisles are a large share
+         of nodes in a dense area and are almost never the road you want. Corridor capture keeps
+         them, because there they are cheap and occasionally the way out of a lot. */
+      var q="[out:json][timeout:40];way("+b.join(",")+')["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street)(_link)?$"];out body;>;out skel qt;';
+      try{
+        var d=await of(q);
+        if(d&&d.elements) all=all.concat(d.elements);
+      }catch(e){ failed++; }
+      await new Promise(function(r){ setTimeout(r,400); });     // be a decent Overpass citizen
+      if(document.hidden && !force){ /* keep going: backgrounded is the ideal time for this */ }
+    }
+    if(failed>boxes.length/2) return null;                     // too patchy to be trustworthy
+    if(!all.length) return null;
+    var g=buildCorridorGraph(all);
+    var n=Object.keys(g.nodes).length;
+    if(n<200) return null;
+    if(n>AREA_MAX_NODES) return null;                          // would be slow to search and huge to store
+    var rec={key:key,v:2,kind:"area",t:Date.now(),hits:cell.hits,
+             centre:cell.centre,radius:AREA_RADIUS_M,destName:"home area",
+             nodes:g.nodes,adj:g.adj,ways:g.ways,names:g.names||[],n:n};
+    await cwdbPut(rec);
+    await corridorEvict();
+    try{ console.log("ConeWatch area cached:",key,n,"nodes /",g.ways,"ways,",failed,"tiles failed"); }catch(e){}
+    return rec;
+  }catch(e){ return null; }
+  finally{ _areaBusy=false; }
+}
+/* Try once shortly after launch, then a few times a day. The TTL check inside makes repeat
+   calls nearly free, so this is a cheap way to catch the moment the phone lands on wifi. */
+try{
+  setInterval(noteDwell, 60000);
+  setTimeout(function(){ try{ captureAreaGraph(); }catch(e){} }, 45000);
+  setInterval(function(){ try{ captureAreaGraph(); }catch(e){} }, 3*3600*1000);
+}catch(e){}
+window.cwCacheAreaNow=function(){ return captureAreaGraph(true); };
+
 /* ═══════════ offline routing, session 2 of 3: local A* ═══════════
    Routes across a cached corridor graph with no network. Session 3 wires this to the off-route
    handler; for now it is callable and testable but nothing invokes it automatically.
@@ -5593,8 +5732,11 @@ try{
         cwdbAll().then(function(all){
           if(!all||!all.length){ _corrTxt="corridor  none cached yet\n(plan a route, wait ~5s)"; return; }
           all.sort(function(a,b){ return b.t-a.t; });
-          var x=all[0];
-          _corrTxt="corridor  "+all.length+" cached\n"+
+          var x=all.filter(function(z){ return z.kind!=="area"; })[0]||all[0];
+          var _ar=all.filter(function(z){ return z.kind==="area"; })[0];
+          _corrTxt=(_ar? ("area    "+_ar.n+" nodes  "+Math.round((Date.now()-_ar.t)/3600000)+"h old\n")
+                       : "area    not cached yet\n")+
+                   "corridor  "+all.filter(function(z){return z.kind!=="area";}).length+" cached\n"+
                    "newest  "+(x.n||0)+" nodes / "+(x.ways||0)+" ways\n"+
                    "to      "+((x.destName||"?").slice(0,18))+"\n"+
                    "age     "+Math.round((Date.now()-x.t)/60000)+" min"+
