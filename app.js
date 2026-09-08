@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v241";
+const APP_VERSION="v242";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -871,6 +871,7 @@ function onPos(p){
   if(!sunLoaded){ sunLoaded=true; loadSunTimes(); }
 
   autoParkWatch();
+  try{ _trackPoint(); }catch(e){}
   updateCompassUI(); cameraFollow();
   $("rsLoc").textContent=`You are at ${lat.toFixed(5)}, ${lng.toFixed(5)} (±${Math.round(accuracy)} m)`;
   $("sosCoords").textContent=`${lat.toFixed(5)}, ${lng.toFixed(5)}`;
@@ -4478,16 +4479,81 @@ var _decl=null, _declN=0, _declNative=false;
 try{ var _dv=JSON.parse(localStorage.getItem("cw_decl")||"null");
      if(_dv && isFinite(_dv.d)){ _decl=_dv.d; _declN=_dv.n||1; } }catch(e){}
 function _angDiff(a,b){ return ((a-b+540)%360)-180; }
+/* A 12 mph floor would mean the compass NEVER calibrates on foot — and walking and hiking are
+   exactly where a compass earns its keep, because there is no windscreen and no road to tell you
+   which way you are pointing. The floor existed because INSTANTANEOUS GPS course is noise at
+   walking pace; the fix is not to lower it but to stop using that signal.
+
+   Instead derive the heading from displacement over a window: where you were ~14 seconds ago
+   versus where you are now. Over 25+ metres that bearing is solid even at 3 mph, because the
+   GPS error stays roughly constant while the baseline grows. Then require the path to have been
+   roughly STRAIGHT across the window — a bearing taken around a corner is a lie regardless of
+   how far you walked. */
+var _trk=[];
+function _trackPoint(){
+  try{
+    if(!S.pos) return;
+    var now=Date.now();
+    var last=_trk[_trk.length-1];
+    if(last && now-last.t < 1500) return;
+    _trk.push({lat:S.pos.lat,lng:S.pos.lng,t:now,acc:S.accuracy||999});
+    while(_trk.length && now-_trk[0].t > 60000) _trk.shift();
+  }catch(e){}
+}
+/* Bearing over the window, or null if the window can't be trusted. */
+function windowedCourse(){
+  try{
+    if(_trk.length<4) return null;
+    var now=Date.now();
+    var a=null;
+    /* Window and distance are sized for WALKING, which is the slowest thing that needs to
+       calibrate. At 3 mph (1.34 m/s) a 16-second window covers only ~21m — so the first version
+       of this demanded 25m and would essentially never have fired on foot. A 24-second window
+       covers ~32m at the same pace, and 18m is comfortably above GPS noise on a good fix. */
+    for(var i=0;i<_trk.length;i++){ if(now-_trk[i].t<=24000){ a=_trk[i]; break; } }
+    if(!a) a=_trk[0];
+    var b=_trk[_trk.length-1];
+    if(b.t-a.t < 9000) return null;                       // too short a baseline to mean anything
+    if(a.acc>25 || b.acc>25) return null;                 // fixes too loose to trust the endpoints
+    var span=distM(a,b);
+    if(span<18) return null;                              // standing still or shuffling
+    /* Straightness. The obvious test — sum the per-fix path and compare it to the chord — does
+       not survive contact with a walking pace: each fix carries several metres of GPS noise
+       while each step advances only ~2m, so the measured path is mostly jitter and a perfectly
+       straight walk scores as a wander. Compare HALVES instead: the bearing over the first half
+       against the second. Averaging across many fixes cancels the noise, while a genuine corner
+       still swings the two apart. */
+    var mid=null, midT=(a.t+b.t)/2, bestDT=Infinity;
+    for(var k=0;k<_trk.length;k++){
+      if(_trk[k].t<a.t) continue;
+      var dt=Math.abs(_trk[k].t-midT);
+      if(dt<bestDT){ bestDT=dt; mid=_trk[k]; }
+    }
+    if(mid){
+      var h1=_bearingDeg([a.lng,a.lat],[mid.lng,mid.lat]);
+      var h2=_bearingDeg([mid.lng,mid.lat],[b.lng,b.lat]);
+      if(Math.abs(_angDiff(h1,h2))>38) return null;      // turned mid-window: bearing is a lie
+    }
+    return _bearingDeg([a.lng,a.lat],[b.lng,b.lat]);
+  }catch(e){ return null; }
+}
 function learnDeclination(){
   try{
     if(_declNative) return;                       // iOS already gives true north
-    if(S.compass===null||S.course===null) return;
-    if(S.speedMph<12) return;                     // below this, GPS course is noise, not a heading
-    var d=_angDiff(S.course,S.compass);
+    if(S.compass===null) return;
+    var truth=null, weight=0.06;
+    if(S.course!==null && S.speedMph>=12){
+      truth=S.course;                             // driving: instantaneous course is reliable
+    } else {
+      /* On foot, on a bike, on a trail. The windowed bearing is slower to earn but just as true,
+         so it is weighted lower per sample rather than excluded. */
+      truth=windowedCourse();
+      weight=0.035;
+    }
+    if(truth===null) return;
+    var d=_angDiff(truth,S.compass);
     if(Math.abs(d)>45) return;                    // declination is never this large: bad sample
-    // Slow rolling average. Each sample is one noisy pass through a magnetically messy city;
-    // only the accumulation of many is worth trusting.
-    _decl = (_decl===null) ? d : (_decl*0.94 + d*0.06);
+    _decl = (_decl===null) ? d : (_decl*(1-weight) + d*weight);
     _declN++;
     if(_declN%25===0){ try{ localStorage.setItem("cw_decl",JSON.stringify({d:_decl,n:_declN,t:Date.now()})); }catch(e){} }
   }catch(e){}
@@ -4495,7 +4561,10 @@ function learnDeclination(){
 /* The heading we actually display: true north when we can justify it, magnetic otherwise —
    and the UI says which, rather than claiming true north it cannot deliver. */
 function trueHeading(){
-  if(S.course!==null && S.speedMph>=3) return {deg:S.course,tn:true};       // course IS true north
+  /* Driving: instantaneous course is true north and needs no correction. Walking: it jitters
+     badly, so prefer the corrected magnetic reading, which is steady and — once calibrated —
+     just as true. */
+  if(S.course!==null && S.speedMph>=8) return {deg:S.course,tn:true};
   if(S.compass===null) return {deg:null,tn:false};
   if(_declNative) return {deg:S.compass,tn:true};                          // iOS-corrected
   if(_decl!==null && _declN>=8) return {deg:(S.compass+_decl+360)%360,tn:true};
