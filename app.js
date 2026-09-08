@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v228";
+const APP_VERSION="v229";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -318,7 +318,7 @@ let map, meMarker, destMarker;
 const stopMarkers=[]; const hzMarkers=[];
 // time-to-live in minutes, grounded in real incident-clearance data (urban avg ~25-30 min, 45 = short/long threshold, rural/major longer).
 // 0 = permanent infrastructure — stays until a driver confirms it's fixed/gone. User confirms FRESHEN the timer (self-correcting).
-const HAZ_TTL={ power_lines:360, pothole:0, construction_cones:0, camera:0, road_closure:120, accident:45, police:20, emergency:15, traffic:30, stalled:45, debris:60, animal:30, flooding:180, ice:180, alert:60 };
+const HAZ_TTL={ power_lines:360, pothole:0, construction_cones:0, camera:0, camera_flock:0, road_closure:120, accident:45, police:20, emergency:15, traffic:30, stalled:45, debris:60, animal:30, flooding:180, ice:180, alert:60 };
 function _ago(ts){ const m=Math.floor((Date.now()-(ts||Date.now()))/60000); return m<1?"just now":m<60?m+"m ago":Math.floor(m/60)+"h "+ (m%60) +"m ago"; }
 function hazPopupHTML(h){
   const m=HZ_META[h.type]||HZ_META.debris;
@@ -479,6 +479,7 @@ let mapStyleTheme="dark";
   try{ map.touchZoomRotate.enableRotation(); }catch(e){}
   try{ map.dragRotate.enable(); }catch(e){}
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker(); try{ restoreRouteLocal(); }catch(e){}
+    try{ ensureSignalLayer(); scheduleSignalFetch(); }catch(e){}
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
     if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
@@ -490,7 +491,7 @@ let mapStyleTheme="dark";
     // auto-recenter after a few seconds of no interaction (no button needed)
     _reCenterT=setTimeout(()=>{ if(!S.touching){ S.follow=true; updateFollowUI(); hideRelock(); cameraFollow(); } }, S.navigating?6000:9000);
   });
-  map.on("moveend",()=>{ if(!S.follow && S.mapReady) startRelock(); });
+  map.on("moveend",()=>{ if(!S.follow && S.mapReady) startRelock(); try{ scheduleSignalFetch(); }catch(e){} });
   map.on("error",()=>{});
   applyTheme(true);
 })();
@@ -540,6 +541,9 @@ function applyMapMode(){
   try{ if(map.getLayer("cw-3d")) map.setLayoutProperty("cw-3d","visibility",(mode==="full"&&S.is3d)?"visible":"none"); }catch(e){}
   // Discover POI markers: hidden in minimal
   try{ poiMarkers.forEach(m=>{ const el=m.getElement&&m.getElement(); if(el) el.style.display=(mode==="minimal")?"none":""; }); }catch(e){}
+  // traffic signals: full only. Leaving full also means we stop spending Overpass requests
+  // on them, so re-arm the fetch when we come back.
+  try{ applySignalVis(); if(mode==="full") scheduleSignalFetch(); }catch(e){}
   const btn=$("fabMapMode"); if(btn){ btn.classList.toggle("active",mode!=="full"); btn.textContent=(mode==="minimal")?"▁":(mode==="clean")?"◐":"◑"; }
   try{ layout(); }catch(e){}   // header shrinks in minimal — re-measure --hdrH so the FAB rail follows
 }
@@ -675,6 +679,7 @@ function ensureRouteLayers(){
     // v185 briefly shipped a blurred bloom layer; strip it if a cached session still has one
     try{ if(map.getLayer("route-glow")) map.removeLayer("route-glow"); }catch(e){}
     if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
+    if(!map.getSource("signals")||!map.getLayer("signal-dots")) ensureSignalLayer();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
     refreshRouteCondition();
   }catch(e){}
@@ -2000,6 +2005,158 @@ async function fetchRoute(silent){
   }catch(e){ toast("Routing failed — check connection.",2600); }
   finally{ S.rerouting=false; }
 }
+/* ═══════════ traffic signals ═══════════
+   Drawn as a GeoJSON circle layer, NOT DOM markers. Downtown viewports hold several hundred
+   signals — an order of magnitude more than hazards — and every DOM marker is an element the
+   browser repositions on each frame of a drag. That is exactly the sluggishness we already
+   chased out of the hazard layer, so signals never get to reintroduce it: the GPU draws these.
+
+   Deliberately NOT shown: signal state (red/green). There is no public phase feed for Detroit
+   — SPaT data lives inside closed connected-vehicle pilots — so any colour we rendered would
+   be a guess wearing the costume of a fact. A driver glancing at a "green" that is actually
+   red is the one failure mode here that could get someone hurt. Locations only. */
+var SIG_MINZ=15;                      // below this they're clutter, not information
+var _sigFeat={};                      // id -> feature, deduped across overlapping fetches
+var _sigDone=[];                      // bbox keys already fetched this session
+var _sigT=null, _sigBusy=false;
+
+function _sigCacheLoad(){
+  try{
+    var c=JSON.parse(localStorage.getItem("cw_sig")||"null");
+    if(c && c.t && Date.now()-c.t < 14*864e5 && Array.isArray(c.f)){       // signals move rarely; a fortnight is safe
+      c.f.forEach(function(p){ _sigFeat[p[0]]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p[1],p[2]]}}; });
+      _sigDone=c.k||[];
+    }
+  }catch(e){}
+}
+function _sigCacheSave(){
+  try{
+    var f=[];
+    for(var id in _sigFeat){ var c=_sigFeat[id].geometry.coordinates; f.push([id,+c[0].toFixed(5),+c[1].toFixed(5)]); }
+    if(f.length>4000) f=f.slice(-4000);                                    // hard cap so localStorage can't bloat
+    localStorage.setItem("cw_sig",JSON.stringify({t:Date.now(),f:f,k:_sigDone.slice(-60)}));
+  }catch(e){}
+}
+function _sigData(){
+  var out=[]; for(var id in _sigFeat) out.push(_sigFeat[id]);
+  return {type:"FeatureCollection",features:out};
+}
+function ensureSignalLayer(){
+  try{
+    if(!S.mapReady||!map) return;
+    if(!map.getSource("signals")) map.addSource("signals",{type:"geojson",data:_sigData()});
+    if(!map.getLayer("signal-dots")){
+      // Sits BELOW the route line: a signal must never obscure the line you're following.
+      var before = map.getLayer("route-casing") ? "route-casing" : undefined;
+      map.addLayer({id:"signal-dots",type:"circle",source:"signals",minzoom:SIG_MINZ,
+        paint:{
+          "circle-radius":["interpolate",["linear"],["zoom"],15,2.6,17,4.4,19,6.5],
+          "circle-color":"#FFB020",
+          "circle-opacity":["interpolate",["linear"],["zoom"],15,.55,16.5,.9],
+          "circle-stroke-width":["interpolate",["linear"],["zoom"],15,.6,18,1.4],
+          "circle-stroke-color":"rgba(20,22,25,.85)"
+        }}, before);
+    }
+    applySignalVis();
+  }catch(e){}
+}
+function applySignalVis(){
+  // Full detail shows them (the default, so a new driver gets them without hunting for a
+  // setting); Clean and Minimal hide them along with the other ConeWatch overlays.
+  try{ if(map.getLayer("signal-dots")) map.setLayoutProperty("signal-dots","visibility",(S.mapMode||"full")==="full"?"visible":"none"); }catch(e){}
+}
+function _sigPush(els){
+  var n=0;
+  (els||[]).forEach(function(e){
+    var lat=e.lat, lng=e.lon;
+    if(!isFinite(lat)||!isFinite(lng)) return;
+    var id="s"+e.id;
+    if(_sigFeat[id]) return;
+    _sigFeat[id]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[lng,lat]}};
+    n++;
+  });
+  if(n){ try{ if(map.getSource("signals")) map.getSource("signals").setData(_sigData()); }catch(e){} _sigCacheSave(); }
+  return n;
+}
+function _bboxKey(b){ return [b[0].toFixed(2),b[1].toFixed(2),b[2].toFixed(2),b[3].toFixed(2)].join(","); }
+async function fetchSignals(bbox){
+  // overpassFetch is defined in cw-patch.js, which loads AFTER app.js — so it only exists at
+  // runtime, never at parse time. Bail quietly rather than throwing if the patch is absent.
+  var of = window.overpassFetch;
+  if(typeof of!=="function") return 0;
+  var key=_bboxKey(bbox);
+  if(_sigDone.indexOf(key)>-1) return 0;
+  _sigDone.push(key); if(_sigDone.length>60) _sigDone.shift();
+  var q="[out:json][timeout:18];node["+'"highway"="traffic_signals"'+"]("+bbox.join(",")+");out skel;";
+  try{ var d=await of(q); return _sigPush(d&&d.elements); }
+  catch(e){ var i=_sigDone.indexOf(key); if(i>-1) _sigDone.splice(i,1); return 0; }   // let a failed box retry later
+}
+function scheduleSignalFetch(){
+  if(_sigT) clearTimeout(_sigT);
+  _sigT=setTimeout(async function(){
+    try{
+      if(!S.mapReady||!map) return;
+      if((S.mapMode||"full")!=="full") return;                 // hidden — don't spend the request
+      if(map.getZoom()<SIG_MINZ) return;
+      if(!navigator.onLine||document.hidden) return;
+      if(_sigBusy) return;
+      var b=map.getBounds();
+      // pad the query past the viewport so a small pan doesn't trigger a fresh round trip
+      var pad=0.004;
+      var bbox=[b.getSouth()-pad,b.getWest()-pad,b.getNorth()+pad,b.getEast()+pad];
+      _sigBusy=true;
+      try{ await fetchSignals(bbox); } finally { _sigBusy=false; }
+    }catch(e){ _sigBusy=false; }
+  }, 700);                                                     // settle after the pan/zoom stops
+}
+try{ _sigCacheLoad(); }catch(e){}
+
+/* How many signals a candidate route actually passes through. This is the honest version of
+   "avoid traffic lights": we can't know their timing, but we can count them, and a route with
+   four lights genuinely drives differently from one with sixteen. */
+function routeSignalCount(rt){
+  try{
+    var co=(rt.geometry&&rt.geometry.coordinates)||[];
+    if(co.length<2) return null;
+    var ids=Object.keys(_sigFeat);
+    if(!ids.length) return null;                               // nothing fetched yet — say nothing rather than "0 lights"
+    var n=0;
+    for(var i=0;i<ids.length;i++){
+      var c=_sigFeat[ids[i]].geometry.coordinates, p={lat:c[1],lng:c[0]};
+      for(var k=0;k<co.length;k+=2){
+        if(distM({lat:co[k][1],lng:co[k][0]},p)<28){ n++; break; }
+      }
+    }
+    return n;
+  }catch(e){ return null; }
+}
+/* Fetch signals across the whole route corridor once, so the count on the picker reflects the
+   entire route rather than only the part that happened to be on screen. */
+var _sigRouteKey=null;
+async function annotateRouteSignals(alts){
+  try{
+    if(!alts||!alts.length) return;
+    if(typeof window.overpassFetch!=="function") return;
+    var minLat=90,maxLat=-90,minLng=180,maxLng=-180;
+    alts.forEach(function(rt){
+      var co=(rt.geometry&&rt.geometry.coordinates)||[];
+      for(var k=0;k<co.length;k+=4){
+        if(co[k][1]<minLat)minLat=co[k][1]; if(co[k][1]>maxLat)maxLat=co[k][1];
+        if(co[k][0]<minLng)minLng=co[k][0]; if(co[k][0]>maxLng)maxLng=co[k][0];
+      }
+    });
+    if(minLat>maxLat) return;
+    // A cross-country route would ask Overpass for an enormous box and time out; skip those
+    // rather than hang the picker. Signal counting is a city-driving feature.
+    if((maxLat-minLat)>0.9||(maxLng-minLng)>0.9) return;
+    var key=[minLat.toFixed(3),minLng.toFixed(3),maxLat.toFixed(3),maxLng.toFixed(3)].join(",");
+    if(_sigRouteKey===key) return; _sigRouteKey=key;
+    var pad=0.006;
+    var got=await fetchSignals([minLat-pad,minLng-pad,maxLat+pad,maxLng+pad]);
+    if(got) try{ renderRouteAlts(); }catch(e){}                // counts changed — repaint the chips
+  }catch(e){}
+}
+
 /* ═══════════ route alternatives ═══════════
    Name a route by a distinctive road it uses, so "via I-75" beats "Route 2". Pulled from the
    step names OSRM already returns — prefer a numbered highway, else the longest-used street. */
@@ -2020,7 +2177,7 @@ async function fetchRoute(silent){
 const ROUTE_PENALTY = {
   road_closure:300, flooding:240, power_lines:200, traffic:180, ice:180,
   accident:150, emergency:120, construction_cones:90, stalled:60, debris:45,
-  animal:20, pothole:15, speed_bump:10, camera:0, police:0
+  animal:20, pothole:15, speed_bump:10, camera:0, camera_flock:0, police:0
 };
 function routeHazardCost(rt){
   var cost=0, hits=[];
@@ -2113,6 +2270,7 @@ function renderRouteAlts(){
   var alts=S.routeAlts||[];
   if(alts.length<2){ box.style.display="none"; box.innerHTML=""; return; }
   box.style.display="flex"; box.innerHTML="";
+  try{ annotateRouteSignals(alts); }catch(e){}
   alts.forEach(function(rt,i){
     var mins=Math.max(1,Math.round(rt.duration*rushFactor()/60));
     var km=S.units==="km", dv=km?(rt.distance/1000):(rt.distance/1609.34);
@@ -2120,8 +2278,12 @@ function renderRouteAlts(){
     b.className="chip"+(i===S.routeAltIdx?" on":"");
     var sc=rt._sc||scoreRoute(rt);
     var note=routeAltNote(sc);
+    // Signal count is omitted entirely when we haven't fetched the corridor yet — showing
+    // "0 lights" for "we don't know" would be worse than showing nothing.
+    var sig=routeSignalCount(rt);
+    var sigTxt=(sig===null)?"":(" · "+sig+" light"+(sig===1?"":"s"));
     b.innerHTML="<b>"+mins+" min</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
-      "</small><br><small style=\"opacity:.75\">"+(note==="clear"?"\u2713 clear":"\u26A0 "+note)+"</small>";
+      "</small><br><small style=\"opacity:.75\">"+(note==="clear"?"\u2713 clear":"\u26A0 "+note)+sigTxt+"</small>";
     b.onclick=function(){ selectRouteAlt(i); renderRouteAlts(); };
     box.appendChild(b);
   });
