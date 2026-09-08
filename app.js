@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v236";
+const APP_VERSION="v237";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -5635,7 +5635,7 @@ try{
         "\n────────────\n"+_corridorLine();
     }
     try{
-      var _vb=document.getElementById("verBadge"), _vt=null;
+      var _vb=document.getElementById("netDot")||document.getElementById("verBadge"), _vt=null, _swallow=false;
       if(_vb){
         // a long press on text summons Copy / Look Up / Translate; suppress it on the badge
         _vb.style.webkitUserSelect="none"; _vb.style.userSelect="none";
@@ -5653,11 +5653,15 @@ try{
               _corrTick=setInterval(function(){ if(window.__cwDockDebug) dbg("armed"); },2000);
             }
             try{ if(navigator.vibrate) navigator.vibrate(20); }catch(e){}
+            _swallow=true;                       // the release still fires a click — eat it
           },700);
         });
         ["pointerup","pointerleave","pointercancel"].forEach(function(ev){
           _vb.addEventListener(ev,function(){ clearTimeout(_vt); });
         });
+        _vb.addEventListener("click",function(e){
+          if(_swallow){ _swallow=false; e.stopPropagation(); e.preventDefault(); }
+        },true);
       }
     }catch(e){}
     function onDown(e){
