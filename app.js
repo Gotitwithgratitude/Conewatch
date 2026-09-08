@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v230";
+const APP_VERSION="v231";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2026,7 +2026,7 @@ function _sigCacheLoad(){
     var c=JSON.parse(localStorage.getItem("cw_sig")||"null");
     if(c && c.t && Date.now()-c.t < 14*864e5 && Array.isArray(c.f)){       // signals move rarely; a fortnight is safe
       c.f.forEach(function(p){ _sigFeat[p[0]]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p[1],p[2]]}}; });
-      _sigDone=c.k||[];
+      _sigDone=c.k||[]; _sigClusterDirty=true;
     }
   }catch(e){}
 }
@@ -2038,9 +2038,51 @@ function _sigCacheSave(){
     localStorage.setItem("cw_sig",JSON.stringify({t:Date.now(),f:f,k:_sigDone.slice(-60)}));
   }catch(e){}
 }
+/* WHY THE DOTS SIT OFF THE INTERSECTION
+   OSM does not tag one signal per junction. `highway=traffic_signals` goes on the STOP LINE of
+   each approaching way — so a normal four-way crossing carries three or four separate nodes,
+   each set back 10-30m from the junction centre on its own arm. Rendered raw, that's what we
+   shipped in v230: a scatter of lights leading up to the corner instead of one light ON it.
+   Apple shows one glyph per intersection, and that's what this does: group nodes that are
+   within CLUSTER_M of each other and draw a single marker at their centroid, which lands on
+   the junction because the approaches surround it.
+   Grid-hashed rather than pairwise — a downtown viewport is hundreds of nodes and O(n squared)
+   would stall the frame. Each node hashes into a ~CLUSTER_M cell and we only compare against
+   the 9 cells around it, which is linear in practice. */
+var SIG_CLUSTER_M=38;
+var _sigClustered=null, _sigClusterDirty=true;
+function _sigClusters(){
+  if(_sigClustered && !_sigClusterDirty) return _sigClustered;
+  var pts=[];
+  for(var id in _sigFeat){ var c=_sigFeat[id].geometry.coordinates; pts.push({lng:c[0],lat:c[1],used:false}); }
+  var cell=SIG_CLUSTER_M/111320;                       // degrees of latitude per cell
+  var grid={};
+  function key(la,ln){ return Math.floor(la/cell)+"|"+Math.floor(ln/cell); }
+  pts.forEach(function(p,i){ var k=key(p.lat,p.lng); (grid[k]||(grid[k]=[])).push(i); });
+  var out=[];
+  pts.forEach(function(p,i){
+    if(p.used) return;
+    var gi=Math.floor(p.lat/cell), gj=Math.floor(p.lng/cell);
+    var members=[];
+    for(var a=-1;a<=1;a++) for(var b=-1;b<=1;b++){
+      var arr=grid[(gi+a)+"|"+(gj+b)]; if(!arr) continue;
+      for(var n=0;n<arr.length;n++){
+        var q=pts[arr[n]];
+        if(q.used) continue;
+        if(distM({lat:p.lat,lng:p.lng},{lat:q.lat,lng:q.lng})<=SIG_CLUSTER_M) members.push(arr[n]);
+      }
+    }
+    if(!members.length) members=[i];
+    var sla=0,sln=0;
+    members.forEach(function(mi){ pts[mi].used=true; sla+=pts[mi].lat; sln+=pts[mi].lng; });
+    out.push({type:"Feature",properties:{n:members.length},
+      geometry:{type:"Point",coordinates:[sln/members.length, sla/members.length]}});
+  });
+  _sigClustered=out; _sigClusterDirty=false;
+  return out;
+}
 function _sigData(){
-  var out=[]; for(var id in _sigFeat) out.push(_sigFeat[id]);
-  return {type:"FeatureCollection",features:out};
+  return {type:"FeatureCollection",features:_sigClusters()};
 }
 /* The signal glyph is drawn to a canvas at boot rather than shipped as a PNG: one less file to
    keep in sync across the repo + service worker cache, it stays crisp at any device pixel ratio,
@@ -2048,10 +2090,17 @@ function _sigData(){
    SIGN meaning "signalised intersection", not a claim about the current phase. Lighting only one
    would read as live state we do not have. */
 function _signalIcon(){
-  var r=Math.min(3,Math.max(2,Math.round(window.devicePixelRatio||2)));
-  var w=20, h=44;                                   // logical size; canvas is r times this
-  var c=document.createElement("canvas"); c.width=w*r; c.height=h*r;
-  var x=c.getContext("2d"); x.scale(r,r);
+  /* Proportions matched to Apple's: a stubbier housing (5:7, not the 5:11 tower v230 shipped),
+     a generous corner radius so it reads as a rounded capsule rather than a bar, and small
+     evenly-spaced lamps with real gaps between them. v230's lamps were oversized, crowded and
+     wrapped in an alpha halo, which at map scale merged into one smear. No halo now — at 12px
+     on screen, crispness IS the detail. */
+  var r=Math.min(4,Math.max(2,Math.ceil(window.devicePixelRatio||2)));
+  var SS=2;                                         // supersample, then let the GPU downfilter
+  var w=21, h=29;                                   // logical size
+  var c=document.createElement("canvas"); c.width=w*r*SS; c.height=h*r*SS;
+  var x=c.getContext("2d"); x.scale(r*SS,r*SS);
+  x.imageSmoothingEnabled=true; x.imageSmoothingQuality="high";
   function rrect(a,b,ww,hh,rad){
     x.beginPath();
     x.moveTo(a+rad,b);
@@ -2059,16 +2108,24 @@ function _signalIcon(){
     x.arcTo(a,b+hh,a,b,rad);       x.arcTo(a,b,a+ww,b,rad);
     x.closePath();
   }
-  // white outer rim so the glyph reads against dark asphalt AND light basemaps
-  x.fillStyle="#FFFFFF"; rrect(1,1,w-2,h-2,6); x.fill();
-  x.fillStyle="#15171A"; rrect(3,3,w-6,h-6,4.5); x.fill();
-  var lamps=[["#FF3B30",10.5],["#FFB020",22],["#34C759",33.5]];
+  // soft drop shadow lifts it off the road surface the way Apple's does
+  x.save();
+  x.shadowColor="rgba(0,0,0,.45)"; x.shadowBlur=2.2; x.shadowOffsetY=.7;
+  x.fillStyle="#F2F2F0"; rrect(1.2,1.2,w-2.4,h-2.4,7.2); x.fill();       // white rim, warm not pure
+  x.restore();
+  x.fillStyle="#1C1C1E"; rrect(3.6,3.6,w-7.2,h-7.2,5.2); x.fill();       // dark housing
+  // three lamps, evenly spaced with breathing room top and bottom
+  var lamps=[["#F0483E",9.1],["#F5A623",14.5],["#39B54A",19.9]];
   lamps.forEach(function(L){
-    x.beginPath(); x.arc(w/2,L[1],3.6,0,Math.PI*2);
+    x.beginPath(); x.arc(w/2,L[1],2.35,0,Math.PI*2);
     x.fillStyle=L[0]; x.fill();
-    x.globalAlpha=.35; x.beginPath(); x.arc(w/2,L[1],5.2,0,Math.PI*2); x.fillStyle=L[0]; x.fill(); x.globalAlpha=1;
   });
-  return {canvas:c,w:w*r,h:h*r,ratio:r};
+  // downsample the supersampled render so the curves land smooth at map size
+  var out=document.createElement("canvas"); out.width=w*r; out.height=h*r;
+  var ox=out.getContext("2d");
+  ox.imageSmoothingEnabled=true; ox.imageSmoothingQuality="high";
+  ox.drawImage(c,0,0,out.width,out.height);
+  return {canvas:out,w:w*r,h:h*r,ratio:r};
 }
 function _addSignalImage(){
   try{
@@ -2091,7 +2148,7 @@ function ensureSignalLayer(){
         map.addLayer({id:"signal-dots",type:"symbol",source:"signals",minzoom:SIG_MINZ,
           layout:{
             "icon-image":"cw-signal",
-            "icon-size":["interpolate",["linear"],["zoom"],15,.34,17,.62,19,.9],
+            "icon-size":["interpolate",["linear"],["zoom"],15,.26,17,.44,19,.62],
             "icon-anchor":"center",
             // declutter naturally: at wide zooms MapLibre drops the ones that would collide,
             // and only at close zoom do we let every signal through
@@ -2125,7 +2182,7 @@ function _sigPush(els){
     var id="s"+e.id;
     if(_sigFeat[id]) return;
     _sigFeat[id]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[lng,lat]}};
-    n++;
+    n++; _sigClusterDirty=true;
   });
   if(n){ try{ if(map.getSource("signals")) map.getSource("signals").setData(_sigData()); }catch(e){} _sigCacheSave(); }
   return n;
@@ -2170,13 +2227,15 @@ function routeSignalCount(rt){
   try{
     var co=(rt.geometry&&rt.geometry.coordinates)||[];
     if(co.length<2) return null;
-    var ids=Object.keys(_sigFeat);
-    if(!ids.length) return null;                               // nothing fetched yet — say nothing rather than "0 lights"
+    // Count CLUSTERS, not raw nodes: a four-way junction carries three or four stop-line nodes
+    // in OSM, so counting raw would report ~4x the lights a driver actually stops at.
+    var cl=_sigClusters();
+    if(!cl.length) return null;                                // nothing fetched yet — say nothing rather than "0 lights"
     var n=0;
-    for(var i=0;i<ids.length;i++){
-      var c=_sigFeat[ids[i]].geometry.coordinates, p={lat:c[1],lng:c[0]};
+    for(var i=0;i<cl.length;i++){
+      var c=cl[i].geometry.coordinates, p={lat:c[1],lng:c[0]};
       for(var k=0;k<co.length;k+=2){
-        if(distM({lat:co[k][1],lng:co[k][0]},p)<28){ n++; break; }
+        if(distM({lat:co[k][1],lng:co[k][0]},p)<38){ n++; break; }
       }
     }
     return n;
