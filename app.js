@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v227";
+const APP_VERSION="v228";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -727,6 +727,10 @@ function gpsOpts(){
   // falls back to wifi/cell positioning and can sit 100m+ off — that's what made the dot look wrong
   // while just viewing the map. Real GPS now runs any time the app is open.
   if(S.navigating) return { enableHighAccuracy:true, maximumAge:0, timeout:15000 };
+  /* maximumAge lets the OS answer instantly from its cache. Useful once we are running, but on
+     the very first fix that cache is usually a stale cell-tower estimate — so demand a fresh
+     reading until we have a real position. */
+  if(!S.pos) return { enableHighAccuracy:true, maximumAge:0, timeout:15000 };
   return { enableHighAccuracy:true, maximumAge:S.saver?4000:1500, timeout:15000 };
 }
 function startGPS(){
@@ -755,11 +759,47 @@ function onPos(p){
   // ── reject junk GPS fixes: poor accuracy or an impossible jump → hold last good position (kills teleport / circling / stuck marker) ──
   const _accBad=(accuracy!=null && accuracy>75);
   if(!S.pos){
-    if(accuracy!=null && accuracy>2000){ return; }              // wait for a usable first fix
+    /* The first fix used to be accepted at anything under 2000m — a two-kilometre radius. Phones
+       hand back a coarse cell-tower estimate instantly and only refine to real GPS over the next
+       five to fifteen seconds, so the puck committed to whatever garbage arrived first and sat a
+       block off the actual position. Hold out for a usable fix, but never hold out forever:
+       after 12 seconds take the best one seen, because a slightly wrong position beats a map
+       that never starts. */
+    if(accuracy!=null){
+      if(!S._firstAt) S._firstAt=Date.now();
+      var _waited=Date.now()-S._firstAt;
+      if(!S._bestFirst || accuracy < S._bestFirst.accuracy){
+        S._bestFirst={lat:lat,lng:lng,t:p.timestamp,accuracy:accuracy};
+      }
+      if(accuracy>60 && _waited<12000){
+        try{ var _gp=$("gpsHint");
+          if(!_gp){ _gp=document.createElement("div"); _gp.id="gpsHint"; document.body.appendChild(_gp);
+            _gp.style.cssText="position:fixed;left:50%;transform:translateX(-50%);z-index:2400;"+
+              "bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);"+
+              "background:var(--panel-solid);border:1px solid var(--line);color:var(--text);"+
+              "font-size:13px;padding:9px 15px;border-radius:20px;pointer-events:none;"+
+              "box-shadow:0 8px 24px rgba(0,0,0,.4)";
+          }
+          _gp.textContent="Locking on GPS… \u00b1"+Math.round(accuracy)+"m";
+        }catch(e){}
+        return;                                                 // not good enough yet, keep waiting
+      }
+      // taking it: either it's a real fix or we've waited long enough for the best available
+      if(accuracy>60 && S._bestFirst){
+        lat=S._bestFirst.lat; lng=S._bestFirst.lng;
+        _new.lat=lat; _new.lng=lng;
+      }
+      try{ var _g2=$("gpsHint"); if(_g2) _g2.remove(); }catch(e){}
+    }
   } else {
     const _jump=distM(S.pos,_new), _dt=Math.max(0.001,(_new.t-S.pos.t)/1000);
     const _teleport=(_jump>150 && (_jump/_dt)>100);             // >~224 mph between fixes = not real
-    if((_accBad || _teleport) && (S.goodFixes||0)>0){ S.accuracy=accuracy; return; }
+    /* A genuine GPS lock arriving after a coarse first fix looks exactly like a teleport. If we
+       are still in the first 30 seconds and the new fix is far more accurate than the one we
+       settled for, let it correct the position instead of rejecting it as junk. */
+    var _earlyCorrect = _teleport && S._firstAt && (Date.now()-S._firstAt)<30000 &&
+                        accuracy!=null && accuracy<=35 && (S.accuracy||999)>60;
+    if(!_earlyCorrect && (_accBad || _teleport) && (S.goodFixes||0)>0){ S.accuracy=accuracy; return; }
   }
   if(!_accBad) S.goodFixes=(S.goodFixes||0)+1;
   if(!S.pos && typeof acCache!=="undefined" && acCache.clear) acCache.clear(); // first fix: drop any pre-lock typeahead entries
