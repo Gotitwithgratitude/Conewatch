@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v235";
+const APP_VERSION="v236";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1941,7 +1941,16 @@ function corridorBoxes(coords,padDeg){
    becomes ONE node with edges from both — which is the entire point; without that dedup the
    "graph" is a pile of disconnected polylines and A* can never turn a corner. */
 function buildCorridorGraph(elements){
-  var nodes={}, adj={}, ways=0;
+  /* Street names ride along as a string table with edges holding an index into it. A corridor
+     repeats the same few dozen names thousands of times; storing the string on every edge would
+     multiply the payload for no gain. Without names an offline reroute can only say "turn
+     right", which is not navigation — it is a guess with a direction attached. */
+  var nodes={}, adj={}, ways=0, names=[], nameIx={};
+  function nameId(nm){
+    if(!nm) return -1;
+    if(nameIx[nm]!==undefined) return nameIx[nm];
+    nameIx[nm]=names.length; names.push(nm); return names.length-1;
+  }
   (elements||[]).forEach(function(el){
     if(el.type==="node" && isFinite(el.lat) && isFinite(el.lon)) nodes[el.id]=[+el.lon.toFixed(6),+el.lat.toFixed(6)];
   });
@@ -1955,12 +1964,13 @@ function buildCorridorGraph(elements){
     var rev = (t.oneway==="-1");
     var one = rev || t.oneway==="yes" || t.oneway==="true" || t.oneway==="1" || t.junction==="roundabout";
     ways++;
+    var ni=nameId(t.name||t.ref||"");
     for(var i=0;i<el.nodes.length-1;i++){
       var a=el.nodes[i], b=el.nodes[i+1];
       if(!nodes[a]||!nodes[b]) continue;
       if(rev){ var tmp=a; a=b; b=tmp; }
-      (adj[a]||(adj[a]=[])).push([b,w]);
-      if(!one) (adj[b]||(adj[b]=[])).push([a,w]);
+      (adj[a]||(adj[a]=[])).push([b,w,ni]);
+      if(!one) (adj[b]||(adj[b]=[])).push([a,w,ni]);
     }
   });
   // drop nodes no drivable edge touches — they are most of the payload and none of the value
@@ -1970,7 +1980,7 @@ function buildCorridorGraph(elements){
     adj[k].forEach(function(e){ keep[e[0]]=nodes[e[0]]; });
   }
   for(var k2 in keep){ if(!keep[k2]) delete keep[k2]; }
-  return {nodes:keep,adj:adj,ways:ways};
+  return {nodes:keep,adj:adj,ways:ways,names:names};
 }
 /* ═══════════ offline routing, session 2 of 3: local A* ═══════════
    Routes across a cached corridor graph with no network. Session 3 wires this to the off-route
@@ -2031,7 +2041,7 @@ function graphRoute(g,from,to,opts){
       var c=g.nodes[id]; if(!c) return 0;
       return distM({lat:c[1],lng:c[0]},{lat:goal[1],lng:goal[0]})*_H_MIN_W;
     }
-    var gScore={}, cameFrom={}, closed={};
+    var gScore={}, cameFrom={}, closed={}, edgeName={};
     gScore[a.id]=0;
     var open=new _MinHeap();
     open.push({id:a.id,f:h(a.id)});
@@ -2052,6 +2062,7 @@ function graphRoute(g,from,to,opts){
         var tentative=gScore[cur.id]+step;
         if(gScore[nb]===undefined || tentative<gScore[nb]){
           gScore[nb]=tentative; cameFrom[nb]=cur.id;
+          edgeName[nb]=(edges[i].length>2?edges[i][2]:-1);   // name of the edge we ARRIVED on
           open.push({id:nb,f:tentative+h(nb)});
         }
       }
@@ -2065,14 +2076,18 @@ function graphRoute(g,from,to,opts){
     }
     if(path[path.length-1]!==a.id) return null;
     path.reverse();
-    var coords=[], metres=0, prev=null;
+    var coords=[], metres=0, prev=null, legNames=[];
     for(var k=0;k<path.length;k++){
       var c2=g.nodes[path[k]]; if(!c2) continue;
       if(prev) metres+=distM({lat:prev[1],lng:prev[0]},{lat:c2[1],lng:c2[0]});
       coords.push([c2[0],c2[1]]); prev=c2;
+      if(k>0){
+        var ni=edgeName[path[k]];
+        legNames.push((ni!==undefined && ni>=0 && g.names && g.names[ni]) ? g.names[ni] : "");
+      }
     }
     if(coords.length<2) return null;
-    return {coords:coords,distance:Math.round(metres),nodes:path.length};
+    return {coords:coords,distance:Math.round(metres),nodes:path.length,legNames:legNames};
   }catch(e){ return null; }
 }
 /* Pick the best cached corridor for a trip: the one whose graph actually contains both ends.
@@ -2108,7 +2123,9 @@ async function captureCorridorGraph(r){
   var key=corridorKey(r); if(!key) return null;
   try{
     var have=await cwdbGet(key);
-    if(have && Date.now()-have.t < 7*864e5) return have;      // fresh enough; roads change slowly
+    // v2 added the street-name table. A v1 record still routes, but its turns would be nameless,
+    // so treat it as stale and re-capture rather than shipping "turn right onto nothing".
+    if(have && have.v===2 && Date.now()-have.t < 7*864e5) return have;
   }catch(e){}
   _corridorBusy=true;
   try{
@@ -2128,8 +2145,8 @@ async function captureCorridorGraph(r){
     var g=buildCorridorGraph(all);
     var nodeCount=Object.keys(g.nodes).length;
     if(nodeCount<20) return null;                             // too thin to be useful
-    var rec={key:key,t:Date.now(),dest:S.dest||null,destName:S.destName||"",
-             nodes:g.nodes,adj:g.adj,ways:g.ways,n:nodeCount};
+    var rec={key:key,v:2,t:Date.now(),dest:S.dest||null,destName:S.destName||"",
+             nodes:g.nodes,adj:g.adj,ways:g.ways,names:g.names||[],n:nodeCount};
     await cwdbPut(rec);
     await corridorEvict();
     try{ console.log("ConeWatch corridor cached:",key,nodeCount,"nodes /",g.ways,"ways"); }catch(e){}
@@ -2249,6 +2266,94 @@ function restoreRouteLocal(){
   }catch(e){ return false; }
 }
 
+/* ═══════════ offline routing, session 3 of 3: turn instructions + the reroute hook ═══════════
+   OSRM hands back maneuvers for free; a local graph does not, so we derive them. The rule that
+   matters: emit a step when the STREET NAME changes, or when the geometry bends hard enough to
+   be a real turn. Emitting on angle alone would announce a turn at every slight curve of a
+   single road, which is worse than silence — a driver learns to ignore it. */
+function _bearingDeg(a,b){
+  var y=Math.sin((b[0]-a[0])*Math.PI/180)*Math.cos(b[1]*Math.PI/180);
+  var x=Math.cos(a[1]*Math.PI/180)*Math.sin(b[1]*Math.PI/180)-
+        Math.sin(a[1]*Math.PI/180)*Math.cos(b[1]*Math.PI/180)*Math.cos((b[0]-a[0])*Math.PI/180);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function _turnMod(delta){
+  var d=((delta+540)%360)-180;                       // normalise to -180..180
+  var ad=Math.abs(d);
+  if(ad<22) return null;                             // straight through — not a maneuver
+  if(ad>150) return "uturn";
+  if(ad>=110) return d>0?"sharp right":"sharp left";
+  if(ad>=45)  return d>0?"right":"left";
+  return d>0?"slight right":"slight left";
+}
+function deriveOfflineSteps(coords,legNames,destName){
+  var steps=[];
+  if(!coords||coords.length<2) return steps;
+  var names=legNames||[];
+  function push(type,mod,name,at,dist){
+    steps.push({name:name||"",distance:Math.round(dist||0),
+                maneuver:{type:type,modifier:mod||null,location:at}});
+  }
+  var curName=names[0]||"", runStart=0;
+  push("depart",null,curName,coords[0],0);
+  for(var i=1;i<coords.length-1;i++){
+    var inB=_bearingDeg(coords[i-1],coords[i]);
+    var outB=_bearingDeg(coords[i],coords[i+1]);
+    var mod=_turnMod(outB-inB);
+    var nm=names[i]||"";
+    var nameChanged = nm && curName && nm!==curName;
+    // A name change with no bend is a road renaming under you, not a turn — no announcement.
+    if(!mod && !nameChanged) continue;
+    if(!mod && nameChanged){ curName=nm; continue; }
+    var run=0;
+    for(var k=runStart;k<i;k++) run+=distM({lat:coords[k][1],lng:coords[k][0]},{lat:coords[k+1][1],lng:coords[k+1][0]});
+    if(run<18 && steps.length>1) continue;           // two nodes a few metres apart is graph noise
+    push("turn",mod,nm||curName,coords[i],run);
+    curName=nm||curName; runStart=i;
+  }
+  var tail=0;
+  for(var k2=runStart;k2<coords.length-1;k2++) tail+=distM({lat:coords[k2][1],lng:coords[k2][0]},{lat:coords[k2+1][1],lng:coords[k2+1][0]});
+  push("arrive",null,destName||curName,coords[coords.length-1],tail);
+  return steps;
+}
+/* Install a locally-computed route as the live route. Kept separate from installStoredRoute
+   because this one must be honest about what it is: an offline reroute has no traffic, no
+   live conditions and a corridor-limited view of the road network. It is labelled so the
+   driver knows, and S.offlineRoute lets the rest of the app avoid treating it as authoritative. */
+function installOfflineRoute(r){
+  try{
+    if(!r||!r.coords||r.coords.length<2) return false;
+    var steps=deriveOfflineSteps(r.coords,r.legNames,S.destName);
+    if(!steps.length) return false;
+    // ~13 m/s is a reasonable urban average; without traffic data any ETA is an estimate and
+    // this is not dressed up as more than that
+    var dur=Math.round(r.distance/13);
+    S.route={geometry:{type:"LineString",coordinates:r.coords},duration:dur,distance:r.distance,legs:[]};
+    S.steps=steps; S.stepIdx=0; S.peekIdx=null; S.offRouteCount=0;
+    S.offlineRoute=true;
+    try{ S.alerted.clear(); }catch(e){}
+    S._ri=undefined; S._riT=0;
+    try{ ensureRouteLayers(); map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch(e){}
+    try{ refreshRouteCondition(); }catch(e){}
+    try{ renderNav(); }catch(e){}
+    return true;
+  }catch(e){ return false; }
+}
+var _offRerouteAt=0;
+async function tryOfflineReroute(){
+  // Only worth attempting while actually navigating and actually offline.
+  if(!S.navigating||!S.pos||!S.dest) return false;
+  if(Date.now()-_offRerouteAt < 15000) return false;       // don't thrash the search mid-drive
+  _offRerouteAt=Date.now();
+  try{
+    var r=await routeOffline(S.pos,S.dest);
+    if(!r) return false;
+    if(!installOfflineRoute(r)) return false;
+    toast("Offline reroute — using cached roads",3000);
+    try{ speak("Rerouting offline."); }catch(e){}
+    return true;
+  }catch(e){ return false; }
+}
 async function fetchRoute(silent){
   if(!S.pos||!S.dest) return;
   // A stuck "in flight" flag used to wedge routing permanently: if any routing request hung,
@@ -2258,6 +2363,14 @@ async function fetchRoute(silent){
     S.rerouting=false;                                   // previous attempt clearly died — move on
   }
   if(!navigator.onLine){
+    /* This branch used to be the end of the road: off-route with no signal meant keeping the
+       stale line on screen and hoping. With a cached corridor we can now actually reroute.
+       Only on `silent` — that is the off-route path. A non-silent offline call is the driver
+       planning a new trip, where the saved-route library below is the better answer. */
+    if(silent && S.navigating){
+      var did=await tryOfflineReroute();
+      if(did) return;
+    }
     // mid-drive: the route already on screen is the right answer, just stop nagging about it
     if(silent||S.navigating){
       if(!silent && Date.now()-(S._offToastAt||0) > 60000){
@@ -2324,6 +2437,7 @@ async function fetchRoute(silent){
     S.routeAltIdx = 0;
     const r=S.routeAlts[0]||data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
+    S.offlineRoute=false;                          // a live route supersedes any offline one
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     try{refreshRouteCondition();}catch(e){}
