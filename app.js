@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v231";
+const APP_VERSION="v232";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2200,24 +2200,32 @@ async function fetchSignals(bbox){
   try{ var d=await of(q); return _sigPush(d&&d.elements); }
   catch(e){ var i=_sigDone.indexOf(key); if(i>-1) _sigDone.splice(i,1); return 0; }   // let a failed box retry later
 }
+async function runSignalFetch(){
+  try{
+    if(!S.mapReady||!map) return;
+    if((S.mapMode||"full")!=="full") return;                 // hidden — don't spend the request
+    if(map.getZoom()<SIG_MINZ) return;
+    if(!navigator.onLine||document.hidden) return;
+    if(_sigBusy) return;
+    var b=map.getBounds();
+    // pad the query past the viewport so a small pan doesn't trigger a fresh round trip
+    var pad=0.004;
+    var bbox=[b.getSouth()-pad,b.getWest()-pad,b.getNorth()+pad,b.getEast()+pad];
+    _sigBusy=true;
+    try{ await fetchSignals(bbox); } finally { _sigBusy=false; }
+  }catch(e){ _sigBusy=false; }
+}
 function scheduleSignalFetch(){
   if(_sigT) clearTimeout(_sigT);
-  _sigT=setTimeout(async function(){
-    try{
-      if(!S.mapReady||!map) return;
-      if((S.mapMode||"full")!=="full") return;                 // hidden — don't spend the request
-      if(map.getZoom()<SIG_MINZ) return;
-      if(!navigator.onLine||document.hidden) return;
-      if(_sigBusy) return;
-      var b=map.getBounds();
-      // pad the query past the viewport so a small pan doesn't trigger a fresh round trip
-      var pad=0.004;
-      var bbox=[b.getSouth()-pad,b.getWest()-pad,b.getNorth()+pad,b.getEast()+pad];
-      _sigBusy=true;
-      try{ await fetchSignals(bbox); } finally { _sigBusy=false; }
-    }catch(e){ _sigBusy=false; }
-  }, 700);                                                     // settle after the pan/zoom stops
+  _sigT=setTimeout(runSignalFetch, 700);                       // settle after the pan/zoom stops
 }
+/* A debounce alone cannot work while driving. cameraFollow() eases the camera on every GPS fix
+   (300-1600ms per ease), so a `moveend` lands and the next ease begins well inside the 700ms
+   window — the timer is cleared and re-armed forever and the fetch never fires. Signals loaded
+   only when the car was stopped. This unconditional tick is the driving path: it ignores the
+   debounce entirely, and fetchSignals() already no-ops on a bbox key it has covered, so a
+   stationary car costs nothing. */
+setInterval(function(){ try{ if(!document.hidden) runSignalFetch(); }catch(e){} }, 11000);
 try{ _sigCacheLoad(); }catch(e){}
 
 /* How many signals a candidate route actually passes through. This is the honest version of
