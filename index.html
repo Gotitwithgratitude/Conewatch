@@ -425,7 +425,7 @@
      part needs to be addressable. The look is "instrument under glass" — a lit dial you read
      through, not a flat icon pasted on the map. */
   :root{ --cw-hue:#6FF3D0; }
-  #compass{position:relative;width:74px;height:74px;border-radius:50%;
+  #compass{position:relative;width:168px;height:168px;border-radius:50%;
     background:radial-gradient(circle at 50% 34%, rgba(30,44,48,.92), rgba(10,14,17,.94));
     border:1px solid rgba(120,240,210,.22);cursor:pointer;
     display:flex;align-items:center;justify-content:center;
@@ -452,8 +452,8 @@
   #compDial{transform-origin:50px 50px;transition:transform .22s cubic-bezier(.22,.8,.3,1)}
   #compSweep{transform-origin:50px 50px;animation:cwSweepSpin 5.5s linear infinite;opacity:.75}
   @keyframes cwSweepSpin{to{transform:rotate(360deg)}}
-  #compass small{position:absolute;bottom:9px;left:0;right:0;text-align:center;
-    font-family:var(--tech);font-size:7.5px;letter-spacing:.4px;
+  #compass small{position:absolute;bottom:22px;left:0;right:0;text-align:center;
+    font-family:var(--tech);font-size:11px;letter-spacing:.6px;
     color:rgba(180,255,238,.82);text-shadow:0 0 6px rgba(90,240,200,.55);pointer-events:none}
   #compass.hup{border-color:rgba(140,255,220,.55);
     box-shadow:var(--btn-shadow),0 0 22px rgba(90,240,200,.30),inset 0 0 20px rgba(70,220,190,.12)}
@@ -485,7 +485,7 @@
      more-tools button; leave 911, report and re-centre. */
   body.cw-minimal #quick,body.cw-minimal #modes{display:none!important}
   body.cw-minimal #stripe{height:4px;margin-bottom:6px}
-  body.cw-minimal #tripBadge,body.cw-minimal #compass{opacity:.45}
+  body.cw-minimal #tripBadge{opacity:.45}
   #fabs::-webkit-scrollbar{display:none}
   .fab{width:50px;height:50px;border-radius:50%;border:1px solid var(--edge);background:rgba(28,30,35,.55);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);color:var(--text);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--hair),0 6px 20px rgba(0,0,0,.35);transition:transform .12s cubic-bezier(.2,.8,.2,1)}
   .fab:active{box-shadow:var(--btn-pressed);transform:translateY(2px)}
@@ -704,7 +704,7 @@
   #relock{top:max(calc(env(safe-area-inset-top) + 58px), var(--hdrH,190px))}
   body.driving #bumpBar{top:calc(env(safe-area-inset-top) + 128px)}
   body.driving #fabVoice,body.driving #fabFlash,body.driving #fabMore,body.driving #moreFabs{display:none}
-  body.driving #compass,body.driving #trip{display:none}
+  body.driving #trip{display:none}
   body.driving #speed{width:76px;height:76px}
   body.driving #speed .v{font-size:28px}
   body.driving .fab{width:47px;height:47px;font-size:18px}
@@ -1022,42 +1022,7 @@
   <div id="speed" aria-label="Speedometer"><span class="v" id="speedV">0</span><span class="u">mph</span></div>
   <div id="limitBadge" style="display:none;background:#fff;color:#111;border:2.5px solid #111;border-radius:9px;padding:4px 10px 5px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.4);line-height:1.05"><span style="font-size:8.5px;font-weight:800;letter-spacing:.4px;display:block">SPEED<br>LIMIT</span><b id="limitNum" style="font-family:var(--display);font-size:22px">--</b></div>
   <div id="trip"><b id="tripMi">0.0</b> TRIP MI</div>
-  <div id="compass" title="Toggle heading-up">
-    <svg id="compRose" viewBox="0 0 100 100" aria-hidden="true">
-      <defs>
-        <radialGradient id="cwGlass" cx="50%" cy="38%" r="72%">
-          <stop offset="0%" stop-color="rgba(140,255,220,.16)"/>
-          <stop offset="62%" stop-color="rgba(60,150,190,.07)"/>
-          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
-        </radialGradient>
-        <linearGradient id="cwSweep" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--cw-hue)" stop-opacity=".55"/>
-          <stop offset="100%" stop-color="var(--cw-hue)" stop-opacity="0"/>
-        </linearGradient>
-      </defs>
-      <circle cx="50" cy="50" r="46" fill="url(#cwGlass)"/>
-      <circle cx="50" cy="50" r="45.5" class="cw-rim"/>
-      <circle cx="50" cy="50" r="38.5" class="cw-rim2"/>
-      <!-- the sweep sits UNDER the dial so it reads as light behind glass, not an overlay -->
-      <g id="compSweep"><path d="M50 50 L50 6 A44 44 0 0 1 76 15 Z" fill="url(#cwSweep)"/></g>
-      <!-- everything that must stay oriented to the world lives in this one rotated group -->
-      <g id="compDial">
-        <g id="compTicks"></g>
-        <text x="50" y="16.5" class="cw-card cw-n">N</text>
-        <text x="86" y="53.5" class="cw-card">E</text>
-        <text x="50" y="90.5" class="cw-card">S</text>
-        <text x="14" y="53.5" class="cw-card">W</text>
-        <!-- split needle: the two halves are offset a hair to fake chromatic fringing -->
-        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-a"/>
-        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-b"/>
-        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-m"/>
-        <path d="M50 80 L56 48 L50 53 L44 48 Z" class="cw-tail"/>
-      </g>
-      <circle cx="50" cy="50" r="3.2" class="cw-hub"/>
-      <circle cx="50" cy="50" r="6.4" class="cw-hub-ring"/>
-    </svg>
-    <small id="compDeg">N</small>
-  </div>
+</div>
 </div>
 
 <div id="radialScrim"></div>
@@ -1169,6 +1134,56 @@
     <button class="rtile" data-type="animal"><span class="ic">🦌</span><span>Animal</span></button>
     <button class="rtile" data-type="power_lines"><span class="ic">⚡</span><span>Power lines</span></button>
     <button class="rtile" data-type="emergency"><span class="ic">🚑</span><span>Emergency</span></button>
+  </div>
+</div>
+
+<!-- Compass lives in its own panel now. On the map it was a permanently animating dial competing
+     with the speed readout and the hazard buttons for a driver's attention, and a compass is a
+     thing you CONSULT, not something you monitor while driving. -->
+<div class="sheet" id="compassSheet">
+  <div class="grabber"></div>
+  <h3>🧭 Compass</h3>
+  <p class="sub" id="compassSub">True north, calibrated from your own movement.</p>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0 18px">
+    <div id="compass" title="Toggle heading-up">
+
+    <svg id="compRose" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <radialGradient id="cwGlass" cx="50%" cy="38%" r="72%">
+          <stop offset="0%" stop-color="rgba(140,255,220,.16)"/>
+          <stop offset="62%" stop-color="rgba(60,150,190,.07)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+        </radialGradient>
+        <linearGradient id="cwSweep" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--cw-hue)" stop-opacity=".55"/>
+          <stop offset="100%" stop-color="var(--cw-hue)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="url(#cwGlass)"/>
+      <circle cx="50" cy="50" r="45.5" class="cw-rim"/>
+      <circle cx="50" cy="50" r="38.5" class="cw-rim2"/>
+      <!-- the sweep sits UNDER the dial so it reads as light behind glass, not an overlay -->
+      <g id="compSweep"><path d="M50 50 L50 6 A44 44 0 0 1 76 15 Z" fill="url(#cwSweep)"/></g>
+      <!-- everything that must stay oriented to the world lives in this one rotated group -->
+      <g id="compDial">
+        <g id="compTicks"></g>
+        <text x="50" y="16.5" class="cw-card cw-n">N</text>
+        <text x="86" y="53.5" class="cw-card">E</text>
+        <text x="50" y="90.5" class="cw-card">S</text>
+        <text x="14" y="53.5" class="cw-card">W</text>
+        <!-- split needle: the two halves are offset a hair to fake chromatic fringing -->
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-a"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-b"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-m"/>
+        <path d="M50 80 L56 48 L50 53 L44 48 Z" class="cw-tail"/>
+      </g>
+      <circle cx="50" cy="50" r="3.2" class="cw-hub"/>
+      <circle cx="50" cy="50" r="6.4" class="cw-hub-ring"/>
+    </svg>
+    <small id="compDeg">N</small>
+      </div>
+    <div id="compReadout" style="font-family:var(--tech);font-size:13px;letter-spacing:.06em;color:var(--mute);text-align:center;line-height:1.7"></div>
+    <button class="chip" id="compHup" style="margin-top:2px">Heading-up map</button>
   </div>
 </div>
 

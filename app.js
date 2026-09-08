@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v242";
+const APP_VERSION="v244";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -180,7 +180,7 @@ const S = {
   route:null, steps:[], stepIdx:0, navigating:false, offRouteCount:0, rerouting:false, avoidHandled:new Set(),
   hazards:[], alerted:new Set(), sb:{url:"",key:""},
   speedMph:0, tripM:0, is3d:false, mapReady:false,
-  themeMode:"auto", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
+  themeMode:"dark", themeNow:"dark", sun:{rise:7.0, set:19.2}, lux:null,
   torchMode:0, torchTrack:null, sosTimer:null, wakeLock:null, fbCat:"Bug",
   avoidTolls:false, avoidHwy:false, avoidApplied:false, avoidMode:"", avoidRatio:0, dispPos:null, goodFixes:0, origin:null, originName:"", originAddr:"", destLabel:"", remoteStart:false,
 };
@@ -3826,13 +3826,21 @@ function layoutRadial(animate){
   var tray=$("moreFabs"); if(!tray) return;
   var g=_radialGeom(); if(!g) return;
   var kids=Array.prototype.slice.call(tray.children);
-  var angs=[104,131,158,185];                       // up-and-left quarter, away from the thumb rail
-  var r1=g.sz*1.95, r2=g.sz*3.30;
+  /* Give every item its own angle instead of reusing four across two rings. With eight tools the
+     old scheme stacked pairs on the same bearing and relied on the radius to separate them —
+     which the clamps below then undid. */
+  var n=kids.length;
+  var A0=98, A1=192;
+  var angs=[];
+  for(var _i=0;_i<n;_i++) angs.push(n>1 ? A0+(A1-A0)*(_i/(n-1)) : (A0+A1)/2);
+  var r1=g.sz*2.15, r2=g.sz*3.45;
   var top=(parseFloat(getComputedStyle(document.body).getPropertyValue("--hdrH"))||160)+10;
   var scrim=$("radialScrim");
   if(scrim){ scrim.style.setProperty("--rx",g.cx+"px"); scrim.style.setProperty("--ry",g.cy+"px"); scrim.classList.add("on"); }
+  var placed=[];
   kids.forEach(function(el,i){
-    var r=(i<4?r1:r2), ang=angs[i%4]*Math.PI/180;
+    // alternate rings so neighbours on adjacent bearings are also at different distances
+    var r=((i%2)?r2:r1), ang=angs[i]*Math.PI/180;
     var x=g.cx+r*Math.cos(ang), y=g.cy-r*Math.sin(ang);
     if(y<top+g.sz/2) y=top+g.sz/2;                  // never tuck a button under the header
     /* The near-vertical arm of the arc put a tool directly over the 911 button sitting above
@@ -3851,6 +3859,44 @@ function layoutRadial(animate){
     /* and never let one drop onto the dock */
     var dockTop=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150);
     if(y>dockTop-g.sz*0.75) y=dockTop-g.sz*0.75;
+    if(x<g.sz*0.62) x=g.sz*0.62;                    // and never off the left edge
+    placed.push({el:el,x:x,y:y,i:i});
+  });
+  /* THE OVERLAP FIX. Every clamp above is applied to one button in isolation — against the rail,
+     the cluster, the centre puck, the dock — so two buttons clamped by the same edge land on the
+     same pixel and stack. Nothing was ever comparing siblings. This pushes any overlapping pair
+     apart along the line between them, a few passes, then re-applies the hard screen bounds so
+     separation can't shove one off-screen. */
+  var minD=g.sz*1.12, top2=top+g.sz/2;
+  var dockTop2=window.innerHeight-(parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dockH"))||150)-g.sz*0.75;
+  for(var pass=0;pass<14;pass++){
+    var moved=false;
+    for(var a2=0;a2<placed.length;a2++){
+      for(var b2=a2+1;b2<placed.length;b2++){
+        var p=placed[a2], q=placed[b2];
+        var dx=q.x-p.x, dy=q.y-p.y;
+        var d=Math.sqrt(dx*dx+dy*dy);
+        if(d>=minD) continue;
+        moved=true;
+        /* Exactly coincident. Using one fixed direction for every pair makes the whole pile
+           spread along a single line and it never resolves; deriving the direction from the
+           index fans them apart instead. Golden-angle spacing so no two indices agree. */
+        if(d<0.001){ var th=(a2*2.39996); dx=Math.cos(th); dy=Math.sin(th); d=1; }
+        var push=(minD-d)/2, ux=dx/d, uy=dy/d;
+        p.x-=ux*push; p.y-=uy*push;
+        q.x+=ux*push; q.y+=uy*push;
+      }
+    }
+    placed.forEach(function(p){
+      if(p.y<top2) p.y=top2;
+      if(p.y>dockTop2) p.y=dockTop2;
+      if(p.x>g.cx-g.sz*0.95) p.x=g.cx-g.sz*0.95;
+      if(p.x<g.sz*0.62) p.x=g.sz*0.62;
+    });
+    if(!moved) break;
+  }
+  placed.forEach(function(p){
+    var el=p.el, i=p.i, x=p.x, y=p.y;
     el.style.left=(g.cx-g.sz/2)+"px";
     el.style.top=(g.cy-g.sz/2)+"px";
     el.style.margin="0";
@@ -4585,7 +4631,14 @@ function _compassTicks(){
   }
   g.innerHTML=out;
 }
+function compassOpen(){
+  try{ var el=$("compassSheet"); return !!(el&&el.classList.contains("open")); }catch(e){ return false; }
+}
 function updateCompassUI(){
+  /* The dial used to live on the map, so it repainted on every GPS and orientation event for a
+     driver who was not looking at it. In a panel it only has to be right while it is visible —
+     and the sweep animation stops costing frames the rest of the time. */
+  if(!compassOpen()) return;
   try{ _compassTicks(); }catch(e){}
   var h=trueHeading();
   var deg=h.deg;
@@ -4600,15 +4653,29 @@ function updateCompassUI(){
   var rot = -(map?map.getBearing():0) - (S.headingUp?0:deg);
   if(dial) dial.style.transform="rotate("+rot.toFixed(1)+"deg)";
   if(box){ box.classList.toggle("hup",S.headingUp); box.classList.toggle("tn",!!h.tn); }
+  var ro=$("compReadout");
+  if(ro){
+    var src = _declNative ? "True north \u00b7 corrected by iOS"
+            : (h.tn ? (S.course!==null&&S.speedMph>=8 ? "True north \u00b7 from GPS course"
+                                                      : "True north \u00b7 self-calibrated")
+                    : "Magnetic north \u00b7 calibrating");
+    var cal = _declNative ? "" :
+              (_decl===null ? "No declination learned yet — walk or drive a straight stretch"
+                            : ("Local declination "+(_decl>0?"+":"")+_decl.toFixed(1)+"\u00b0 \u00b7 "+_declN+" samples"));
+    ro.innerHTML = Math.round(deg)+"\u00b0 "+dirs[Math.round(deg/45)%8]+"<br><span style=\"opacity:.72\">"+src+"</span>"+
+                   (cal?"<br><span style=\"opacity:.55;font-size:11px\">"+cal+"</span>":"");
+  }
 }
-$("compass").onclick=async()=>{
+async function toggleHeadingUp(){
   await requestMotion();
   S.headingUp=!S.headingUp;
   try{ localStorage.setItem("cw_north_up", S.headingUp?"0":"1"); }catch(e){}   // remembered across trips
   toast(S.headingUp?"Heading-up — map rotates with you":"North-up — locked, stays north while navigating");
   if(!S.headingUp)map.easeTo({bearing:0});
   cameraFollow();updateCompassUI();
-};
+  try{ var b=$("compHup"); if(b) b.classList.toggle("on",S.headingUp); }catch(e){}
+}
+if($("compass")) $("compass").onclick=toggleHeadingUp;
 let motionGranted=false;
 async function requestMotion(){
   if(motionGranted)return;
@@ -5027,6 +5094,19 @@ $("fabReport").onclick=()=>openSheet("reportSheet");
 $("fabRoadside").onclick=()=>openSheet("roadsideSheet");
 $("fabSettings").onclick=()=>openSheet("settingsSheet");
 $("fabDiscover").onclick=()=>openSheet("discoverSheet");
+async function openCompass(){
+  openSheet("compassSheet");
+  /* iOS only grants DeviceOrientation on a user gesture. Opening the panel IS that gesture —
+     asking here means the dial is live the moment it appears instead of stuck pointing north. */
+  try{ await requestMotion(); }catch(e){}
+  try{ var b=$("compHup"); if(b) b.classList.toggle("on",S.headingUp); }catch(e){}
+  try{ updateCompassUI(); }catch(e){}
+}
+window.openCompass=openCompass;
+try{
+  var _ch=$("compHup");
+  if(_ch) _ch.onclick=function(){ try{ toggleHeadingUp(); }catch(e){} };
+}catch(e){}
 $("fabFeedback").onclick=()=>openSheet("feedbackSheet");
 $("fabMore").onclick=()=>toggleTools();
 // tapping the scrim behind an open fan closes it, same as any sheet
@@ -5096,7 +5176,11 @@ function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}")
   if(c.theme)S.themeMode=c.theme;
   // v75: auto (time-of-day, daylight by default) is the standard. Anyone carrying an old manual
   // pick from testing gets moved back to auto once; a deliberate choice after this sticks.
-  try{ if(!localStorage.getItem("cw_themeReset")){ S.themeMode="auto"; localStorage.setItem("cw_themeReset","1"); } }catch(e){}
+  /* Dark is the app's identity, not a night convenience — it flipping to light at sunrise made
+     ConeWatch look like a different product twice a day. Dark is now the default and stays put;
+     auto and light remain available, but only if the driver picks them. Existing installs get
+     migrated once (new key, since the old reset already fired for them). */
+  try{ if(!localStorage.getItem("cw_themeDarkDefault")){ S.themeMode="dark"; localStorage.setItem("cw_themeDarkDefault","1"); } }catch(e){}
   if(c.saver!==undefined)S.saver=c.saver;
   if(c.alerts!==undefined)S.audioAlerts=c.alerts;
   if(c.bump!==undefined)S.bumpOn=c.bump;
@@ -6120,6 +6204,10 @@ function renderDockMore(){
   try{
     if(S.destName && S.route) sug.push({e:"\u21A9",t:"Continue to "+S.destName,
       s:fmtDist(S.route.distance||0)+" \u00b7 resume", go:function(){ setDock(1); openSheet("routeSheet"); }});
+    // The compass moved off the map into its own panel, so it needs a way in from the drawer.
+    sug.push({e:"\uD83E\uDDED",t:"Compass",
+      s:(_declNative?"true north":(_decl!==null&&_declN>=8?"true north \u00b7 calibrated":"magnetic \u00b7 calibrating")),
+      go:function(){ setDock(1); openCompass(); }});
     var near=(S.hazards||[]).filter(function(h){
       return S.pos && h && isFinite(h.lat) && distM(S.pos,{lat:h.lat,lng:h.lng})<3200 && notDismissed(h);
     });
