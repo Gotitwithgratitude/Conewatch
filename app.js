@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v234";
+const APP_VERSION="v235";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1972,6 +1972,134 @@ function buildCorridorGraph(elements){
   for(var k2 in keep){ if(!keep[k2]) delete keep[k2]; }
   return {nodes:keep,adj:adj,ways:ways};
 }
+/* ═══════════ offline routing, session 2 of 3: local A* ═══════════
+   Routes across a cached corridor graph with no network. Session 3 wires this to the off-route
+   handler; for now it is callable and testable but nothing invokes it automatically.
+
+   A* rather than Dijkstra because we always know the destination, and the straight-line
+   heuristic prunes most of the graph. The heuristic must never overestimate or the result stops
+   being the cheapest path — so it is pure haversine metres multiplied by the CHEAPEST possible
+   road weight. Using an average weight would overestimate on motorway-heavy routes and quietly
+   return worse paths than exist. */
+var _H_MIN_W=1.0;                                  // = ROAD_W.motorway, the cheapest weight there is
+
+/* Binary heap. An array with sort() on every push is O(n log n) per insertion and a corridor
+   can hold thousands of nodes — that was measurably slower than the search itself in testing. */
+function _MinHeap(){ this.a=[]; }
+_MinHeap.prototype.push=function(item){
+  var a=this.a; a.push(item); var i=a.length-1;
+  while(i>0){ var p=(i-1)>>1; if(a[p].f<=a[i].f) break; var t=a[p]; a[p]=a[i]; a[i]=t; i=p; }
+};
+_MinHeap.prototype.pop=function(){
+  var a=this.a; if(!a.length) return null;
+  var top=a[0], last=a.pop();
+  if(a.length){ a[0]=last; var i=0,n=a.length;
+    for(;;){ var l=2*i+1,r=l+1,m=i;
+      if(l<n&&a[l].f<a[m].f) m=l;
+      if(r<n&&a[r].f<a[m].f) m=r;
+      if(m===i) break; var t=a[m]; a[m]=a[i]; a[i]=t; i=m; }
+  }
+  return top;
+};
+_MinHeap.prototype.size=function(){ return this.a.length; };
+
+/* Snap a GPS position to the nearest graph node. Linear scan is fine at corridor scale (a few
+   thousand nodes, single-digit milliseconds) and avoids carrying a spatial index in storage. */
+function graphSnap(g,pt,maxM){
+  var best=null,bd=Infinity;
+  for(var id in g.adj){
+    var c=g.nodes[id]; if(!c) continue;
+    var d=distM(pt,{lat:c[1],lng:c[0]});
+    if(d<bd){ bd=d; best=id; }
+  }
+  if(best===null) return null;
+  if(maxM && bd>maxM) return null;                 // too far from any cached road to trust
+  return {id:best,dist:bd};
+}
+/* Returns {coords,distance,nodes} or null. coords is [lng,lat][] so it can go straight into the
+   existing route source without translation. */
+function graphRoute(g,from,to,opts){
+  opts=opts||{};
+  try{
+    if(!g||!g.adj||!g.nodes) return null;
+    var a=graphSnap(g,from,opts.maxSnapM||220);
+    var b=graphSnap(g,to,opts.maxSnapM||400);
+    if(!a||!b) return null;
+    if(a.id===b.id) return null;
+    var goal=g.nodes[b.id];
+    function h(id){
+      var c=g.nodes[id]; if(!c) return 0;
+      return distM({lat:c[1],lng:c[0]},{lat:goal[1],lng:goal[0]})*_H_MIN_W;
+    }
+    var gScore={}, cameFrom={}, closed={};
+    gScore[a.id]=0;
+    var open=new _MinHeap();
+    open.push({id:a.id,f:h(a.id)});
+    var guard=0, LIMIT=opts.limit||120000;         // hard stop: never hang the UI mid-drive
+    while(open.size()){
+      if(++guard>LIMIT) return null;
+      var cur=open.pop();
+      if(closed[cur.id]) continue;
+      if(cur.id===b.id) break;
+      closed[cur.id]=1;
+      var edges=g.adj[cur.id]; if(!edges) continue;
+      var cc=g.nodes[cur.id]; if(!cc) continue;
+      for(var i=0;i<edges.length;i++){
+        var nb=edges[i][0], w=edges[i][1];
+        if(closed[nb]) continue;
+        var nc=g.nodes[nb]; if(!nc) continue;
+        var step=distM({lat:cc[1],lng:cc[0]},{lat:nc[1],lng:nc[0]})*w;
+        var tentative=gScore[cur.id]+step;
+        if(gScore[nb]===undefined || tentative<gScore[nb]){
+          gScore[nb]=tentative; cameFrom[nb]=cur.id;
+          open.push({id:nb,f:tentative+h(nb)});
+        }
+      }
+    }
+    if(gScore[b.id]===undefined) return null;      // unreachable within the cached corridor
+    var path=[], cur2=b.id, hops=0;
+    while(cur2!==undefined && hops++<100000){
+      path.push(cur2);
+      if(cur2===a.id) break;
+      cur2=cameFrom[cur2];
+    }
+    if(path[path.length-1]!==a.id) return null;
+    path.reverse();
+    var coords=[], metres=0, prev=null;
+    for(var k=0;k<path.length;k++){
+      var c2=g.nodes[path[k]]; if(!c2) continue;
+      if(prev) metres+=distM({lat:prev[1],lng:prev[0]},{lat:c2[1],lng:c2[0]});
+      coords.push([c2[0],c2[1]]); prev=c2;
+    }
+    if(coords.length<2) return null;
+    return {coords:coords,distance:Math.round(metres),nodes:path.length};
+  }catch(e){ return null; }
+}
+/* Pick the best cached corridor for a trip: the one whose graph actually contains both ends.
+   Wrong-corridor selection is the likely failure mode once several are stored, so this checks
+   reachability rather than guessing from the destination label. */
+async function routeOffline(from,to){
+  try{
+    var all=await cwdbAll();
+    if(!all||!all.length) return null;
+    all.sort(function(a,b){ return b.t-a.t; });
+    for(var i=0;i<all.length;i++){
+      var r=graphRoute(all[i],from,to);
+      if(r){ r.corridor=all[i].key; return r; }
+    }
+    return null;
+  }catch(e){ return null; }
+}
+window.cwTestOffline=async function(){
+  try{
+    if(!S.pos) return "no GPS fix";
+    var dest=S.dest; if(!dest) return "no destination set";
+    var t0=Date.now();
+    var r=await routeOffline(S.pos,dest);
+    if(!r) return "no offline route found";
+    return {ms:Date.now()-t0,points:r.coords.length,metres:r.distance,corridor:r.corridor};
+  }catch(e){ return "error: "+e; }
+};
 var _corridorBusy=false;
 async function captureCorridorGraph(r){
   if(_corridorBusy) return null;
@@ -5343,7 +5471,7 @@ try{
     /* No usable console on a phone, so the corridor cache reports itself here. IndexedDB reads
        are async and dbg() paints synchronously, so we keep the last summary in a string and
        kick a refresh alongside each paint. */
-    var _corrTxt="corridor  reading…", _corrTick=null;
+    var _corrTxt="corridor  reading…", _corrTick=null, _offTxt="", _offAt=0;
     function _corridorLine(){ return _corrTxt; }
     function _corridorRefresh(){
       try{
@@ -5355,7 +5483,20 @@ try{
           _corrTxt="corridor  "+all.length+" cached\n"+
                    "newest  "+(x.n||0)+" nodes / "+(x.ways||0)+" ways\n"+
                    "to      "+((x.destName||"?").slice(0,18))+"\n"+
-                   "age     "+Math.round((Date.now()-x.t)/60000)+" min";
+                   "age     "+Math.round((Date.now()-x.t)/60000)+" min"+
+                   (_offTxt?("\noffline "+_offTxt):"");
+          // probe the A* path against the live position so the panel proves the search works
+          // on real OSM data, not just the synthetic grids it was unit-tested on
+          try{
+            if(S.pos&&S.dest&&typeof routeOffline==="function"&&Date.now()-_offAt>6000){
+              _offAt=Date.now();
+              var _t0=Date.now();
+              routeOffline(S.pos,S.dest).then(function(rr){
+                _offTxt = rr ? (rr.coords.length+" pts / "+rr.distance+"m / "+(Date.now()-_t0)+"ms")
+                             : "no path in cache";
+              }).catch(function(){ _offTxt="probe error"; });
+            }
+          }catch(e){}
         }).catch(function(e){ _corrTxt="corridor  idb error"; });
       }catch(e){ _corrTxt="corridor  unavailable"; }
     }
