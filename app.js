@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v233";
+const APP_VERSION="v234";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -5340,6 +5340,25 @@ try{
        sheet actually receives, so a screenshot settles what is happening instead of me
        inferring it from a description. */
     var _dbg=null;
+    /* No usable console on a phone, so the corridor cache reports itself here. IndexedDB reads
+       are async and dbg() paints synchronously, so we keep the last summary in a string and
+       kick a refresh alongside each paint. */
+    var _corrTxt="corridor  reading…", _corrTick=null;
+    function _corridorLine(){ return _corrTxt; }
+    function _corridorRefresh(){
+      try{
+        if(typeof cwdbAll!=="function"){ _corrTxt="corridor  n/a (old build)"; return; }
+        cwdbAll().then(function(all){
+          if(!all||!all.length){ _corrTxt="corridor  none cached yet\n(plan a route, wait ~5s)"; return; }
+          all.sort(function(a,b){ return b.t-a.t; });
+          var x=all[0];
+          _corrTxt="corridor  "+all.length+" cached\n"+
+                   "newest  "+(x.n||0)+" nodes / "+(x.ways||0)+" ways\n"+
+                   "to      "+((x.destName||"?").slice(0,18))+"\n"+
+                   "age     "+Math.round((Date.now()-x.t)/60000)+" min";
+        }).catch(function(e){ _corrTxt="corridor  idb error"; });
+      }catch(e){ _corrTxt="corridor  unavailable"; }
+    }
     function dbg(tag){
       if(!window.__cwDockDebug) return;
       if(!_dbg){
@@ -5349,6 +5368,7 @@ try{
           "pointer-events:none;white-space:pre;max-width:74vw";
         document.body.appendChild(_dbg);
       }
+      _corridorRefresh();
       var y=getComputedStyle(document.documentElement).getPropertyValue("--dockY").trim();
       _dbg.textContent =
         "evt   "+tag+"\n"+
@@ -5356,7 +5376,8 @@ try{
         "dockY "+y+"\n"+
         "from  "+_from+"  state "+dockState()+"\n"+
         (_met? ("y2/y1/y0  "+Math.round(_met.y2)+" / "+Math.round(_met.y1)+" / "+Math.round(_met.y0)+"\n"+
-                "dockH "+Math.round(_met.H)+"  moreH "+Math.round(_met.M)) : "metrics null");
+                "dockH "+Math.round(_met.H)+"  moreH "+Math.round(_met.M)) : "metrics null")+
+        "\n────────────\n"+_corridorLine();
     }
     try{
       var _vb=document.getElementById("verBadge"), _vt=null;
@@ -5368,8 +5389,14 @@ try{
         _vb.addEventListener("pointerdown",function(){
           _vt=setTimeout(function(){
             window.__cwDockDebug=!window.__cwDockDebug;
-            if(!window.__cwDockDebug && _dbg){ _dbg.remove(); _dbg=null; }
-            else dbg("armed");
+            if(!window.__cwDockDebug && _dbg){ _dbg.remove(); _dbg=null; if(_corrTick){clearInterval(_corrTick);_corrTick=null;} }
+            else {
+              dbg("armed");
+              // repaint on a timer: the corridor capture lands ~4s after a route, long after
+              // the last drag event, so without this the panel would show a stale "none cached"
+              if(_corrTick) clearInterval(_corrTick);
+              _corrTick=setInterval(function(){ if(window.__cwDockDebug) dbg("armed"); },2000);
+            }
             try{ if(navigator.vibrate) navigator.vibrate(20); }catch(e){}
           },700);
         });
