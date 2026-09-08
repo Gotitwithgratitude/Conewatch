@@ -1,0 +1,1450 @@
+<!DOCTYPE html>
+<!-- ConeWatch — © Got It With Gratitude LLC. All rights reserved. Free pothole & road-hazard app. -->
+<html lang="en" data-theme="dark">
+<head>
+  <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin>
+  <link rel="preconnect" href="https://basemaps.cartocdn.com" crossorigin>
+  <link rel="preconnect" href="https://routing.openstreetmap.de" crossorigin>
+  <link rel="preconnect" href="https://nominatim.openstreetmap.org" crossorigin>
+  <link rel="preconnect" href="https://photon.komoot.io" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+  <link rel="dns-prefetch" href="https://s3.amazonaws.com">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0E1013" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>ConeWatch Pro — Navigation & Road Intelligence</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/5.3.0/maplibre-gl.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600&family=Chakra+Petch:wght@500;600&display=swap');
+
+  :root{--safeTop:env(safe-area-inset-top,0px);
+    --bg:#08090B; --panel:rgba(30,32,37,.55); --panel-solid:rgba(22,24,28,.82); --panel-hi:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.11); --edge:rgba(255,255,255,.07);
+    --cone:#FF6A1F; --yellow:#FFC72C; --text:#F2F3F5; --red:#FF453A;
+    --mute:#9096A0; --ok:#34C98A; --blue:#0A84FF; --purple:#BF9BFF;
+    --nav-accent:#32E0C4; --glow:rgba(50,224,196,.35);
+    --glass:saturate(170%) blur(22px);
+    --glass-lite:saturate(150%) blur(14px);
+    --display:'Oswald','Arial Narrow',Impact,sans-serif;
+    --tech:'Chakra Petch',ui-monospace,monospace;
+    --body:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Roboto,sans-serif;
+    --btn-face:rgba(255,255,255,.06);
+    --btn-shadow:0 1px 0 rgba(255,255,255,.08) inset, 0 6px 20px rgba(0,0,0,.34);
+    --btn-pressed:0 1px 4px rgba(0,0,0,.4) inset;
+    --hair:0 0 0 .5px rgba(255,255,255,.14);
+  }
+  [data-theme="light"]{
+    --bg:#EDF0F3; --panel:rgba(255,255,255,.8); --panel-solid:#FFFFFF; --panel-hi:#E7EAEE;
+    --line:rgba(10,20,30,.12); --edge:rgba(10,20,30,.06);
+    --text:#171B20; --mute:#5D6570;
+    --nav-accent:#1D6EF2; --glow:rgba(29,110,242,.45);
+    --btn-face:linear-gradient(150deg,#FFFFFF,#DFE3E8);
+    --btn-shadow:0 6px 16px rgba(20,30,45,.18), inset 0 1px 0 rgba(255,255,255,.9), inset 0 -2px 4px rgba(20,30,45,.12);
+    --btn-pressed:0 2px 5px rgba(20,30,45,.15), inset 0 2px 6px rgba(20,30,45,.2);
+  }
+  /* ═══════════ seasonal: Halloween ═══════════
+     Palette-only override. Deepens the background toward warm black, pushes the existing
+     cone orange to amber, and swaps the teal nav accent for the purple already in the
+     palette. Hazard marker colors are NOT touched — those stay constant year-round so
+     drivers recognize them by color at speed. Gated Oct 1–Nov 1 (see _seasonActive). */
+  [data-season="halloween"]{
+    --bg:#0B0704; --panel:rgba(38,28,18,.55); --panel-solid:rgba(28,20,13,.86);
+    --panel-hi:rgba(255,180,90,.06);
+    --line:rgba(255,170,80,.15); --edge:rgba(255,170,80,.08);
+    --cone:#FF7A12; --yellow:#FFB627;
+    --nav-accent:#B565FF; --glow:rgba(181,101,255,.4);
+  }
+  [data-season="halloween"] #stripe{
+    background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,#1A0F06 13px 26px)}
+  [data-season="halloween"] #brand{text-shadow:0 0 20px rgba(255,122,18,.45)}
+  /* gentle flicker on the wordmark — slow and low-contrast so it reads as atmosphere,
+     not as a broken screen. Respects reduced-motion. */
+  @keyframes cwFlicker{0%,100%{opacity:1}92%{opacity:1}94%{opacity:.72}96%{opacity:1}97%{opacity:.85}98%{opacity:1}}
+  [data-season="halloween"] #brand b{animation:cwFlicker 7s infinite}
+  [data-season="halloween"] #verBadge{animation:cwPulse 2.6s ease-in-out infinite}
+  @keyframes cwPulse{0%,100%{box-shadow:0 0 10px rgba(181,101,255,.5)}50%{box-shadow:0 0 18px rgba(255,122,18,.75)}}
+  /* ── fog vignette ──
+     A soft darkening at the screen edges. Sits above the map but below every control, and is
+     pointer-events:none so it can never intercept a tap. Pure atmosphere — nothing that
+     matters is ever behind it, because the centre stays completely clear. */
+  [data-season="halloween"] #map::after{
+    content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
+    background:radial-gradient(ellipse 120% 80% at 50% 45%,transparent 42%,rgba(20,8,0,.30) 78%,rgba(12,4,0,.52) 100%);
+    animation:cwFog 14s ease-in-out infinite alternate}
+  [data-season="halloween"][data-theme="light"] #map::after{
+    background:radial-gradient(ellipse 120% 80% at 50% 45%,transparent 46%,rgba(120,70,20,.13) 80%,rgba(90,50,10,.22) 100%)}
+  @keyframes cwFog{0%{opacity:.82}100%{opacity:1}}
+
+  /* ── cobwebs in the corners of every sheet ──
+     Drawn in CSS, no images. Only the top corners, only on panels, never over content. */
+  [data-season="halloween"] .sheet::before,[data-season="halloween"] .sheet::after,
+  [data-season="halloween"] #turnSheet::before{
+    content:"";position:absolute;top:0;width:74px;height:74px;pointer-events:none;z-index:3;opacity:.5;
+    background:
+      radial-gradient(circle at 0 0,transparent 12px,rgba(255,214,170,.30) 12.5px,transparent 13.5px),
+      radial-gradient(circle at 0 0,transparent 26px,rgba(255,214,170,.26) 26.5px,transparent 27.5px),
+      radial-gradient(circle at 0 0,transparent 42px,rgba(255,214,170,.20) 42.5px,transparent 43.5px),
+      linear-gradient(45deg,transparent 49%,rgba(255,214,170,.26) 49.6%,transparent 50.2%),
+      linear-gradient(80deg,transparent 49%,rgba(255,214,170,.20) 49.6%,transparent 50.2%),
+      linear-gradient(10deg,transparent 49%,rgba(255,214,170,.20) 49.6%,transparent 50.2%)}
+  [data-season="halloween"] .sheet::before,[data-season="halloween"] #turnSheet::before{left:0}
+  [data-season="halloween"] .sheet::after{right:0;transform:scaleX(-1)}
+
+  /* ── speedometer becomes a lantern ── */
+  [data-season="halloween"] #speed{
+    box-shadow:0 0 0 2px rgba(255,122,18,.55),0 0 34px rgba(255,122,18,.42),inset 0 0 26px rgba(255,122,18,.14);
+    animation:cwLantern 3.4s ease-in-out infinite}
+  @keyframes cwLantern{
+    0%,100%{box-shadow:0 0 0 2px rgba(255,122,18,.5),0 0 26px rgba(255,122,18,.34),inset 0 0 22px rgba(255,122,18,.12)}
+    50%{box-shadow:0 0 0 2px rgba(255,150,40,.72),0 0 44px rgba(255,122,18,.55),inset 0 0 30px rgba(255,122,18,.2)}}
+
+  /* ── bats drifting across the map ──
+     Three of them, long slow loops, well above the route and never near the centre where
+     the driver looks. Pure decoration: pointer-events off, and gone under reduced-motion. */
+  #cwBats{position:fixed;inset:0;pointer-events:none;z-index:2;display:none;overflow:hidden}
+  [data-season="halloween"] #cwBats{display:block}
+  .cw-bat{position:absolute;font-size:17px;opacity:.32;will-change:transform;
+    filter:drop-shadow(0 0 6px rgba(0,0,0,.6))}
+  .cw-bat.b1{top:11%;animation:batFly1 34s linear infinite}
+  .cw-bat.b2{top:19%;font-size:13px;opacity:.24;animation:batFly2 47s linear infinite}
+  .cw-bat.b3{bottom:15%;font-size:15px;opacity:.22;animation:batFly3 41s linear infinite}
+  @keyframes batFly1{0%{transform:translateX(-8vw) translateY(0) scaleX(1)}
+    25%{transform:translateX(30vw) translateY(-16px) scaleX(1)}
+    50%{transform:translateX(108vw) translateY(10px) scaleX(1)}
+    50.1%{transform:translateX(108vw) translateY(10px) scaleX(-1)}
+    100%{transform:translateX(-8vw) translateY(-6px) scaleX(-1)}}
+  @keyframes batFly2{0%{transform:translateX(104vw) translateY(0) scaleX(-1)}
+    100%{transform:translateX(-10vw) translateY(22px) scaleX(-1)}}
+  @keyframes batFly3{0%{transform:translateX(-10vw) translateY(0)}
+    45%{transform:translateX(52vw) translateY(-20px)}
+    100%{transform:translateX(106vw) translateY(6px)}}
+  @media (prefers-reduced-motion:reduce){
+    [data-season="halloween"] #cwBats{display:none}
+    [data-season="halloween"] #speed{animation:none}}
+
+  /* ── the driver's own marker gets a lantern glow ── */
+  [data-season="halloween"] #meArrow{background:#FF7A12;
+    box-shadow:0 3px 14px rgba(0,0,0,.5),0 0 0 6px rgba(255,122,18,.28),0 0 22px rgba(255,122,18,.55)}
+  [data-season="halloween"] #meArrow::after{border-bottom-color:#2B0A45}
+  [data-season="halloween"] .me-dot,[data-season="halloween"] #meMarker{
+    filter:drop-shadow(0 0 10px rgba(255,140,30,.65))}
+
+  /* ── report tiles pulse pumpkin-orange instead of cone-orange ── */
+  [data-season="halloween"] .rtile.fired{animation:rtileFireHW .5s cubic-bezier(.2,.8,.2,1)}
+  @keyframes rtileFireHW{
+    0%{transform:scale(.93);box-shadow:0 0 0 2px #FF7A12}
+    45%{transform:scale(1.12);box-shadow:0 0 0 6px #FF7A12,0 0 40px rgba(181,101,255,.8)}
+    100%{transform:scale(1);box-shadow:var(--hair)}}
+
+  @media (prefers-reduced-motion:reduce){
+    [data-season="halloween"] #brand b,[data-season="halloween"] #verBadge{animation:none}
+    [data-season="halloween"] #map::after{animation:none;opacity:.9}
+    [data-season="halloween"] .rtile.fired{animation:none}
+  }
+  [data-season="halloween"] #verBadge{
+    background:linear-gradient(135deg,#B565FF,#FF7A12);
+    box-shadow:0 0 10px rgba(181,101,255,.55),inset 0 1px 0 rgba(255,255,255,.3)}
+  [data-season="halloween"][data-theme="light"]{
+    --bg:#F4EDE2; --panel:rgba(255,252,247,.86); --panel-solid:#FFFCF7; --panel-hi:#EFE4D4;
+    --line:rgba(92,54,16,.16); --edge:rgba(92,54,16,.08);
+    --text:#241A0E; --mute:#6E5D48;
+    --cone:#E2620A; --yellow:#C98A10;
+    --nav-accent:#6D34A8; --glow:rgba(109,52,168,.34);
+    --btn-face:linear-gradient(150deg,#FFFCF7,#E8DCCB);
+    --btn-shadow:0 6px 16px rgba(74,42,10,.16), inset 0 1px 0 rgba(255,255,255,.92), inset 0 -2px 4px rgba(74,42,10,.10);
+  }
+  /* daylight stripe: amber on bone rather than the near-black used at night */
+  [data-season="halloween"][data-theme="light"] #stripe{
+    background:repeating-linear-gradient(-45deg,#E2620A 0 13px,#4A2A0A 13px 26px)}
+  [data-season="halloween"][data-theme="light"] #brand{text-shadow:none}
+  [data-season="halloween"][data-theme="light"] #verBadge{
+    background:linear-gradient(135deg,#6D34A8,#E2620A);
+    box-shadow:0 2px 8px rgba(74,42,10,.28),inset 0 1px 0 rgba(255,255,255,.35)}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html{background:#000}
+  body{background:var(--bg)}
+  html,body{margin:0;height:100dvh;background:var(--bg);color:var(--text);font-family:var(--body);overflow:hidden;transition:background .5s;position:fixed;inset:0;width:100%;overscroll-behavior:none}
+  button,input,textarea,select,.fab,.chip,.mode,.row-btn{touch-action:manipulation}
+  input,textarea,select{font-size:16px !important}
+  #map{position:fixed;top:0;left:0;right:0;bottom:0;height:100dvh;background:var(--bg);touch-action:none;-webkit-user-select:none;user-select:none}
+  #map canvas{touch-action:none}
+  .maplibregl-popup-content{background:var(--panel-solid)!important;color:var(--text)!important;border:1px solid var(--line);border-radius:12px;font-family:var(--body)}
+  .maplibregl-popup-tip{border-top-color:var(--panel-solid)!important;border-bottom-color:var(--panel-solid)!important}
+  .maplibregl-ctrl-attrib{background:var(--panel)!important;font-size:9px}
+  .maplibregl-ctrl-attrib a{color:var(--mute)!important}
+
+  #hdr{position:fixed;top:0;left:0;right:0;z-index:1000;padding:max(10px,env(safe-area-inset-top)) 12px 10px;-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);background:linear-gradient(180deg,rgba(8,9,11,.72),rgba(8,9,11,.32));
+    background:var(--panel-solid);
+    border-bottom:1px solid var(--line)}
+  #stripe{height:7px;border-radius:2px;margin-bottom:8px;background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,rgba(0,0,0,.55) 13px 26px)}
+  /* Brand and badge on one baseline at the left, status block hard right, the gap between them
+     doing the spacing. Everything sits on one horizontal axis — no element floating above or
+     below another, which is what made the old row read as three stacked afterthoughts. */
+  #brandrow{display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;gap:14px;
+    min-height:46px}
+  #brandrow #brand{align-self:center}
+  /* version, theme and connection travel together as one cluster beside the wordmark, evenly
+     spaced, so the eye reads brand -> status -> time straight across */
+  #badgeRow{display:flex;align-items:center;gap:9px}
+  /* The season pill lives INSIDE the wordmark, so it is centred on the lettering's optical
+     midline rather than the line box — inline-flex with a fixed square and no padding keeps it
+     a true circle at any font size, and the -1px lift sits it on the cap-height axis. */
+  #brand{display:inline-flex;align-items:center;white-space:nowrap}
+  #seasonPill{display:none;width:20px;height:20px;flex:0 0 20px;border-radius:50%;
+    align-items:center;justify-content:center;margin:0 0 0 9px;padding:0;
+    font-size:12px;line-height:1;position:relative;top:-1px;
+    background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;
+    box-shadow:0 0 9px rgba(255,122,18,.45);border:1px solid rgba(255,255,255,.16)}
+  #seasonPill.on{display:inline-flex}
+  #verBadge{flex:0 0 auto}
+  /* the clock owns the right edge on its own */
+  #clock{justify-self:end;display:flex;align-items:center;line-height:1}
+  /* Digital readout: fixed-width digits so the clock never jitters as the minute rolls over,
+     and a colon that pulses on the second like a dash display. */
+  #clockTime{font-family:var(--tech,ui-monospace,monospace);font-size:23px;font-weight:700;
+    letter-spacing:1.5px;color:var(--text);
+    font-variant-numeric:tabular-nums;-webkit-font-feature-settings:"tnum";font-feature-settings:"tnum";
+    text-shadow:0 0 12px rgba(255,255,255,.14)}
+  #clockTime .cln{animation:cwtick 2s steps(1,end) infinite;opacity:1}
+  @keyframes cwtick{0%,49%{opacity:1}50%,100%{opacity:.25}}
+  #clockTime .mer{font-size:11px;letter-spacing:1px;color:var(--mute);margin-left:3px}
+  /* status pills — same height, same radius, sitting on one line */
+  .cw-pill{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 9px;
+    white-space:nowrap;flex:0 0 auto;
+    border-radius:10px;font-family:var(--tech,ui-monospace,monospace);font-size:9px;
+    letter-spacing:1.4px;text-transform:uppercase;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:var(--mute)}
+  .cw-pill.on{color:var(--text)}
+  .cw-pill .dot{width:5px;height:5px;border-radius:50%;background:currentColor;
+    box-shadow:0 0 7px currentColor}
+  .cw-pill.livep{color:#46C08A;border-color:rgba(70,192,138,.35);background:rgba(70,192,138,.10)}
+  .cw-pill.offp{color:#E8B23A;border-color:rgba(232,178,58,.35);background:rgba(232,178,58,.10)}
+  #brand{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;text-shadow:0 0 18px var(--glow)}
+  #brand b{color:var(--cone)}
+  #clock{font-family:var(--tech);font-size:10px;color:var(--mute);letter-spacing:1px;text-align:right;line-height:1.3}
+  #searchwrap{flex:1;position:relative}
+  #search{width:100%;background:rgba(255,255,255,.07);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);border:1px solid var(--line);color:var(--text);border-radius:13px;padding:12px 42px 12px 15px;font-size:16px;outline:none;box-shadow:var(--hair);transition:border-color .2s,box-shadow .2s;text-overflow:ellipsis}
+  #search:focus{text-overflow:clip}
+  @keyframes satpulse{0%{transform:scale(.5);opacity:.85}70%{transform:scale(2.8);opacity:0}100%{opacity:0}}
+  .sat-beacon{display:flex;flex-direction:column;align-items:center;position:relative}
+  .sat-pin{font-size:34px;line-height:1;filter:drop-shadow(0 3px 5px rgba(0,0,0,.75))}
+  .sat-pulse{position:absolute;bottom:3px;width:42px;height:42px;border-radius:50%;background:rgba(255,107,26,.5);box-shadow:0 0 0 2px rgba(255,107,26,.6);animation:satpulse 1.9s ease-out infinite;pointer-events:none}
+  #verBadge{display:inline-block;margin-left:6px;vertical-align:super;font-family:var(--tech,monospace);font-size:9px;font-weight:800;letter-spacing:.5px;color:#fff;padding:2px 6px;border-radius:8px;background:linear-gradient(135deg,#FF6B1A,#ff9a4d);box-shadow:0 0 10px rgba(255,107,26,.55),inset 0 1px 0 rgba(255,255,255,.3);border:1px solid rgba(255,255,255,.25);transform:translateY(-2px)}
+  #brandrow.searching #brand,#brandrow.searching #clock{display:none}
+  #brandrow.searching #searchwrap{flex:1 1 100%}
+  #searchClear{position:absolute;right:44px;top:50%;transform:translateY(-50%);border:none;background:var(--line);color:var(--text);width:22px;height:22px;border-radius:50%;font-size:13px;line-height:1;cursor:pointer;display:none}
+  #dock.searching #searchClear{display:flex;align-items:center;justify-content:center}
+  #search:focus{border-color:var(--nav-accent);box-shadow:inset 0 2px 6px rgba(0,0,0,.25), 0 0 0 3px var(--glow)}
+  #searchbtn{position:absolute;right:5px;top:5px;bottom:5px;width:34px;border:none;border-radius:10px;background:var(--cone);color:#141619;font-size:15px;cursor:pointer;box-shadow:0 2px 8px rgba(255,106,31,.4)}
+  #searchbtn:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
+  /* the dock */
+  /* A sheet, not a strip. It is opaque to the very bottom edge so there is no dead black
+     gutter under it, and every other bottom-anchored control measures off --dockH so nothing
+     ever sits underneath it. */
+  #dock{position:fixed;left:0;right:0;bottom:0;z-index:1000;
+    padding:8px 14px calc(14px + env(safe-area-inset-bottom));
+    background:var(--panel-solid);
+    border-top:1px solid var(--line);border-radius:22px 22px 0 0;
+    box-shadow:0 -16px 44px rgba(0,0,0,.55);
+    transition:transform .28s cubic-bezier(.32,.72,0,1)}
+  #dockGrip{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.26);
+    margin:0 auto 12px;cursor:pointer}
+  #dock #searchwrap{flex:none;width:100%}
+  #dock #search{font-size:17px;height:52px;border-radius:16px}
+  #dock #quick{margin-top:10px}
+  #dock #modes{margin-top:10px}
+  /* collapsed still shows the search bar — the one control that always has to be reachable */
+  /* detents are driven from JS via --dockY so the drag and the snap share one mechanism */
+  #dock{transform:translateY(var(--dockY,0px))}
+  /* The sheet moves with TRANSFORM only. Animating max-height re-laid-out and repainted a big
+     scrolling panel on top of a WebGL canvas every frame, which made the drag feel stuck and
+     tore the map. A transform is composited on the GPU and touches neither. */
+  /* No will-change / contain here. Together they made iOS rasterise the sheet once and then
+     throttle transform updates, which is why the drag "barely moved" even though the events
+     were arriving. A plain transform on a plain element tracks the finger exactly. */
+  #dock{display:flex;flex-direction:column;touch-action:none}
+  /* generous invisible grab area — the visible bar is 40px but the target is the full width */
+  /* The grabber was white at 26% opacity — invisible on a white sheet in light mode, so there
+     was no visible cue where the sheet could be grabbed. Apple's own values: a neutral grey
+     that reads on both themes, 36x5 with a 2.5px radius. */
+  #dockGrip{flex:0 0 auto;padding:16px 0 12px;margin:-10px 0 2px;width:100%;
+    background:none;position:relative;touch-action:none;cursor:grab;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  #dockGrip:active{cursor:grabbing}
+  #dockGrip::after{content:"";display:block;width:36px;height:5px;border-radius:2.5px;
+    background:rgba(235,235,245,.32);margin:0 auto;transition:background .15s,width .15s}
+  [data-theme="light"] #dockGrip::after{background:rgba(60,60,67,.30)}
+  #dock.dragging #dockGrip::after{width:52px;background:rgba(235,235,245,.55)}
+  [data-theme="light"] #dock.dragging #dockGrip::after{background:rgba(60,60,67,.55)}
+  /* the drawer is always laid out; the sheet slides to reveal it */
+  #dockMore{flex:0 0 auto;height:54vh;overflow-y:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;margin-top:14px;
+    opacity:0;transition:opacity .2s;pointer-events:none}
+  #dock.expanded #dockMore{opacity:1;pointer-events:auto}
+  #dock.dragging{transition:none}
+  /* While typing, the sheet eases down ~34px: the field lands closer to the thumb and the
+     results list gains headroom above it. */
+  #dock.searching{transform:translateY(calc(var(--dockY,0px) + 34px))}
+  .dm-h{font-family:var(--display);font-size:19px;color:var(--text);margin:2px 2px 10px;
+    letter-spacing:-.2px}
+  .dm-h:not(:first-child){margin-top:20px}
+  /* Places — circular tiles, the shape Apple uses because a circle reads as a destination
+     rather than a button, and the label sits outside so the tile stays clean */
+  .dm-places{display:flex;gap:16px;overflow-x:auto;padding:2px 2px 4px;scrollbar-width:none}
+  .dm-places::-webkit-scrollbar{display:none}
+  .dm-place{flex:0 0 auto;width:74px;text-align:center;cursor:pointer;background:none;border:none;padding:0}
+  .dm-place .pc{width:62px;height:62px;border-radius:50%;margin:0 auto 7px;display:flex;
+    align-items:center;justify-content:center;font-size:26px;
+    box-shadow:0 4px 14px rgba(0,0,0,.4)}
+  .dm-place .pn{display:block;font-size:12px;color:var(--text);font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dm-place .pd{display:block;font-size:11px;color:var(--mute);margin-top:1px}
+  /* Recents — one grouped card, hairline dividers, exactly like a settings list */
+  .dm-list{background:var(--panel);border:1px solid var(--line);border-radius:15px;overflow:hidden}
+  .dm-row{display:flex;align-items:center;gap:13px;padding:13px 14px;cursor:pointer;background:none;
+    border:none;width:100%;text-align:left}
+  .dm-row+.dm-row{border-top:1px solid var(--line)}
+  .dm-row:active{background:rgba(255,255,255,.05)}
+  .dm-row .ri{width:36px;height:36px;border-radius:50%;flex:0 0 auto;display:flex;
+    align-items:center;justify-content:center;font-size:17px;background:var(--btn-face)}
+  .dm-row .rt{flex:1;min-width:0}
+  .dm-row .rt b{display:block;font-size:15px;color:var(--text);font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dm-row .rt small{display:block;font-size:12px;color:var(--mute);margin-top:2px}
+  .dm-empty{color:var(--mute);font-size:13px;padding:14px 2px}
+  body.driving #dock{transform:translateY(110%);pointer-events:none}
+  #results{position:absolute;top:auto;bottom:calc(100% + 8px);left:0;right:0;background:var(--panel-solid);border:1px solid var(--line);border-radius:14px;display:none;max-height:44vh;overflow-y:auto;z-index:1002;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+  .result{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--line);cursor:pointer}
+  .result:last-child{border-bottom:none}
+  .result:active{background:var(--panel-hi)}
+  .result small{color:var(--mute);display:block;font-size:11px;margin-top:2px}
+  .result .acts{display:flex;gap:6px;margin-top:7px}
+  .result .acts button{border:none;border-radius:14px;padding:6px 13px;font-size:11px;font-weight:700;cursor:pointer}
+  .result.ricon{display:flex;align-items:center;gap:12px;padding:12px 14px}
+  .result.ricon .pin{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+  .result.ricon .rtext{flex:1;min-width:0}
+  .result.ricon .rtext b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px}
+  .result.ricon .rtext small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+  .result.ricon .addstop{flex-shrink:0;background:var(--panel-hi);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:7px 12px;font-size:11px;font-weight:700;cursor:pointer}
+  .go{background:var(--cone);color:#141619}
+  .addstop{background:var(--panel-hi);color:var(--text);border:1px solid var(--line)!important}
+  /* ═══════════ turn list ═══════════ */
+  #turnSheet{position:fixed;left:10px;right:10px;
+    top:max(calc(var(--hdrH,150px) + 6px), calc(env(safe-area-inset-top) + 52px));
+    bottom:calc(96px + env(safe-area-inset-bottom));z-index:6600;display:none;
+    flex-direction:column;border-radius:22px;overflow:hidden;
+    background:var(--panel-solid);border:1px solid var(--line);
+    box-shadow:0 24px 60px rgba(0,0,0,.5);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass)}
+  #turnSheet.open{display:flex;animation:turnIn .22s cubic-bezier(.2,.8,.2,1)}
+  @keyframes turnIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  #turnHead{display:flex;align-items:center;gap:14px;padding:16px 18px;flex-shrink:0;
+    background:var(--panel-hi);border-bottom:1px solid var(--line)}
+  #turnHeadIcon{font-size:30px;line-height:1;flex-shrink:0;color:var(--nav-accent)}
+  #turnHeadText{font-size:19px;font-weight:800;line-height:1.2}
+  #turnList{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  .turn-row{display:flex;align-items:center;gap:16px;padding:15px 18px;border-bottom:1px solid var(--edge);
+    cursor:pointer;-webkit-user-select:none;user-select:none}
+  .turn-row:last-child{border-bottom:none}
+  .turn-row .tg{font-size:26px;line-height:1;width:34px;text-align:center;flex-shrink:0;opacity:.9}
+  .turn-row .td{font-size:19px;font-weight:800;line-height:1.15}
+  .turn-row .tn{font-size:15px;color:var(--mute);line-height:1.25;margin-top:2px}
+  .turn-row .tbadge{margin-left:auto;font-size:12px;font-weight:700;padding:4px 9px;border-radius:7px;
+    background:var(--panel-hi);border:1px solid var(--line);flex-shrink:0}
+  .turn-row.cur{background:var(--panel-hi)}
+  .turn-row.cur .td{color:var(--nav-accent)}
+  #turnClose{flex-shrink:0;border:none;background:var(--panel-hi);color:var(--mute);
+    padding:12px;font-size:20px;cursor:pointer;border-top:1px solid var(--line)}
+  #modes{display:flex;gap:6px;margin-top:8px}
+  /* route alternatives: horizontally scrollable, each chip shows time + corridor */
+  #routeAlts::-webkit-scrollbar{display:none}
+  #routeAlts .chip{flex:0 0 auto;text-align:left;line-height:1.25;padding:7px 11px;white-space:nowrap}
+  #routeAlts .chip small{opacity:.7;font-size:10px}
+  /* ═══════════ compact header ═══════════
+     The header was eating the top third of the screen. Compact hides the mode chips and
+     saved destinations (still reachable — tap the chevron) and slims the stripe, handing
+     that space back to the map. Purely visual; nothing is removed from the DOM. */
+  body.hdr-compact #modes,body.hdr-compact #quick{display:none!important}
+  body.hdr-compact #stripe{height:4px;margin-bottom:6px}
+  body.hdr-compact #hdr{padding-bottom:7px}
+  #hdrToggle{position:absolute;right:8px;bottom:-1px;width:34px;height:18px;border:none;
+    background:transparent;color:var(--mute);font-size:12px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;opacity:.75}
+  #hdrToggle:active{opacity:1}
+  #hdr{position:relative}
+  /* ═══════════ FAB size ═══════════ */
+  body[data-fab="s"] .fab{width:42px;height:42px;font-size:16px}
+  body[data-fab="l"] .fab{width:58px;height:58px;font-size:22px}
+  .mode{flex:1;background:var(--btn-face);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);border:1px solid var(--edge);color:var(--mute);border-radius:12px;padding:8px 0;font-size:15px;cursor:pointer;text-align:center;box-shadow:var(--hair)}
+  .mode:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
+  .mode.on{color:var(--text);border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
+
+  #navbanner{position:fixed;top:var(--hdrH,190px);left:12px;right:12px;z-index:999;background:rgba(20,22,26,.72);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);border:1px solid rgba(255,255,255,.12);border-radius:15px;padding:13px 16px;display:none;box-shadow:var(--hair),0 10px 34px rgba(0,0,0,.45)}
+  .nb-dist{font-family:var(--display);font-size:17px;color:var(--nav-accent);line-height:1;margin-top:3px;text-shadow:0 0 10px var(--glow)}
+  .nb-instr{font-size:22px;font-weight:800;margin-top:2px;line-height:1.18;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;word-break:normal;overflow-wrap:anywhere}
+  .nb-meta{font-family:var(--tech);font-size:11px;color:var(--mute);margin-top:6px;display:flex;gap:12px;flex-wrap:wrap}
+  .nb-btns{position:absolute;top:8px;right:8px;display:flex;gap:6px}
+  .nb-btns button{background:var(--panel-hi);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:5px 10px;font-size:12px;cursor:pointer}
+  #nbGlyph{font-size:46px;line-height:1;color:var(--nav-accent);text-shadow:0 0 14px var(--glow);font-weight:700}
+  #nbExit{background:#3A3F47;color:#fff;border-radius:9px;padding:6px 12px;font-family:var(--display);font-size:15px;letter-spacing:.5px;white-space:nowrap}
+  #laneRow{display:flex;gap:12px;justify-content:center;font-size:26px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+  #laneRow .lane{opacity:.28}
+  #laneRow .lane.ok{opacity:1;color:var(--nav-accent);text-shadow:0 0 10px var(--glow)}
+  #navPill{position:fixed;bottom:calc(14px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:997;background:rgba(18,20,24,.72);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);border:1px solid rgba(255,255,255,.1);border-radius:17px;padding:9px 10px;display:none;gap:10px;align-items:center;width:min(93vw,430px);box-shadow:var(--hair),0 14px 38px rgba(0,0,0,.55)}
+  #pillMin{color:#35D07F;font-family:var(--display);font-size:23px;line-height:1.05}
+  #pillSub{font-size:12px;color:#9AA0A8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pillBtn{background:#262A31;border:1px solid rgba(255,255,255,.09);color:#EDEFF2;border-radius:16px;padding:11px 16px;font-size:15px;font-weight:700;cursor:pointer}
+  #roadPill{position:fixed;bottom:calc(86px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:996;background:rgba(10,132,255,.92);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);color:#fff;border-radius:14px;padding:8px 16px;font-weight:600;font-size:15px;display:none;align-items:center;gap:8px;box-shadow:var(--hair),0 8px 22px rgba(10,90,200,.4);max-width:86vw;white-space:nowrap}
+  #roadName{overflow:hidden;text-overflow:ellipsis}
+  #roadRef{background:#fff;color:#17427A;border-radius:50%;min-width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;padding:0 4px}
+  #nbRef{background:#2B5FD9;color:#fff;border-radius:7px;padding:4px 10px;font-family:var(--display);font-size:14px;letter-spacing:.5px}
+  #signShield{background:#1B6B3A;color:#fff;border:2px solid #fff;border-radius:7px;padding:3px 9px;font-family:var(--display);font-size:14px;letter-spacing:.5px;align-items:center;justify-content:center}
+  [data-theme="light"] #navbanner{background:#FFFFFF;border-color:#E2E5EA;box-shadow:0 10px 30px rgba(20,30,45,.16)}
+  [data-theme="light"] #nbGlyph{color:#111;text-shadow:none}
+  [data-theme="light"] .nb-dist{color:#6A7078;text-shadow:none}
+  [data-theme="light"] .nb-instr{color:#111}
+  [data-theme="light"] #nbExit{background:#fff;color:#111;border:2px solid #111}
+  [data-theme="light"] #laneRow{border-top-color:#ECEEF1}
+  [data-theme="light"] #laneRow .lane{color:#C4C9D0;opacity:1}
+  [data-theme="light"] #laneRow .lane.ok{color:#111;text-shadow:none}
+  body.driving #limitBadge{position:fixed;left:12px;top:calc(env(safe-area-inset-top) + 172px);z-index:996}
+
+  #cluster{position:fixed;left:12px;bottom:calc(var(--dockH,150px) + 12px);z-index:998;display:flex;flex-direction:column;gap:8px;align-items:center}
+  #speed{width:88px;height:88px;border-radius:50%;background:rgba(28,30,35,.6);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);border:2px solid rgba(255,255,255,.16);display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:var(--hair),0 8px 24px rgba(0,0,0,.4)}
+  #speed .v{font-family:var(--display);font-size:34px;line-height:1}
+  #speed .u{font-family:var(--tech);font-size:9px;color:var(--mute);letter-spacing:2px;text-transform:uppercase}
+  #speed.over{border-color:var(--red);box-shadow:var(--btn-shadow),0 0 18px rgba(255,59,78,.5)}
+  #speed.over .v{color:var(--red)}
+  #trip{background:var(--panel-solid);border:1px solid var(--line);border-radius:12px;padding:4px 12px;font-family:var(--tech);font-size:10px;color:var(--mute);text-align:center}
+  #trip b{color:var(--text);font-size:13px}
+  /* ═══════════ holographic compass ═══════════
+     Drawn as SVG rather than a glyph: it has to stay crisp at any pixel ratio and every moving
+     part needs to be addressable. The look is "instrument under glass" — a lit dial you read
+     through, not a flat icon pasted on the map. */
+  :root{ --cw-hue:#6FF3D0; }
+  #compass{position:relative;width:168px;height:168px;border-radius:50%;
+    background:radial-gradient(circle at 50% 34%, rgba(30,44,48,.92), rgba(10,14,17,.94));
+    border:1px solid rgba(120,240,210,.22);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:var(--btn-shadow), 0 0 16px rgba(80,230,190,.13), inset 0 0 18px rgba(70,220,190,.07);
+    -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+  #compass:active{transform:scale(.96)}
+  #compRose{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .cw-rim{fill:none;stroke:rgba(120,240,210,.30);stroke-width:1}
+  .cw-rim2{fill:none;stroke:rgba(120,240,210,.13);stroke-width:.6}
+  .cw-tick{stroke:rgba(150,250,220,.42);stroke-width:1;stroke-linecap:round}
+  .cw-tick.maj{stroke:rgba(175,255,235,.85);stroke-width:1.7}
+  .cw-card{fill:rgba(190,255,240,.80);font:700 9.5px var(--tech,ui-monospace,monospace);
+    text-anchor:middle;dominant-baseline:middle;letter-spacing:.5px}
+  .cw-card.cw-n{fill:#8CFFD8;font-size:11px}
+  /* Chromatic split: a cyan and a magenta ghost either side of a white core. It is the cheapest
+     honest cue for "projected light" — a single flat needle reads as a sticker. */
+  .cw-nd{transform-origin:50px 50px}
+  .cw-nd-a{fill:rgba(80,240,255,.62);transform:translate(-.7px,0)}
+  .cw-nd-b{fill:rgba(255,90,190,.52);transform:translate(.7px,0)}
+  .cw-nd-m{fill:#EAFFF9}
+  .cw-tail{fill:rgba(140,220,215,.30)}
+  .cw-hub{fill:#DFFFF6}
+  .cw-hub-ring{fill:none;stroke:rgba(140,250,220,.45);stroke-width:.9}
+  #compDial{transform-origin:50px 50px;transition:transform .22s cubic-bezier(.22,.8,.3,1)}
+  #compSweep{transform-origin:50px 50px;animation:cwSweepSpin 5.5s linear infinite;opacity:.75}
+  @keyframes cwSweepSpin{to{transform:rotate(360deg)}}
+  #compass small{position:absolute;bottom:22px;left:0;right:0;text-align:center;
+    font-family:var(--tech);font-size:11px;letter-spacing:.6px;
+    color:rgba(180,255,238,.82);text-shadow:0 0 6px rgba(90,240,200,.55);pointer-events:none}
+  #compass.hup{border-color:rgba(140,255,220,.55);
+    box-shadow:var(--btn-shadow),0 0 22px rgba(90,240,200,.30),inset 0 0 20px rgba(70,220,190,.12)}
+  /* True-north state: the app has learned the local declination and is correcting for it. */
+  #compass.tn .cw-card.cw-n{fill:#B8FFE8}
+  #compass.tn small{color:rgba(200,255,244,.95)}
+  /* A dial spinning under the map is exactly the kind of always-on animation that costs frames
+     on a low-end phone, so lite mode stops the sweep and the eased rotation. */
+  html[data-lite="1"] #compSweep{animation:none;opacity:.25}
+  html[data-lite="1"] #compDial{transition:none}
+  @media (prefers-reduced-motion:reduce){ #compSweep{animation:none;opacity:.3} }
+  [data-theme="light"] #compass{
+    background:radial-gradient(circle at 50% 34%, rgba(250,253,252,.94), rgba(226,238,236,.96));
+    border-color:rgba(20,120,100,.28)}
+  [data-theme="light"] .cw-card{fill:rgba(12,70,60,.85)}
+  [data-theme="light"] .cw-card.cw-n{fill:#0B7A62}
+  [data-theme="light"] .cw-nd-m{fill:#0E1A18}
+  [data-theme="light"] .cw-tick{stroke:rgba(12,80,68,.40)}
+  [data-theme="light"] .cw-tick.maj{stroke:rgba(10,70,60,.75)}
+  [data-theme="light"] #compass small{color:rgba(10,70,60,.85);text-shadow:none}
+
+  #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(var(--dockH,150px) + 12px);z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
+  #fabs>*{pointer-events:auto;flex-shrink:0}
+  /* 911 must never be the thing that scrolls away — pin it to the top of the rail */
+
+
+  /* ═══════════ minimal map mode ═══════════
+     "Just get me there" should mean it. Hide the tool group, the map-mode button and the
+     more-tools button; leave 911, report and re-centre. */
+  body.cw-minimal #quick,body.cw-minimal #modes{display:none!important}
+  body.cw-minimal #stripe{height:4px;margin-bottom:6px}
+  body.cw-minimal #tripBadge{opacity:.45}
+  #fabs::-webkit-scrollbar{display:none}
+  .fab{width:50px;height:50px;border-radius:50%;border:1px solid var(--edge);background:rgba(28,30,35,.55);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);color:var(--text);font-size:19px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:var(--hair),0 6px 20px rgba(0,0,0,.35);transition:transform .12s cubic-bezier(.2,.8,.2,1)}
+  .fab:active{box-shadow:var(--btn-pressed);transform:translateY(2px)}
+  .fab.primary{background:linear-gradient(150deg,#FF8A45,#E85A0C);color:#141619;border-color:#FF6B1A}
+  .fab.sos{background:linear-gradient(150deg,#FF5A6A,#C81E30);color:#fff;border-color:var(--red);font-family:var(--display);font-size:13px;letter-spacing:.5px}
+  .fab.active{border-color:var(--nav-accent);color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 14px var(--glow)}
+  .fab.lit{border-color:var(--yellow);color:var(--yellow);box-shadow:var(--btn-shadow),0 0 16px rgba(255,199,44,.55)}
+  .fab:focus-visible{outline:2px solid var(--yellow)}
+  /* the few controls that stay on screen get bigger, easier targets */
+  .fab.key,.fab.sos{width:58px;height:58px;font-size:22px}
+  .fab.sos{font-size:14px}
+  #searchPanel{position:fixed;inset:0;z-index:1400;background:var(--panel-solid);display:none;flex-direction:column;padding-top:env(safe-area-inset-top)}
+  #searchPanel.open{display:flex}
+  .sp-bar{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .sp-x{border:none;background:transparent;color:var(--text);font-size:18px;padding:8px;cursor:pointer;flex:0 0 auto}
+  .sp-field{flex:1;display:flex;align-items:center;gap:8px;background:rgba(127,127,127,.14);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+  .sp-mag{opacity:.6;flex:0 0 auto}
+  #spInput{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:17px;font-family:inherit;padding:0}
+  #spInput:focus{outline:none}
+  .sp-clr{border:none;background:transparent;color:var(--muted,#8a8d96);font-size:15px;cursor:pointer;flex:0 0 auto}
+  .sp-which{padding:8px 16px 0;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted,#8a8d96)}
+  .sp-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:6px 10px calc(24px + env(safe-area-inset-bottom))}
+  .sp-row{display:flex;align-items:center;gap:12px;padding:13px 10px;border-bottom:1px solid rgba(127,127,127,.14);cursor:pointer}
+  .sp-row:active{background:rgba(127,127,127,.12)}
+  .sp-ic{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto}
+  .sp-tx{flex:1;min-width:0}
+  .sp-tx b{display:block;font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sp-tx small{display:block;font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+  #rsStats{display:flex;align-items:center;justify-content:space-around;gap:6px;margin:4px 0 12px;padding:12px 6px;border-radius:14px;background:rgba(127,127,127,.10)}
+  .rs-stat{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0;flex:1}
+  .rs-stat b{font-family:var(--display,inherit);font-size:26px;line-height:1;font-weight:700;color:var(--text);white-space:nowrap}
+  .rs-stat small{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted,#8a8d96)}
+  #rsTime{color:var(--nav-accent,#22d3aa)}
+  .rs-sep{width:1px;align-self:stretch;background:rgba(127,127,127,.22);flex:0 0 auto}
+  #routeEnds{position:relative;border:1px solid var(--line);border-radius:14px;padding:4px 54px 4px 12px;margin-bottom:10px;background:var(--panel-solid)}
+  .re-row{display:flex;align-items:center;gap:11px;min-height:50px;padding:5px 0}
+  .re-ic{width:14px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:14px}
+  .re-start{width:11px;height:11px;border-radius:50%;background:#2B6FE0;box-shadow:0 0 0 3px rgba(43,111,224,.22)}
+  .re-line{position:absolute;left:19px;top:34px;bottom:34px;width:2px;background:repeating-linear-gradient(to bottom,rgba(127,127,127,.45) 0 3px,transparent 3px 7px)}
+  .re-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:16px;font-family:inherit;padding:0}
+  .re-input:focus{outline:none}
+  .re-tx{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:1px}
+  .re-tx b{font-size:16px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .re-tx small{font-size:12.5px;color:var(--muted,#8a8d96);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .re-tx small:empty{display:none}
+  .re-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
+  .re-edit{flex:0 0 auto;font-size:12px;font-weight:600;color:var(--nav-accent,#22d3aa);opacity:.85;padding:4px 8px;border-radius:8px;background:rgba(127,127,127,.12)}
+  #reTo{cursor:pointer}
+  #reTo:active{background:rgba(127,127,127,.10)}
+  .re-swap{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--panel-solid);color:var(--text);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2}
+  .re-swap:active{background:rgba(127,127,127,.18)}
+  #fromRow{display:flex;align-items:center;gap:9px;margin:6px 0 4px;padding:9px 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-solid)}
+  .fr-dot{width:9px;height:9px;border-radius:50%;background:var(--nav-accent);flex:0 0 auto}
+  .fr-input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font-size:15px;font-family:inherit;padding:0}
+  .fr-input:focus{outline:none}
+  .fr-x{flex:0 0 auto;border:none;background:transparent;color:var(--muted,#8a8d96);font-size:17px;cursor:pointer;padding:0 2px}
+  #moreFabs{display:none}
+  /* ═══════════ tool tray: drawer (default) or radial ═══════════
+     Drawer = the two-column grid, stacked above the dots. Predictable, thumb-reachable,
+     safest while moving. Radial = the same eight buttons fan out on an arc around the dots.
+     Chosen in Settings; the layout math for radial lives in app.js (it measures the dots
+     button so it stays correct at any FAB size). */
+  #moreFabs.open{display:grid;grid-template-columns:repeat(2,auto);gap:9px;justify-items:end;
+    animation:trayIn .2s cubic-bezier(.2,.8,.2,1);
+    /* the drawer is the only child allowed to shrink, so it absorbs whatever space is left
+       and 911 / report / re-centre can never be pushed off the rail */
+    flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none}
+  #moreFabs.open::-webkit-scrollbar{display:none}
+  /* radial mode positions each button itself — no bound, no scroll */
+  body[data-tools="radial"] #moreFabs.open{flex:0 0 auto;overflow:visible}
+  @keyframes trayIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+  /* radial: the tray itself collapses to nothing and each button is positioned fixed by JS */
+  body[data-tools="radial"] #moreFabs.open{display:block;width:0;height:0;margin:0;
+    overflow:visible;animation:none}
+  body[data-tools="radial"] #moreFabs.open .fab{position:fixed;z-index:999}
+  /* a soft scrim behind the fan so the icons stay readable over a busy map */
+  #radialScrim{position:fixed;inset:0;z-index:997;display:none;background:radial-gradient(circle at var(--rx,90%) var(--ry,72%),rgba(6,8,12,.55) 0,rgba(6,8,12,.28) 34%,transparent 62%);
+    -webkit-backdrop-filter:blur(1.5px);backdrop-filter:blur(1.5px)}
+  body[data-tools="radial"] #radialScrim.on{display:block}
+  @media (prefers-reduced-motion:reduce){#moreFabs.open{animation:none}}
+  /* saved + recent destination chips: truncate with an ellipsis instead of a hard cut */
+  #quick .chip{max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media (max-height:620px){
+    #moreFabs.open{grid-template-columns:repeat(4,auto)}
+    .fab{width:44px;height:44px;font-size:17px}
+    .fab.key,.fab.sos{width:50px;height:50px;font-size:19px}
+    .fab.sos{font-size:12px}
+  }
+
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:1001;background:var(--panel-solid);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:12px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .3s cubic-bezier(.32,.72,0,1);max-height:80vh;overflow-y:auto;box-shadow:0 -1px 0 rgba(255,255,255,.08) inset,0 -20px 50px rgba(0,0,0,.5)}
+  .sheet.open{transform:translateY(0)}
+  /* The route sheet was still painting dark in light mode, which is why the "Every turn" header
+     vanished — dark text on a dark panel. Pin the surface per theme rather than trusting a
+     variable that something else is shadowing. */
+  [data-theme="light"] .sheet{background:#FFFFFF;color:#11151c;
+    box-shadow:0 -1px 0 rgba(0,0,0,.06) inset,0 -18px 44px rgba(20,26,36,.22)}
+  [data-theme="light"] #stepsHead b{color:#11151c}
+  [data-theme="light"] #stepsHead small{color:#5a6472}
+  @media (prefers-reduced-motion:reduce){.sheet{transition:none}}
+  .sheet h3{font-family:var(--display);letter-spacing:1px;text-transform:uppercase;font-size:15px;margin:0 0 4px}
+  .sub{font-size:12px;color:var(--mute);margin:0 0 12px;line-height:1.5}
+  .grabber{width:150px;height:26px;margin:-6px auto 2px;background:linear-gradient(var(--line),var(--line)) center/46px 4px no-repeat;border-radius:13px;cursor:pointer}
+  .sheetX{position:absolute;top:10px;right:12px;width:36px;height:36px;border-radius:50%;border:1px solid var(--edge);background:rgba(255,255,255,.08);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);color:var(--mute);font-size:16px;cursor:pointer;box-shadow:var(--hair);z-index:2}
+  .sheetX:active{box-shadow:var(--btn-pressed)}
+  .sheet{position:fixed}
+  .row-btn{width:100%;display:flex;align-items:center;gap:12px;background:var(--btn-face);border:1px solid var(--edge);color:var(--text);border-radius:12px;padding:13px 14px;font-size:14px;margin-bottom:8px;cursor:pointer;text-align:left;text-decoration:none;box-shadow:var(--hair)}
+  .row-btn:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
+  .row-btn .ic{font-size:20px}
+  .row-btn small{display:block;color:var(--mute);font-size:11px;margin-top:2px}
+  .field{width:100%;background:var(--panel-hi);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font-size:13px;margin-bottom:8px;outline:none}
+  textarea.field{min-height:90px;resize:vertical;font-family:var(--body)}
+  .btn{border:none;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:var(--hair)}
+  .btn:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
+  .btn.orange{background:linear-gradient(180deg,#FF7A38,#F0610F);color:#fff;font-weight:600;box-shadow:0 4px 16px rgba(240,97,15,.4),var(--hair)}
+  .btn.ghost{background:var(--btn-face);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);color:var(--text);border:1px solid var(--edge)}
+  .chip{border:1px solid var(--edge);background:var(--btn-face);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);color:var(--text);border-radius:11px;padding:7px 13px;font-size:12px;cursor:pointer;box-shadow:var(--hair)}
+  .chip:active{box-shadow:var(--btn-pressed)}
+  .chip.on{background:linear-gradient(150deg,#FF8A45,#E85A0C);border-color:var(--cone);color:#141619;font-weight:700}
+  .kv{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .kv:last-child{border:none}.kv span:first-child{color:var(--mute)}
+  /* Steps were bare rows with no surface of their own, so when the panel behind them failed to
+     paint they read as floating text on the map. A card of their own means they can never be
+     mistaken for map content again. */
+  #stepsHead{display:flex;align-items:baseline;gap:8px;margin:16px 2px 8px}
+  #stepsHead b{font-family:var(--display);font-size:16px;color:var(--text)}
+  #stepsHead small{font-size:12px;color:var(--mute)}
+  #steps{margin:0;padding:0;list-style:none;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  #steps li{display:flex;align-items:center;gap:12px;font-size:14px;padding:12px 14px;
+    background:var(--panel)}
+  #steps li+li{border-top:1px solid var(--line)}
+  #steps li:nth-child(odd){background:rgba(127,127,127,.045)}
+  [data-theme="light"] #steps li:nth-child(odd){background:rgba(18,24,34,.025)}
+  #steps .n{color:var(--nav-accent);font-family:var(--tech);font-size:12px;font-weight:700;
+    min-width:22px;height:22px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;background:rgba(127,127,127,.14);flex:0 0 22px}
+  #steps .t{flex:1;min-width:0;color:var(--text);line-height:1.35}
+  #steps .d{color:var(--mute);margin-left:auto;white-space:nowrap;font-size:12px;
+    font-family:var(--tech);flex:0 0 auto}
+  #elev{width:100%;height:64px;background:var(--panel-hi);border:1px solid var(--line);border-radius:10px;margin:8px 0}
+  .poi-item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .poi-item:last-child{border:none}
+  .poi-item small{color:var(--mute);display:block;font-size:11px}
+  .poi-acts{display:flex;gap:6px;flex-shrink:0}
+  .poi-acts button{border:none;border-radius:12px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer}
+
+  #lightscreen{position:fixed;inset:0;z-index:5000;background:#fff;display:none;cursor:pointer}
+  #lightscreen .tag{position:absolute;bottom:30px;left:50%;transform:translateX(-50%);color:#999;font-size:12px;font-family:var(--tech);white-space:nowrap}
+
+  #sosConfirm{position:fixed;inset:0;z-index:6000;background:rgba(10,5,6,.92);backdrop-filter:blur(8px);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px}
+  #sosConfirm h2{font-family:var(--display);letter-spacing:2px;color:#FF6B78;margin:0}
+  #sosCall{display:block;background:linear-gradient(150deg,#FF5A6A,#B4121F);color:#fff;font-family:var(--display);font-size:26px;letter-spacing:2px;border:none;border-radius:60px;padding:22px 60px;box-shadow:0 8px 30px rgba(255,59,78,.5),inset 0 2px 0 rgba(255,255,255,.25);cursor:pointer;text-decoration:none}
+  #sosCancel{background:none;border:1px solid #553;color:#C9A;border-radius:20px;padding:10px 26px;font-size:14px;cursor:pointer}
+  #sosNote{color:#C99;font-size:12px;text-align:center;max-width:280px;line-height:1.5}
+
+  #bumpBar{position:fixed;top:calc(var(--hdrH,190px) + 4px);left:50%;transform:translateX(-50%);z-index:2600;background:var(--panel-solid);border:1px solid var(--yellow);border-radius:26px;padding:9px 10px 9px 16px;display:none;align-items:center;gap:10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  #bumpBar button{border:none;border-radius:16px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer}
+  #bumpYes{background:var(--yellow);color:#141619}#bumpNo{background:var(--panel-hi);color:var(--mute)}
+
+  #hud{--hudScale:1.5;position:fixed;inset:0;z-index:3000;background:#000;display:none;flex-direction:column;align-items:center;justify-content:center;gap:calc(14px*var(--hudScale))}
+  #hud .mirror{transform:scaleX(-1);text-align:center;padding:0 4vw}
+  #hud .h-dist{font-family:var(--display);font-size:calc(60px*var(--hudScale));color:#8CFFC0;font-weight:800;text-shadow:0 0 18px rgba(124,252,177,.85),0 0 4px rgba(124,252,177,1);line-height:1}
+  #hud .h-instr{font-size:calc(22px*var(--hudScale));color:#fff;max-width:92vw;font-weight:700;text-shadow:0 0 14px rgba(255,255,255,.7);line-height:1.15;margin-top:calc(6px*var(--hudScale))}
+  #hud .h-speed{font-family:var(--display);font-size:calc(34px*var(--hudScale));color:#fff;margin-top:calc(10px*var(--hudScale));font-weight:800;text-shadow:0 0 14px rgba(255,255,255,.8)}
+  #hud .hud-ctrl{position:absolute;bottom:calc(20px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}
+  #hud .hud-ctrl button{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:12px;font-size:18px;font-weight:800;width:52px;height:44px}
+  #hud .hint{position:absolute;top:calc(16px + env(safe-area-inset-top));color:#666;font-size:11px}
+  /* The mirror flip is a per-driver choice: reflecting off the windshield needs it, propping the
+     phone on the dash does not. Was hardcoded on, which made the propped case unreadable. */
+  #hud.noflip .mirror{transform:none}
+  /* Big glyph reads at a glance where a sentence does not — the whole point of a HUD. */
+  #hud .h-arrow{font-family:var(--display);font-size:calc(74px*var(--hudScale));color:#8CFFC0;line-height:.9;
+    text-shadow:0 0 22px rgba(124,252,177,.9),0 0 5px rgba(124,252,177,1);min-height:1px}
+  #hud .h-speedrow{display:flex;align-items:center;justify-content:center;gap:calc(14px*var(--hudScale));margin-top:calc(10px*var(--hudScale))}
+  /* .h-speed carried its own margin-top from when it was a standalone block; inside the flex
+     row that pushed the number out of line with the limit sign next to it. */
+  #hud .h-speedrow .h-speed{margin-top:0}
+  #hud .h-speed i{font-style:normal;font-size:calc(16px*var(--hudScale));opacity:.75}
+  /* Over the limit turns the speed amber, then red — glanceable without reading a number. */
+  #hud .h-speed.warn{color:#FFD24A;text-shadow:0 0 16px rgba(255,210,74,.85)}
+  #hud .h-speed.over{color:#FF7A7A;text-shadow:0 0 18px rgba(255,122,122,.9)}
+  #hud .h-limit{font-family:var(--display);font-weight:800;background:#fff;color:#111;border:calc(3px*var(--hudScale)) solid #111;
+    border-radius:calc(8px*var(--hudScale));padding:calc(2px*var(--hudScale)) calc(9px*var(--hudScale));
+    font-size:calc(24px*var(--hudScale));line-height:1.1;box-shadow:0 0 14px rgba(255,255,255,.5)}
+  #hud .h-eta{font-size:calc(15px*var(--hudScale));color:#9aa;margin-top:calc(8px*var(--hudScale));
+    font-weight:600;letter-spacing:.04em;text-shadow:0 0 10px rgba(180,200,210,.5)}
+  /* Hazard alerts had NO path to the HUD: #toast is z-index 2500 and #hud is 3000, so every
+     warning rendered underneath it. In HUD mode the driver got voice and a blank windshield. */
+  #hud .h-haz{margin-top:calc(12px*var(--hudScale));font-size:calc(20px*var(--hudScale));font-weight:800;
+    color:#FFB3B3;opacity:0;transition:opacity .2s;min-height:calc(24px*var(--hudScale));
+    text-shadow:0 0 16px rgba(255,120,120,.9)}
+  #hud .h-haz.show{opacity:1;animation:hudHazPulse 1s ease-in-out infinite}
+  @keyframes hudHazPulse{0%,100%{opacity:1}50%{opacity:.55}}
+  html[data-lite="1"] #hud .h-haz.show{animation:none}
+
+  #confirmBar{position:fixed;left:12px;right:74px;bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);z-index:1200;background:var(--panel-solid);border:1px solid var(--ok);border-radius:16px;padding:12px 14px;display:none;flex-direction:column;gap:10px;align-items:stretch;box-shadow:0 12px 34px rgba(0,0,0,.5)}
+  #confirmBar .cb-top{display:flex;gap:12px;align-items:flex-start}
+  #confirmBar #confAddr{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  #confirmBar .cb-btns{display:flex;gap:6px;flex:0 0 auto}
+  body.driving #cluster{bottom:calc(94px + env(safe-area-inset-bottom))}
+  body.driving #fabs{bottom:calc(94px + env(safe-area-inset-bottom));top:calc(var(--hdrH,190px) + 12px)}
+  body.driving #fabLocate{margin-bottom:0}
+  #toast{position:fixed;bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);left:50%;transform:translateX(-50%);z-index:2500;background:var(--panel-solid);border:1px solid var(--line);color:var(--text);font-size:13px;padding:10px 16px;border-radius:22px;max-width:86vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .25s;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  #toast.show{opacity:1}
+
+  /* Drive Mode — navigation is the whole show */
+  body.driving #hdr{display:none}
+  body.driving #navbanner{top:calc(env(safe-area-inset-top) + 10px)}
+  body.driving #relock{top:calc(env(safe-area-inset-top) + 128px)}
+  /* the glyph shown inside the free-roam prompt, matching the real button */
+  .rl-key{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--nav-accent,#22d3aa);color:#08221b;font-weight:800;font-size:13px;margin:0 3px;vertical-align:-5px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  /* pulse the real recenter button while the prompt is up */
+  @keyframes cwPoint{0%,100%{box-shadow:0 0 0 0 rgba(34,211,170,.55)}50%{box-shadow:0 0 0 12px rgba(34,211,170,0)}}
+  .fab.pointing{animation:cwPoint 1.6s ease-out infinite;border:2px solid var(--nav-accent,#22d3aa)}
+  @media (prefers-reduced-motion:reduce){.fab.pointing{animation:none;border:2px solid var(--nav-accent,#22d3aa)}}
+  #relock{top:max(calc(env(safe-area-inset-top) + 58px), var(--hdrH,190px))}
+  body.driving #bumpBar{top:calc(env(safe-area-inset-top) + 128px)}
+  body.driving #fabVoice,body.driving #fabFlash,body.driving #fabMore,body.driving #moreFabs{display:none}
+  body.driving #trip{display:none}
+  body.driving #speed{width:76px;height:76px}
+  body.driving #speed .v{font-size:28px}
+  body.driving .fab{width:47px;height:47px;font-size:18px}
+
+  .hz{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;border:2px solid #141619;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer}
+  #meArrow{width:36px;height:36px;border-radius:50%;background:#fff;box-shadow:0 3px 12px rgba(0,0,0,.4),0 0 0 6px rgba(255,255,255,.22);position:relative;transform-origin:50% 50%}
+  #meArrow::after{content:"";position:absolute;left:50%;top:7px;transform:translateX(-50%);border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:17px solid #1B3B6F}
+  .stopdot{width:20px;height:20px;border-radius:50%;background:var(--purple);border:2px solid #141619;color:#141619;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
+  .dest-flag{font-size:24px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+  /* ═══ racing preview FX ═══ */
+  #tourFX{background:radial-gradient(ellipse at 50% 44%, transparent 26%, rgba(0,0,0,.30) 76%, rgba(0,0,0,.62) 100%);overflow:hidden}
+  #tourFX::before{content:"";position:absolute;inset:-20%;background:repeating-conic-gradient(from 0deg at 50% 42%, rgba(255,255,255,.07) 0deg .28deg, transparent .28deg 3.4deg);-webkit-mask:radial-gradient(circle at 50% 42%, transparent 20%, #000 62%);mask:radial-gradient(circle at 50% 42%, transparent 20%, #000 62%);animation:cwspeed 1.15s linear infinite;will-change:transform,opacity}
+  @keyframes cwspeed{0%{transform:scale(1);opacity:.55}100%{transform:scale(1.4);opacity:0}}
+  #tourFX::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 120px 20px rgba(0,20,40,.35);mix-blend-mode:multiply}
+  #tourCockpit::before{content:"";position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(to right,rgba(4,6,10,.55),transparent 13%,transparent 87%,rgba(4,6,10,.55))}
+  #tourCockpit::after{content:"";position:absolute;left:0;right:0;bottom:0;height:14%;background:linear-gradient(to top,rgba(4,6,10,.75),transparent);pointer-events:none}
+  /* ARCADE SPRITE — drive preview only. Chase cam sits permanently behind the car, so the
+     honest view is the rear of the vehicle drawn upright facing the camera. Proportions are
+     supercar, not hatchback: wide track, low roof, chamfered corners via clip-path rather than
+     soft border-radius — hard edges are what stop it reading as a blob at this size. The live
+     navigation puck on the real map is a separate element and stays a plain arrow. */
+  .tour-car{width:40px;height:25px;position:relative;pointer-events:none;
+    filter:drop-shadow(0 5px 6px rgba(0,0,0,.55))}
+  .tour-car .tc-rig{position:absolute;inset:0;transform-origin:50% 95%;will-change:transform}
+  .tour-car .tc-shadow{position:absolute;left:2%;right:2%;bottom:-2px;height:5px;border-radius:50%;
+    background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,.62),transparent 68%)}
+  /* wheels pushed hard into the corners — the wide-track stance does most of the work */
+  .tour-car .tc-wheel{position:absolute;bottom:0;width:7px;height:9px;border-radius:2px;
+    background:linear-gradient(180deg,#3a424c 0%,#161b21 52%,#080b0e 100%);
+    border:1px solid rgba(0,0,0,.6)}
+  .tour-car .tc-wheel.l{left:0} .tour-car .tc-wheel.r{right:0}
+  /* body: copper over a black lower fascia, corners cut instead of rounded */
+  .tour-car .tc-lower{position:absolute;left:2px;right:2px;bottom:2px;height:14px;
+    clip-path:polygon(0% 26%,9% 0%,91% 0%,100% 26%,100% 82%,86% 100%,14% 100%,0% 82%);
+    background:linear-gradient(180deg,#ffb055 0%,#f08a1e 30%,#c25f08 62%,#6d3204 88%,#241304 100%);
+    box-shadow:inset 0 1px 1px rgba(255,229,190,.55)}
+  /* tapered greenhouse — narrow roof widening to the shoulders, the i8 signature */
+  .tour-car .tc-cabin{position:absolute;left:9px;right:9px;top:0;height:11px;
+    clip-path:polygon(22% 0%,78% 0%,100% 100%,0% 100%);
+    background:linear-gradient(180deg,#ffc477,#c96a10)}
+  .tour-car .tc-glass{position:absolute;left:11px;right:11px;top:1.5px;height:8px;
+    clip-path:polygon(24% 0%,76% 0%,100% 100%,0% 100%);
+    background:linear-gradient(180deg,#3b4f6b 0%,#0d141d 62%,#18222f 100%)}
+  .tour-car .tc-glass::before{content:"";position:absolute;top:0;left:0;right:0;height:48%;
+    background:linear-gradient(150deg,rgba(255,255,255,.42),transparent 74%)}
+  /* floating rear wing on two buttresses */
+  .tour-car .tc-spoil{position:absolute;left:4px;right:4px;top:-1px;height:2px;border-radius:1px;
+    background:linear-gradient(180deg,#2b323a,#0d1115);box-shadow:0 1px 2px rgba(0,0,0,.55)}
+  /* thin horizontal tail slashes + the LED strip between them */
+  .tour-car .tc-lamp{position:absolute;bottom:8px;width:9px;height:2px;border-radius:1px;
+    background:linear-gradient(90deg,#7d0f0b,#ff5346 45%,#ff8b7d);
+    box-shadow:0 0 8px 2px rgba(255,52,40,.75)}
+  .tour-car .tc-lamp.l{left:4px} .tour-car .tc-lamp.r{right:4px}
+  .tour-car .tc-bar{position:absolute;left:14px;right:14px;bottom:8.5px;height:1px;
+    background:linear-gradient(90deg,rgba(255,60,40,0),#ff6a58,rgba(255,60,40,0))}
+  .tour-car .tc-plate{position:absolute;left:50%;margin-left:-5px;bottom:4.5px;
+    width:10px;height:3px;border-radius:1px;background:#eceee8}
+  .tour-car .tc-diff{position:absolute;left:8px;right:8px;bottom:1px;height:3px;
+    background:repeating-linear-gradient(90deg,#1e242b 0 2px,#080b0e 2px 4px)}
+  .tour-car .tc-exh{position:absolute;bottom:2px;width:3px;height:2.5px;border-radius:1px;
+    background:linear-gradient(180deg,#414a54,#12171c)}
+  .tour-car .tc-exh.l{left:11px} .tour-car .tc-exh.r{right:11px}
+  /* UPSHIFT FLAME out of both tips */
+  .tour-car .tc-flame{position:absolute;bottom:-1px;width:5px;height:10px;
+    border-radius:50% 50% 45% 45%;opacity:0;transform-origin:50% 0%;transform:scaleY(.2);
+    background:radial-gradient(ellipse at 50% 8%,#fffbe8 0%,#ffd24a 24%,#ff8a1c 50%,#ff3d10 72%,rgba(255,40,0,0) 100%);
+    filter:blur(.4px)}
+  .tour-car .tc-flame.l{left:10px} .tour-car .tc-flame.r{right:10px}
+  .tour-car.shift .tc-flame{animation:cwflame .3s ease-out}
+  @keyframes cwflame{
+    0%{opacity:0;transform:scaleY(.15) scaleX(.7)}
+    18%{opacity:1;transform:scaleY(1.3) scaleX(1.14)}
+    52%{opacity:.85;transform:scaleY(.85) scaleX(.95)}
+    100%{opacity:0;transform:scaleY(.2) scaleX(.7)}}
+  .tour-car.shift .tc-rig{animation:cwkick .3s ease-out}
+  @keyframes cwkick{0%{filter:brightness(1)}22%{filter:brightness(1.26)}100%{filter:brightness(1)}}
+  /* TYRE SMOKE — puffs off the rear corners when the car is really leaning on it */
+  .tour-car .tc-smoke{position:absolute;bottom:0;width:9px;height:9px;border-radius:50%;opacity:0;
+    background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.85),rgba(220,225,232,.35) 55%,rgba(200,208,218,0) 78%)}
+  .tour-car .tc-smoke.l{left:-3px} .tour-car .tc-smoke.r{right:-3px}
+  .tour-car.drift .tc-smoke{animation:cwsmoke .52s ease-out infinite}
+  .tour-car.drift .tc-smoke.r{animation-delay:.13s}
+  @keyframes cwsmoke{
+    0%{opacity:0;transform:translate(0,0) scale(.35)}
+    22%{opacity:.75}
+    100%{opacity:0;transform:translate(0,16px) scale(1.7)}}
+  /* NIGHT BEAM — headlights thrown forward up the road, only after dark */
+  .tour-car .tc-beam{position:absolute;left:50%;bottom:100%;width:74px;height:120px;
+    margin-left:-37px;opacity:0;transition:opacity .5s;pointer-events:none;
+    clip-path:polygon(38% 100%,62% 100%,100% 0%,0% 0%);
+    background:linear-gradient(to top,rgba(255,241,204,.42),rgba(255,238,196,.12) 46%,rgba(255,236,190,0) 100%);
+    filter:blur(2px)}
+  .tour-car.night .tc-beam{opacity:1}
+  /* ═══════════ LITE MODE ═══════════
+     39 backdrop-filters over a continuously repainting map is the single most expensive thing
+     in this stylesheet, and Android GPUs handle it far worse than iOS does — every blurred
+     panel forces the region beneath it to re-composite on every map frame. Lite mode trades the
+     frosted glass for flat translucent panels, flattens shadows, and stops ambient animation.
+     Auto-enabled on low-core / low-memory devices; toggleable by hand. */
+  html[data-lite="1"] *{ backdrop-filter:none !important; -webkit-backdrop-filter:none !important; }
+  /* ── map-overlay elements never sample the backdrop, on any device ──
+     Each of these floats directly over the live map canvas. On iOS a backdrop-filter over
+     WebGL can sample a stale, mis-scaled frame and paint it back as a huge blurred fragment —
+     the giant road shield and mirrored street labels. Solid backgrounds, no sampling. */
+  #toast,#relock,#navbanner,#navPill,#roadPill,#speed,#trip,#compass,.fab,#dock,#dock #search,
+  #dock .mode,#dock .chip,#limitBadge,#signShield{
+    -webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+  /* These replaced glass with a solid fill — but I hardcoded a DARK fill, so in light mode the
+     controls became dark blobs on a bright map with almost no edge definition. Solid, yes, but
+     solid in the colour of the theme, with a real border so the shape reads at a glance. */
+  #speed,.fab,#dock .mode,#dock .chip{background:var(--btn-face) !important}
+  [data-theme="light"] #speed,[data-theme="light"] .fab,
+  [data-theme="light"] #dock .mode,[data-theme="light"] #dock .chip,
+  [data-theme="light"] #trip,[data-theme="light"] #compass,[data-theme="light"] #toast{
+    background:rgba(255,255,255,.97) !important;
+    border-color:rgba(18,24,34,.28) !important;
+    color:#11151c !important;
+    box-shadow:0 3px 10px rgba(18,24,34,.18) !important}
+  [data-theme="light"] #dock #search{background:#fff !important;
+    border-color:rgba(18,24,34,.28) !important;color:#11151c !important}
+  /* meaning colours stay saturated instead of washing out on white */
+  [data-theme="light"] #fab911{background:#E0302C !important;color:#fff !important}
+  [data-theme="light"] #fabReport{background:#EF7510 !important}
+  html[data-lite="1"] .sheet,
+  html[data-lite="1"] .panel,
+  html[data-lite="1"] #navbanner,
+  html[data-lite="1"] #topbar{ background:rgba(18,21,26,.94) !important; }
+  html[data-lite="1"] *{ text-shadow:none !important; }
+  html[data-lite="1"] .btn,
+  html[data-lite="1"] .row-btn,
+  html[data-lite="1"] .chip{ box-shadow:none !important; }
+  /* ambient loops only — user-triggered feedback animations are left alone */
+  html[data-lite="1"] #tourWarp .warp-rings,
+  html[data-lite="1"] #tourWarp .warp-streak,
+  html[data-lite="1"] .tour-car.drift .tc-smoke{ animation:none !important; }
+  html[data-lite="1"] #tourFX{ display:none !important; }
+  html[data-lite="1"] .tour-car{ filter:none !important; }
+  html[data-lite="1"] .hz-pulse{ animation:none !important; }
+  /* ── NITROUS ──────────────────────────────────────────────────────────────
+     Same flame elements, recoloured to a cold blue-violet burn and driven much harder.
+     Burning nitrous really does run the exhaust blue, so the colour is doing double duty. */
+  .tour-car.boost .tc-flame{
+    background:radial-gradient(ellipse at 50% 6%,#ffffff 0%,#bfe9ff 18%,#5fb0ff 40%,#7a4bff 66%,#c026ff 84%,rgba(180,20,255,0) 100%);
+    animation:cwnitro .34s ease-out infinite;filter:blur(.5px)}
+  @keyframes cwnitro{
+    0%{opacity:.55;transform:scaleY(1.1) scaleX(.9)}
+    40%{opacity:1;transform:scaleY(2.5) scaleX(1.35)}
+    72%{opacity:.9;transform:scaleY(1.8) scaleX(1.1)}
+    100%{opacity:.6;transform:scaleY(1.15) scaleX(.92)}}
+  .tour-car.boost .tc-rig{animation:cwshake .09s linear infinite}
+  @keyframes cwshake{0%{transform:translateX(-.6px)}50%{transform:translateX(.6px)}100%{transform:translateX(-.6px)}}
+  .tour-car.boost .tc-lamp{box-shadow:0 0 14px 4px rgba(150,90,255,.85)}
+  /* ── TIME LOOP ────────────────────────────────────────────────────────────
+     Rings racing outward from the vanishing point, a violet vignette closing in from the
+     edges, and a slow hue drift — reads as the world folding past faster than it should. */
+  #tourWarp.on{opacity:1}
+  #tourWarp .warp-rings{position:absolute;inset:-30%;
+    background:repeating-radial-gradient(circle at 50% 42%,
+      rgba(190,140,255,0) 0 34px,
+      rgba(190,140,255,.16) 34px 37px,
+      rgba(120,200,255,.20) 37px 40px,
+      rgba(190,140,255,0) 40px 76px);
+    animation:cwrings .9s linear infinite;mix-blend-mode:screen}
+  @keyframes cwrings{0%{transform:scale(1)}100%{transform:scale(1.75)}}
+  #tourWarp .warp-vig{position:absolute;inset:0;
+    background:radial-gradient(ellipse at 50% 46%,rgba(0,0,0,0) 42%,rgba(96,30,190,.34) 74%,rgba(38,8,90,.62) 100%);
+    animation:cwpulse 1.1s ease-in-out infinite}
+  @keyframes cwpulse{0%,100%{opacity:.75}50%{opacity:1}}
+  #tourWarp .warp-streak{position:absolute;inset:0;
+    background:repeating-conic-gradient(from 0deg at 50% 44%,
+      rgba(255,255,255,.13) 0deg 1.1deg, rgba(255,255,255,0) 1.1deg 5deg);
+    animation:cwspin 2.4s linear infinite;mix-blend-mode:screen;opacity:.5}
+  @keyframes cwspin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+  #tourBoost.armed{color:#fff;background:linear-gradient(135deg,#6d3bff,#c026ff);
+    border-color:rgba(220,160,255,.8);box-shadow:0 0 18px rgba(150,60,255,.7)}
+  #tourBoost.cooling{opacity:.4}
+  .tl-bulb{width:40px;height:40px;border-radius:50%;transition:background .15s,box-shadow .15s}
+  .tl-bulb.on-red{background:#ff3b30!important;box-shadow:0 0 26px 6px rgba(255,59,48,.8)}
+  .tl-bulb.on-yel{background:#ffcc00!important;box-shadow:0 0 26px 6px rgba(255,204,0,.8)}
+  .tl-bulb.on-grn{background:#34c759!important;box-shadow:0 0 30px 8px rgba(52,199,89,.9)}
+  .report-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
+  .rtile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:92px;padding:14px 4px;background:var(--btn-face);border:1px solid var(--edge);border-radius:16px;color:var(--text);font-size:13px;font-weight:600;cursor:pointer;box-shadow:var(--hair);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);transition:transform .07s ease}
+  @media (hover:hover){
+    .rtile:active{transform:scale(.93);background:rgba(255,255,255,.12);border-color:var(--cone)}
+  }
+  /* ═══════════ slide-to-browse feedback ═══════════
+     Dragging a finger across the grid lights each tile as it passes, but never confirms —
+     a moved touch doesn't produce a click, so the report only fires on a real tap. This is
+     visual only: no preventDefault, no intercepting, so the existing tap path is untouched. */
+  .rtile{transition:transform .11s cubic-bezier(.2,.8,.2,1),box-shadow .14s ease,border-color .14s ease,background .14s ease;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .rtile *{-webkit-user-select:none;user-select:none;pointer-events:none}
+  .rtile.lit{transform:scale(1.07);border-color:var(--cone);background:var(--panel-hi);
+    box-shadow:0 0 0 2px var(--cone),0 10px 28px rgba(255,106,31,.34);z-index:1}
+  .rtile.lit .ic{transform:scale(1.12);transition:transform .14s cubic-bezier(.2,.8,.2,1)}
+  .rtile .ic{transition:transform .14s ease}
+  /* a tap that actually files a report gets a distinctly stronger confirmation pulse */
+  .rtile.fired{animation:rtileFire .42s cubic-bezier(.2,.8,.2,1)}
+  @keyframes rtileFire{
+    0%{transform:scale(.93);box-shadow:0 0 0 2px var(--cone)}
+    45%{transform:scale(1.1);box-shadow:0 0 0 5px var(--cone),0 0 34px rgba(255,106,31,.75)}
+    100%{transform:scale(1);box-shadow:var(--hair)}}
+  @media (prefers-reduced-motion:reduce){
+    .rtile.lit{transform:none}.rtile.lit .ic{transform:none}.rtile.fired{animation:none}}
+  .rtile .ic{font-size:30px;line-height:1}
+</style>
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<script>
+/* ConeWatch — escape in-app browsers (Threads/IG/FB/TikTok/etc.) that crash the live map */
+(function(){
+  var ua = navigator.userAgent || "";
+  var inApp = /Instagram|Threads|Barcelona|FBAN|FBAV|FB_IAB|Messenger|TikTok|musical_ly|BytedanceWebview|Snapchat|Line\/|LinkedInApp|Twitter|Pinterest/i.test(ua);
+  if(!inApp) return;
+  var url = "https://conewatch.vercel.app";
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+  var o = document.createElement("div");
+  o.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#0d0e12;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px;font-family:-apple-system,system-ui,Roboto,sans-serif;";
+  o.innerHTML =
+    '<div style="font-size:46px;margin-bottom:10px;">\uD83D\uDEA7</div>' +
+    '<div style="font-size:22px;font-weight:800;">Open ConeWatch in your browser</div>' +
+    '<div style="opacity:.75;margin:12px 0 22px;line-height:1.5;max-width:320px;">This in-app view can\'t run the live map. ' +
+    (isIOS ? 'Tap <b>\u2022\u2022\u2022</b> at the top-right, then <b>Open in Browser</b>.'
+           : 'Tap the <b>\u22EE</b> menu, then <b>Open in browser</b>.') +
+    '</div>' +
+    '<button id="cwCopy" style="background:#FF6B1A;color:#180a02;border:0;border-radius:14px;padding:14px 22px;font-size:16px;font-weight:800;">Copy link</button>';
+  document.documentElement.appendChild(o);
+  var b = document.getElementById("cwCopy");
+  b.onclick = function(){
+    try{
+      navigator.clipboard.writeText(url).then(function(){ b.textContent = "Link copied \u2713"; }, function(){ b.textContent = url; });
+    }catch(e){ b.textContent = url; }
+  };
+})();
+</script>
+
+<div id="map"></div>
+
+<header id="hdr">
+  <div id="stripe"></div>
+  <div id="brandrow">
+    <div id="brand">Cone<b>Watch</b><span id="seasonPill"></span></div>
+    <div id="badgeRow">
+      <span id="verBadge">v—</span>
+      <span class="cw-pill" id="clockTheme">auto</span>
+      <span class="cw-pill livep" id="netDot"><span class="dot"></span>live</span>
+    </div>
+    <div id="clock"><span id="clockTime">--:--</span></div>
+  </div>
+  <button id="hdrToggle" aria-label="Collapse header">▲</button>
+</header>
+
+<!-- Search lives at the BOTTOM now. On a large phone the top of the screen is the one place a
+     thumb cannot reach while driving, and it was also the most crowded — the input was wedged
+     between the wordmark and the clock, which is why it truncated to "Where t...". Waze and
+     Apple Maps both anchor search to the bottom for the same reason. -->
+<div id="dock">
+  <div id="dockGrip" role="button" aria-label="Collapse search"></div>
+  <div id="searchwrap">
+    <input id="search" type="text" placeholder="Where to?" autocomplete="off" enterkeyhint="search" />
+    <button id="searchClear" aria-label="Clear">✕</button>
+    <button id="searchbtn" aria-label="Search">→</button>
+    <div id="results" role="listbox"></div>
+  </div>
+  <div id="quick" style="display:none;gap:6px;margin-top:8px;flex-wrap:wrap"></div>
+  <div id="modes">
+    <button class="mode on" data-mode="car" aria-label="Drive">🚗</button>
+    <button class="mode" data-mode="bike" aria-label="Bike">🚲</button>
+    <button class="mode" data-mode="foot" aria-label="Walk">🚶</button>
+    <button class="mode" data-mode="hike" aria-label="Mountain / trail">⛰️</button>
+  </div>
+  <div id="dockMore" aria-hidden="true"></div>
+</div>
+
+<div id="navbanner" role="status">
+  <div class="nb-btns"><button id="voiceBtn">🔊</button><button id="shareEta">Share</button><button id="ovBtn">Map</button><button id="hudBtn">HUD</button><button id="endnav">End</button></div>
+  <div style="display:flex;gap:14px;align-items:center;margin-top:4px">
+    <div style="text-align:center;min-width:64px">
+      <div id="nbGlyph">↑</div>
+      <div class="nb-dist" id="nbDist">—</div>
+    </div>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
+        <div id="nbExit" style="display:none"></div>
+        <div id="nbRef" style="display:none"></div><div id="signShield" style="display:none"></div>
+      </div>
+      <div class="nb-instr" id="nbInstr">Starting navigation…</div>
+    </div>
+  </div>
+  <div id="laneRow" style="display:none"></div>
+  <div class="nb-meta"><span id="nbWx"></span><span id="nbHz"></span></div>
+</div>
+
+<!-- Full turn list, Apple-style: current maneuver pinned at the top, remaining turns
+     scrollable beneath, chevron to collapse. Opened by tapping the nav banner instruction. -->
+<div id="cwBats" aria-hidden="true"><span class="cw-bat b1">🦇</span><span class="cw-bat b2">🦇</span><span class="cw-bat b3">🦇</span></div>
+<div id="turnSheet" aria-hidden="true">
+  <div id="turnHead"><span id="turnHeadIcon"></span><span id="turnHeadText"></span></div>
+  <div id="turnList"></div>
+  <button id="turnClose" aria-label="Collapse turn list">⌃</button>
+</div>
+<div id="navPill">
+  <button class="pillBtn" id="pillOv" aria-label="Route overview">🗺</button>
+  <div style="text-align:center;flex:1;min-width:0">
+    <div id="pillMin">-- min</div>
+    <div id="pillSub">--</div>
+  </div>
+  <button class="pillBtn" id="pillExit">Exit</button>
+</div>
+<div id="roadPill"><span id="roadRef" style="display:none"></span><span id="roadName">—</span></div>
+
+<div id="cluster">
+  <div id="speed" aria-label="Speedometer"><span class="v" id="speedV">0</span><span class="u">mph</span></div>
+  <div id="limitBadge" style="display:none;background:#fff;color:#111;border:2.5px solid #111;border-radius:9px;padding:4px 10px 5px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.4);line-height:1.05"><span style="font-size:8.5px;font-weight:800;letter-spacing:.4px;display:block">SPEED<br>LIMIT</span><b id="limitNum" style="font-family:var(--display);font-size:22px">--</b></div>
+  <div id="trip"><b id="tripMi">0.0</b> TRIP MI</div>
+</div>
+
+<div id="radialScrim"></div>
+
+<div id="fabs">
+  <button class="fab sos" id="fab911" aria-label="Emergency 911">911</button>
+  <div id="moreFabs">
+    <button class="fab" id="fabFeedback" aria-label="Send feedback">📣</button>
+    <button class="fab" id="fabRoadside" aria-label="Roadside assistance">🛠</button>
+    <button class="fab" id="fabDiscover" aria-label="Discover nearby">🧭</button>
+    <button class="fab" id="fab3d" aria-label="3D view">🏙</button>
+    <button class="fab" id="fabSat" aria-label="Satellite imagery">🛰</button>
+    <button class="fab" id="fabFlash" aria-label="Flashlight">🔦</button>
+    <button class="fab" id="fabVoice" aria-label="Voice command">🎤</button>
+    <button class="fab" id="fabSettings" aria-label="Settings">⚙️</button>
+  </div>
+  <button class="fab" id="fabMore" aria-label="More tools">⋯</button>
+  <button class="fab primary key" id="fabReport" aria-label="Report hazard">⚠️</button>
+  <button class="fab key" id="fabLocate" aria-label="My location">◎</button>
+</div>
+
+<!-- full-screen search panel (Apple-style: opens from the search bar, live suggestions) -->
+<div id="searchPanel" aria-hidden="true">
+  <div class="sp-bar">
+    <button id="spBack" class="sp-x" aria-label="Close search">✕</button>
+    <div class="sp-field">
+      <span class="sp-mag">🔍</span>
+      <input id="spInput" placeholder="Search a place or address" autocomplete="off" autocorrect="off" spellcheck="false">
+      <button id="spClear" class="sp-clr" aria-label="Clear">✕</button>
+    </div>
+  </div>
+  <div id="spWhich" class="sp-which"></div>
+  <div id="spList" class="sp-list"></div>
+</div>
+
+<div class="sheet" id="routeSheet">
+  <div class="grabber"></div>
+  <!-- Apple-style: big glanceable numbers first, then the two endpoints -->
+  <div id="rsStats">
+    <div class="rs-stat"><b id="rsTime">—</b><small>min</small></div>
+    <div class="rs-sep"></div>
+    <div class="rs-stat"><b id="rsArrive">—</b><small>arrival</small></div>
+    <div class="rs-sep"></div>
+    <div class="rs-stat"><b id="rsDist">—</b><small id="rsDistU">mi</small></div>
+  </div>
+  <div id="routeAlts" style="display:none;gap:6px;margin:2px 0 10px;overflow-x:auto;scrollbar-width:none"></div>
+  <div id="routeEnds">
+    <div class="re-row" id="reFrom">
+      <span class="re-ic re-start"></span>
+      <span class="re-tx">
+        <input id="tripFrom" class="re-input" placeholder="My location" autocomplete="off" aria-label="Starting point">
+        <small id="rsFromAddr"></small>
+      </span>
+      <span class="re-edit">Change</span>
+      <button id="fromClear" class="re-x" aria-label="Use my location" title="Use my location">◎</button>
+    </div>
+    <div class="re-line"></div>
+    <div class="re-row" id="reTo" role="button" tabindex="0" aria-label="Change destination">
+      <span class="re-ic re-end">📍</span>
+      <span class="re-tx">
+        <b id="rsTitle">Route</b>
+        <small id="rsDestAddr"></small>
+      </span>
+      <span class="re-edit">Change</span>
+    </div>
+    <button id="reSwap" class="re-swap" aria-label="Swap start and destination" title="Swap">⇅</button>
+  </div>
+  <p class="sub" id="rsMeta"></p>
+  <div id="stopsList"></div>
+  <div id="tripStats"></div>
+  <canvas id="elev" width="640" height="128" aria-label="Elevation profile"></canvas>
+  <div style="display:flex;gap:8px">
+    <button class="btn orange" style="flex:1" id="startNav">Start navigation</button>
+    <button class="btn ghost" id="closeRoute">Close</button>
+  </div>
+  <button class="btn ghost" style="width:100%;margin-top:8px" id="satDest">🛰 360° satellite preview of destination</button>
+  <button class="btn ghost" style="width:100%;margin-top:8px" id="drivePrev">🎬 Preview the drive in 3D — see every turn first</button>
+  <button class="btn ghost" style="width:100%;margin-top:8px" id="placePhotos">📷 See photos of this place</button>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button class="btn ghost" style="flex:1" id="setHome">🏠 Home</button>
+    <button class="btn ghost" style="flex:1" id="setWork">💼 Work</button>
+    <button class="btn ghost" style="flex:1" id="setFav">⭐ Save</button>
+  </div>
+  <div id="stepsHead" style="display:none"><b>Every turn</b><small id="stepsCount"></small></div>
+  <ol id="steps"></ol>
+</div>
+
+<div class="sheet" id="reportSheet">
+  <div class="grabber"></div>
+  <h3>Report</h3>
+  <p class="sub">One tap — drops at your GPS and warns drivers behind you.</p>
+  <div class="report-grid">
+    <!-- 15 tiles = exactly 5 full rows of 3. Keep the count a multiple of 3: an orphan
+         partial row is what made the grid reflow every time a type was added. Ordered by how
+         often a driver actually reaches for each, so positions stay put and muscle memory
+         survives future additions — append to the END, three at a time. -->
+    <button class="rtile" data-type="pothole"><span class="ic">🕳</span><span>Pothole</span></button>
+    <button class="rtile" data-type="police"><span class="ic">👮</span><span>Police</span></button>
+    <button class="rtile" data-type="accident"><span class="ic">🚨</span><span>Accident</span></button>
+    <button class="rtile" data-type="construction_cones"><span class="ic">🚧</span><span>Cones</span></button>
+    <button class="rtile" data-type="traffic"><span class="ic">🚦</span><span>Traffic</span></button>
+    <button class="rtile" data-type="road_closure" data-closure="1"><span class="ic">⛔</span><span>Closed</span></button>
+    <button class="rtile" data-type="debris"><span class="ic">🪵</span><span>Debris</span></button>
+    <button class="rtile" data-type="stalled"><span class="ic">🚗</span><span>Stalled</span></button>
+    <button class="rtile" data-type="camera"><span class="ic">📸</span><span>Camera</span></button>
+    <button class="rtile" data-type="speed_bump"><span class="ic">🛑</span><span>Speed bump</span></button>
+    <button class="rtile" data-type="flooding"><span class="ic">🌊</span><span>Flood</span></button>
+    <button class="rtile" data-type="ice"><span class="ic">❄️</span><span>Ice</span></button>
+    <button class="rtile" data-type="animal"><span class="ic">🦌</span><span>Animal</span></button>
+    <button class="rtile" data-type="power_lines"><span class="ic">⚡</span><span>Power lines</span></button>
+    <button class="rtile" data-type="emergency"><span class="ic">🚑</span><span>Emergency</span></button>
+  </div>
+</div>
+
+<!-- Compass lives in its own panel now. On the map it was a permanently animating dial competing
+     with the speed readout and the hazard buttons for a driver's attention, and a compass is a
+     thing you CONSULT, not something you monitor while driving. -->
+<div class="sheet" id="compassSheet">
+  <div class="grabber"></div>
+  <h3>🧭 Compass</h3>
+  <p class="sub" id="compassSub">True north, calibrated from your own movement.</p>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0 18px">
+    <div id="compass" title="Toggle heading-up">
+
+    <svg id="compRose" viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <radialGradient id="cwGlass" cx="50%" cy="38%" r="72%">
+          <stop offset="0%" stop-color="rgba(140,255,220,.16)"/>
+          <stop offset="62%" stop-color="rgba(60,150,190,.07)"/>
+          <stop offset="100%" stop-color="rgba(0,0,0,0)"/>
+        </radialGradient>
+        <linearGradient id="cwSweep" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--cw-hue)" stop-opacity=".55"/>
+          <stop offset="100%" stop-color="var(--cw-hue)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="url(#cwGlass)"/>
+      <circle cx="50" cy="50" r="45.5" class="cw-rim"/>
+      <circle cx="50" cy="50" r="38.5" class="cw-rim2"/>
+      <!-- the sweep sits UNDER the dial so it reads as light behind glass, not an overlay -->
+      <g id="compSweep"><path d="M50 50 L50 6 A44 44 0 0 1 76 15 Z" fill="url(#cwSweep)"/></g>
+      <!-- everything that must stay oriented to the world lives in this one rotated group -->
+      <g id="compDial">
+        <g id="compTicks"></g>
+        <text x="50" y="16.5" class="cw-card cw-n">N</text>
+        <text x="86" y="53.5" class="cw-card">E</text>
+        <text x="50" y="90.5" class="cw-card">S</text>
+        <text x="14" y="53.5" class="cw-card">W</text>
+        <!-- split needle: the two halves are offset a hair to fake chromatic fringing -->
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-a"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-b"/>
+        <path d="M50 20 L56 52 L50 47 L44 52 Z" class="cw-nd cw-nd-m"/>
+        <path d="M50 80 L56 48 L50 53 L44 48 Z" class="cw-tail"/>
+      </g>
+      <circle cx="50" cy="50" r="3.2" class="cw-hub"/>
+      <circle cx="50" cy="50" r="6.4" class="cw-hub-ring"/>
+    </svg>
+    <small id="compDeg">N</small>
+      </div>
+    <div id="compReadout" style="font-family:var(--tech);font-size:13px;letter-spacing:.06em;color:var(--mute);text-align:center;line-height:1.7"></div>
+    <button class="chip" id="compHup" style="margin-top:2px">Heading-up map</button>
+  </div>
+</div>
+
+<div class="sheet" id="discoverSheet">
+  <div class="grabber"></div>
+  <h3 id="discoverTitle">🧭 Discover nearby</h3>
+  <p class="sub">Live points of interest around you, from OpenStreetMap.</p>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <button class="chip" data-poi="fuel">⛽ Gas</button>
+    <button class="chip" data-poi="charging_station">⚡ EV</button>
+    <button class="chip" data-poi="restaurant">🍽 Food</button>
+    <button class="chip" data-poi="cafe">☕ Coffee</button>
+    <button class="chip" data-poi="attraction">🎡 Attractions</button>
+    <button class="chip" data-poi="parking">🅿️ Parking</button>
+  </div>
+  <div id="poiList"><p class="sub">Pick a category to search around your position.</p></div>
+</div>
+
+<div class="sheet" id="roadsideSheet">
+  <div class="grabber"></div>
+  <h3>🛠 Roadside assistance</h3>
+  <p class="sub" id="rsLoc">Getting your location…</p>
+  <a class="row-btn" href="tel:18002224357"><span class="ic">🔧</span><span>AAA Roadside<small>1-800-AAA-HELP · membership required</small></span></a>
+  <button class="row-btn" id="shareLoc"><span class="ic">📍</span><span>Text my exact location<small>Opens Messages with a GPS pin + battery level</small></span></button>
+  <button class="row-btn" id="copyLoc"><span class="ic">📋</span><span>Copy my coordinates<small>For tow dispatch over the phone</small></span></button>
+</div>
+
+<div class="sheet" id="feedbackSheet">
+  <div class="grabber"></div>
+  <h3>📣 Feedback & app reports</h3>
+  <p class="sub">Spotted a wrong road, a bad route, a bug, or have an idea? Tell us — this is how the app gets smarter.</p>
+  <div id="fbChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+    <button class="chip on" data-fb="Bug">🐞 Bug</button>
+    <button class="chip" data-fb="Map error">🗺 Map error</button>
+    <button class="chip" data-fb="Bad route">🧭 Bad route</button>
+    <button class="chip" data-fb="Idea">💡 Idea</button>
+  </div>
+  <textarea class="field" id="fbText" placeholder="What happened? Where? The more detail, the faster the fix."></textarea>
+  <button class="btn orange" style="width:100%" id="fbSend">Send report</button>
+  <p class="sub" style="margin-top:8px">Goes to the shared database if connected, otherwise opens your email. Location attaches only if GPS is on.</p>
+</div>
+
+<div class="sheet" id="settingsSheet">
+  <div class="grabber"></div>
+  <h3>⚙️ Settings</h3>
+  <p class="sub"><b>Privacy:</b> no account, no analytics, no tracking. Location, motion, and light sensing are processed on this device only.</p>
+  <div class="kv" style="font-weight:700"><span>App version</span><span id="appVer" style="color:var(--nav-accent)">—</span></div>
+  <div class="kv"><span>Theme</span><span id="themeChips" style="display:flex;gap:6px">
+    <button class="chip on" data-theme-set="auto">Auto</button>
+    <button class="chip" data-theme-set="light">Light</button>
+    <button class="chip" data-theme-set="dark">Dark</button></span></div>
+  <div class="kv"><span>Button size</span><span id="fabChips" style="display:flex;gap:6px">
+    <button class="chip" data-fab="s">S</button>
+    <button class="chip on" data-fab="m">M</button>
+    <button class="chip" data-fab="l">L</button></span></div>
+  <div class="kv"><span>Tool menu</span><span id="toolsChips" style="display:flex;gap:6px">
+    <button class="chip on" data-tools="drawer">Drawer</button>
+    <button class="chip" data-tools="radial">Radial</button></span></div>
+  <div class="kv"><span>Marker size</span><span id="sizeChips" style="display:flex;gap:6px">
+    <button class="chip" data-size="s">S</button>
+    <button class="chip on" data-size="m">M</button>
+    <button class="chip" data-size="l">L</button>
+    <button class="chip" data-size="xl">XL</button></span></div>
+  <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
+  <button class="row-btn" id="shareApp"><span class="ic">📣</span><span>Share ConeWatch<small>Send the link — more drivers means better hazard data</small></span></button>
+  <div class="kv"><span>Your reports</span><span id="myReports" style="font-weight:700">0 reports</span></div>
+  <button class="row-btn" id="toggleRadar"><span class="ic">🌧</span><span>Weather radar<small id="radarState">Off — tap to show rain &amp; snow</small></span></button>
+  <button class="row-btn" id="toggleFilters"><span class="ic">👁</span><span>Show on map<small id="filterState">All hazard types visible</small></span></button>
+  <div id="hzFilters" style="display:none;flex-wrap:wrap;gap:6px;margin:8px 0 2px"></div>
+  <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>
+  <div class="kv"><span>Vehicle economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
+  <div class="kv"><span>Gas price ($/gal)</span><input class="field" id="gasPrice" value="2.89" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
+  <div class="kv"><span>Battery</span><span id="battStat">—</span></div>
+  <button class="row-btn" id="toggleFollow" style="margin-top:10px"><span class="ic">🧲</span><span>Follow my position<small id="followState">On — map recenters as you drive</small></span></button>
+  <button class="row-btn" id="toggleSaver"><span class="ic">🔋</span><span>Battery saver<small id="saverState">Off — full GPS rate + animations</small></span></button>
+  <button class="row-btn" id="viewTrips"><span class="ic">🕘</span><span>Trip history<small id="tripCount">Your recent drives</small></span></button>
+  <button class="row-btn" id="dlOffline"><span class="ic">📥</span><span>Download this area for offline<small>Saves the map around you — navigate with no signal</small></span></button>
+  <button class="row-btn" id="toggleAlerts"><span class="ic">🔊</span><span>Audio hazard alerts<small id="alertState">On — beeps near hazards while navigating</small></span></button>
+  <button class="row-btn" id="toggleBump"><span class="ic">📳</span><span>Impact detection<small id="bumpState">On — hard bumps prompt a pothole report</small></span></button>
+  <button class="row-btn" id="toggleHeat"><span class="ic">🌡️</span><span>Road-quality heatmap<small id="heatState">Off — pothole & rough-road density</small></span></button>
+  <div style="display:none">
+    <input class="field" id="satKey"/><button id="satKeySave"></button>
+  </div>
+  <button class="row-btn" id="testCue" style="margin-top:12px"><span class="ic">📳</span><span>Test turn cue<small>Feel the pre-exit haptic + tone on this device</small></span></button>
+  <button class="row-btn" id="replayTut"><span class="ic">🎓</span><span>How-to tutorial<small>Replay the guided walkthrough of every feature</small></span></button>
+  <button class="row-btn" id="installBtn"><span class="ic">📲</span><span>Add to Home Screen<small>Install ConeWatch as an app — one-tap launch, no browser bar</small></span></button>
+  <div style="display:none">
+    <input class="field" id="sbUrl"/><input class="field" id="sbKey"/>
+    <button id="sbSave"></button><button id="sbTest"></button>
+  </div>
+  <p class="sub" style="margin-top:12px">Sensors in use: GPS · compass/gyro · accelerometer · ambient light · battery · network · wake lock · camera torch. Maps © OpenStreetMap · OpenFreeMap · CARTO · OSRM · Open-Meteo.</p>
+</div>
+
+<div id="lightscreen"><div class="tag" id="lightTag">FLASHLIGHT — TAP ANYWHERE TO TURN OFF</div></div>
+
+<div id="sosConfirm">
+  <h2>EMERGENCY</h2>
+  <a id="sosCall" href="tel:911">CALL 911</a>
+  <div id="sosNote">Your coordinates: <b id="sosCoords">acquiring…</b><br>Read them to the dispatcher if asked.</div>
+  <button id="sosCancel">Cancel</button>
+</div>
+
+<div id="bumpBar">
+  <span>📳 Big bump detected — pothole?</span>
+  <button id="bumpYes">Report</button><button id="bumpNo">No</button>
+</div>
+
+<video id="noSleepVid" muted playsinline loop style="position:fixed;top:0;left:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1"></video>
+<div id="hud">
+  <div class="mirror" id="hudMirror">
+    <div class="h-arrow" id="hudArrow"></div>
+    <div class="h-dist" id="hudDist">—</div>
+    <div class="h-instr" id="hudInstr"></div>
+    <div class="h-speedrow">
+      <div class="h-speed"><span id="hudSpeed">0</span> <i>mph</i></div>
+      <div class="h-limit" id="hudLimit" style="display:none"><span id="hudLimitNum">—</span></div>
+    </div>
+    <div class="h-eta" id="hudEta"></div>
+    <div class="h-haz" id="hudHaz"></div>
+  </div>
+  <div class="hud-ctrl">
+    <button id="hudSmaller" aria-label="Smaller text">A−</button>
+    <button id="hudBigger" aria-label="Bigger text">A+</button>
+    <button id="hudFlip" aria-label="Toggle mirror flip">⇋</button>
+    <button id="hudExit" aria-label="Exit HUD">Exit</button>
+  </div>
+  <div class="hint">Windshield HUD — place phone on dash · swipe down or tap Exit</div>
+</div>
+
+<div id="installBanner" style="position:fixed;left:12px;right:12px;bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);z-index:5200;display:none;background:var(--panel-solid,#fff);border-radius:16px;padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.4);border:1px solid var(--line)">
+  <div style="display:flex;align-items:center;gap:12px">
+    <div style="font-size:26px">📲</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-weight:800;font-size:15px;color:var(--text)">Install ConeWatch</div>
+      <div id="installMsg" style="font-size:12px;color:var(--mute);margin-top:2px">Add it to your home screen — opens like a real app, no browser bar.</div>
+    </div>
+    <button class="btn orange" id="installGo" style="flex:0 0 auto;padding:10px 16px">Install</button>
+    <button id="installX" style="background:none;border:none;color:var(--mute);font-size:18px;cursor:pointer;padding:4px">✕</button>
+  </div>
+  <div id="iosSteps" style="display:none;margin-top:10px;font-size:13px;color:var(--text);line-height:1.6">
+    Tap the <b>Share</b> icon <span style="font-size:15px">&#x2191;⎔</span> at the bottom of Safari, then choose <b>“Add to Home Screen.”</b>
+  </div>
+  <div id="androidSteps" style="display:none;margin-top:10px;font-size:13px;color:var(--text);line-height:1.6">
+    Tap the <b>&#8942;</b> menu at the top right of Chrome, then choose <b>“Add to Home screen”</b> or <b>“Install app.”</b>
+  </div>
+</div>
+
+<div id="welcome" style="position:fixed;inset:0;z-index:7000;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:28px;text-align:center">
+  <div style="height:7px;width:180px;border-radius:2px;background:repeating-linear-gradient(-45deg,var(--cone) 0 13px,rgba(0,0,0,.55) 13px 26px)"></div>
+  <div style="font-family:var(--display);font-size:32px;letter-spacing:1px">CONE<b style="color:var(--cone)">WATCH</b></div>
+  <p style="color:var(--mute);font-size:14px;max-width:300px;line-height:1.6;margin:0">One-time setup — we'll ask for <b>location</b> and <b>motion</b> access now so nothing pops up while you're driving. Everything is processed on your phone.</p>
+  <button class="btn orange" id="welcomeGo" style="font-size:16px;padding:16px 36px">Enable &amp; start driving</button>
+  <button id="welcomeSkip" style="background:none;border:none;color:var(--mute);font-size:13px;cursor:pointer">Skip for now</button>
+</div>
+
+<div id="satPreview" style="position:fixed;inset:0;z-index:6500;background:#000;display:none">
+  <div id="satMap" style="position:absolute;inset:0"></div>
+  <div style="position:absolute;top:calc(12px + env(safe-area-inset-top));left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;pointer-events:none">
+    <div id="satName" style="background:rgba(0,0,0,.6);color:#fff;padding:8px 14px;border-radius:20px;font-size:13px;backdrop-filter:blur(8px)">Destination preview</div>
+    <button class="fab" id="satClose" style="pointer-events:auto">✕</button>
+  </div>
+  <div style="position:absolute;bottom:calc(20px + env(safe-area-inset-bottom));left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:9px">
+    <button id="satOrbitToggle" style="pointer-events:auto;background:rgba(20,22,28,.55);color:#fff;border:1px solid rgba(255,255,255,.18);-webkit-backdrop-filter:saturate(170%) blur(22px);backdrop-filter:saturate(170%) blur(22px);padding:11px 22px;border-radius:14px;font-size:14px;font-weight:600;box-shadow:0 0 0 .5px rgba(255,255,255,.12),0 8px 24px rgba(0,0,0,.4)">❙❙&nbsp; Pause rotation</button>
+    <div style="color:#9aa;font-size:10.5px;font-family:var(--tech,monospace);pointer-events:none;letter-spacing:.3px">TAP MAP TO EXPLORE · PINCH TO ZOOM · DRAG TO LOOK</div>
+  </div>
+</div>
+
+<div id="photoSheet" style="position:fixed;inset:0;z-index:6750;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);display:none">
+  <div style="position:absolute;left:0;right:0;bottom:0;background:var(--panel-solid,#fff);border-radius:22px 22px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom));max-height:82vh;overflow-y:auto">
+    <div style="width:40px;height:4px;background:var(--line,#ccc);border-radius:3px;margin:0 auto 12px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h3 id="photoSheetName" style="margin:0;font-size:17px">📷 Photos</h3>
+      <button class="fab" id="photoClose" style="width:34px;height:34px">✕</button>
+    </div>
+    <p class="sub" style="margin:0 0 12px">Photos of this place or the surrounding area, from public sources.</p>
+    <div id="photoGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+  </div>
+</div>
+
+<div id="tutorial" style="position:fixed;inset:0;z-index:8000;display:none">
+  <div id="tutCatch" style="position:absolute;inset:0"></div>
+  <div id="tutRing" style="position:absolute;border:3px solid #FF6B1A;border-radius:14px;box-shadow:0 0 0 9999px rgba(6,10,16,.74),0 0 22px rgba(255,107,26,.85);transition:left .25s,top .25s,width .25s,height .25s;pointer-events:none;left:50%;top:-60px;width:0;height:0"></div>
+  <div id="tutCard" style="position:absolute;left:50%;transform:translateX(-50%);bottom:40px;width:min(92vw,420px);background:#fff;color:#141414;border-radius:18px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.55)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div id="tutStep" style="font-size:12px;color:#8a8a8a;font-weight:700;font-family:var(--tech,monospace)">1 / 9</div>
+      <button id="tutSkip" style="border:none;background:none;color:#8a8a8a;font-size:13px;font-weight:600;cursor:pointer">Skip tour</button>
+    </div>
+    <div id="tutTitle" style="font-size:19px;font-weight:800;margin-bottom:5px">Welcome</div>
+    <div id="tutBody" style="font-size:14px;line-height:1.45;color:#333">…</div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn ghost" id="tutBack" style="flex:0 0 auto;min-width:72px">Back</button>
+      <button class="btn orange" id="tutNext" style="flex:1">Next</button>
+    </div>
+  </div>
+</div>
+
+<div id="geoPicker" style="position:fixed;inset:0;z-index:6700;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);display:none">
+  <div style="position:absolute;left:0;right:0;bottom:0;background:var(--panel-solid,#fff);border-radius:22px 22px 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom));max-height:80vh;overflow-y:auto;box-shadow:0 -10px 40px rgba(0,0,0,.4)">
+    <div style="width:40px;height:4px;background:var(--line,#ccc);border-radius:3px;margin:0 auto 12px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+      <h3 style="margin:0;font-size:18px">Which one?</h3>
+      <button class="fab" id="geoPickerX" style="width:34px;height:34px">✕</button>
+    </div>
+    <p class="sub" id="geoPickerSub" style="margin:0 0 12px">Tap the correct address</p>
+    <div id="geoPickerList"></div>
+  </div>
+</div>
+
+<div id="drivePreview" style="position:fixed;inset:0;z-index:6600;background:#bfe0ff;display:none">
+  <div id="driveMap" style="position:absolute;inset:0;transition:transform .12s ease-out;transform:scale(1.08)"></div>
+  <div id="tourFX" style="position:absolute;inset:0;pointer-events:none;z-index:2;opacity:.15;transition:opacity .3s"></div>
+  <div id="tourCockpit" style="position:absolute;inset:0;pointer-events:none;z-index:3"></div>
+  <div id="tourWarp" style="position:absolute;inset:0;pointer-events:none;z-index:4;opacity:0;transition:opacity .25s"></div>
+  <div id="tourLight" style="position:absolute;inset:0;z-index:5;display:none;align-items:center;justify-content:flex-start;padding-top:31%;flex-direction:column;background:linear-gradient(to bottom,rgba(0,0,0,.42) 0%,rgba(0,0,0,.30) 46%,rgba(0,0,0,.06) 74%,transparent 100%)">
+    <div style="background:#111418;border:2px solid #2a2f36;border-radius:18px;padding:12px 11px;display:flex;flex-direction:column;gap:9px;box-shadow:0 12px 40px rgba(0,0,0,.6)">
+      <div id="tlRed" class="tl-bulb" style="background:#3a0d0d"></div>
+      <div id="tlYel" class="tl-bulb" style="background:#3a300d"></div>
+      <div id="tlGrn" class="tl-bulb" style="background:#0d3a1a"></div>
+    </div>
+    <div id="tlWord" style="margin-top:12px;color:#fff;font-family:var(--display,sans-serif);font-size:22px;font-weight:800;letter-spacing:2px;text-shadow:0 2px 12px rgba(0,0,0,.7)">GET READY</div>
+  </div>
+  <div id="tourFade" style="position:absolute;top:0;left:0;right:0;height:34%;pointer-events:none;background:linear-gradient(to bottom,rgba(191,224,255,.65),rgba(191,224,255,0))"></div>
+  <div style="position:absolute;top:calc(10px + env(safe-area-inset-top));left:12px;right:12px;display:flex;gap:10px;align-items:flex-start;pointer-events:none">
+    <div style="flex:1;min-width:0;background:rgba(8,12,20,.8);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:12px 16px;color:#fff">
+      <div id="tourInstr" style="font-size:16px;font-weight:700;line-height:1.25;overflow-wrap:break-word">Building preview…</div>
+      <div id="tourDist" style="font-size:13px;color:#22d3aa;margin-top:3px;font-family:var(--tech,monospace)"></div>
+    </div>
+    <button class="fab" id="driveClose" style="pointer-events:auto">✕</button>
+  </div>
+  <div style="position:absolute;left:10px;right:10px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:4;background:rgba(14,16,20,.5);-webkit-backdrop-filter:saturate(170%) blur(22px);backdrop-filter:saturate(170%) blur(22px);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:12px 12px;box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 10px 30px rgba(0,0,0,.45)">
+    <div id="tourTrack" style="height:14px;display:flex;align-items:center;margin-bottom:8px;cursor:pointer;touch-action:none"><div style="height:5px;width:100%;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden"><div id="tourProg" style="height:100%;width:0;background:linear-gradient(90deg,#22d3aa,#5bf0c8)"></div></div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div id="tourGear" style="flex:0 0 auto;min-width:44px;text-align:center;color:#ffd24a;font-family:var(--tech,monospace);font-size:15px;font-weight:700;letter-spacing:1px;text-shadow:0 0 10px rgba(255,168,32,.55)">G1</div>
+      <button class="btn ghost" id="tourSpeed" style="flex:0 0 auto;min-width:50px">1&times;</button>
+      <button class="btn ghost" id="tourRestart" style="flex:0 0 auto;min-width:50px">&#8635;</button>
+      <button class="btn ghost" id="tourPlay" style="flex:0 0 auto;min-width:50px">&#10073;&#10073;</button>
+      <button class="btn ghost" id="tourBoost" style="flex:0 0 auto;min-width:58px;color:#c9a4ff;border-color:rgba(160,110,255,.5);text-shadow:0 0 10px rgba(150,90,255,.7)">N2O</button>
+      <button class="btn orange" id="tourDrive" style="flex:1">Start driving &#8594;</button>
+    </div>
+  </div>
+  <div id="tourHint" style="position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(255,255,255,.85);font-size:10px;font-family:var(--tech,monospace);pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.6);transition:opacity .6s">DRAG TO LOOK &middot; PINCH TO ZOOM</div>
+</div>
+
+<div id="relock" style="position:fixed;top:calc(var(--hdrH,190px) + 4px);left:50%;transform:translateX(-50%);z-index:997;background:var(--panel-solid);border:1px solid var(--line);border-radius:20px;padding:7px 14px;font-size:12px;display:none;box-shadow:0 6px 18px rgba(0,0,0,.4);cursor:pointer">🧲 Free roam — tap to lock onto GPS</div>
+
+<div id="confirmBar">
+ <div class="cb-top">
+  <div style="flex:1;min-width:0">
+    <div style="font-size:10px;letter-spacing:1px;color:var(--mute);text-transform:uppercase">Destination set</div>
+    <div id="confAddr" style="font-size:14px;font-weight:700;margin-top:2px;line-height:1.25"></div>
+    <div id="confMeta" style="font-size:12px;color:var(--mute);margin-top:2px"></div>
+  </div>
+  <div class="cb-btns" style="flex-direction:column;gap:6px">
+    <button id="confOk" style="background:var(--ok);border:none;color:#07231A;font-weight:800;border-radius:12px;padding:9px 14px;font-size:12px;cursor:pointer">Correct</button>
+    <button id="confNo" style="background:var(--panel-hi);border:1px solid var(--line);color:var(--mute);border-radius:12px;padding:9px 14px;font-size:12px;cursor:pointer">Wrong</button>
+  </div>
+ </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script src="app.js"></script>
+<script src="cw-patch.js"></script>
+</body>
+</html>
