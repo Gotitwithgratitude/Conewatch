@@ -604,6 +604,33 @@
   #hud .hud-ctrl{position:absolute;bottom:calc(20px + env(safe-area-inset-bottom));display:flex;gap:12px;align-items:center}
   #hud .hud-ctrl button{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:12px;font-size:18px;font-weight:800;width:52px;height:44px}
   #hud .hint{position:absolute;top:calc(16px + env(safe-area-inset-top));color:#666;font-size:11px}
+  /* The mirror flip is a per-driver choice: reflecting off the windshield needs it, propping the
+     phone on the dash does not. Was hardcoded on, which made the propped case unreadable. */
+  #hud.noflip .mirror{transform:none}
+  /* Big glyph reads at a glance where a sentence does not — the whole point of a HUD. */
+  #hud .h-arrow{font-family:var(--display);font-size:calc(74px*var(--hudScale));color:#8CFFC0;line-height:.9;
+    text-shadow:0 0 22px rgba(124,252,177,.9),0 0 5px rgba(124,252,177,1);min-height:1px}
+  #hud .h-speedrow{display:flex;align-items:center;justify-content:center;gap:calc(14px*var(--hudScale));margin-top:calc(10px*var(--hudScale))}
+  /* .h-speed carried its own margin-top from when it was a standalone block; inside the flex
+     row that pushed the number out of line with the limit sign next to it. */
+  #hud .h-speedrow .h-speed{margin-top:0}
+  #hud .h-speed i{font-style:normal;font-size:calc(16px*var(--hudScale));opacity:.75}
+  /* Over the limit turns the speed amber, then red — glanceable without reading a number. */
+  #hud .h-speed.warn{color:#FFD24A;text-shadow:0 0 16px rgba(255,210,74,.85)}
+  #hud .h-speed.over{color:#FF7A7A;text-shadow:0 0 18px rgba(255,122,122,.9)}
+  #hud .h-limit{font-family:var(--display);font-weight:800;background:#fff;color:#111;border:calc(3px*var(--hudScale)) solid #111;
+    border-radius:calc(8px*var(--hudScale));padding:calc(2px*var(--hudScale)) calc(9px*var(--hudScale));
+    font-size:calc(24px*var(--hudScale));line-height:1.1;box-shadow:0 0 14px rgba(255,255,255,.5)}
+  #hud .h-eta{font-size:calc(15px*var(--hudScale));color:#9aa;margin-top:calc(8px*var(--hudScale));
+    font-weight:600;letter-spacing:.04em;text-shadow:0 0 10px rgba(180,200,210,.5)}
+  /* Hazard alerts had NO path to the HUD: #toast is z-index 2500 and #hud is 3000, so every
+     warning rendered underneath it. In HUD mode the driver got voice and a blank windshield. */
+  #hud .h-haz{margin-top:calc(12px*var(--hudScale));font-size:calc(20px*var(--hudScale));font-weight:800;
+    color:#FFB3B3;opacity:0;transition:opacity .2s;min-height:calc(24px*var(--hudScale));
+    text-shadow:0 0 16px rgba(255,120,120,.9)}
+  #hud .h-haz.show{opacity:1;animation:hudHazPulse 1s ease-in-out infinite}
+  @keyframes hudHazPulse{0%,100%{opacity:1}50%{opacity:.55}}
+  html[data-lite="1"] #hud .h-haz.show{animation:none}
 
   #confirmBar{position:fixed;left:12px;right:74px;bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);z-index:1200;background:var(--panel-solid);border:1px solid var(--ok);border-radius:16px;padding:12px 14px;display:none;flex-direction:column;gap:10px;align-items:stretch;box-shadow:0 12px 34px rgba(0,0,0,.5)}
   #confirmBar .cb-top{display:flex;gap:12px;align-items:flex-start}
@@ -1167,16 +1194,24 @@
 
 <video id="noSleepVid" muted playsinline loop style="position:fixed;top:0;left:0;width:2px;height:2px;opacity:.01;pointer-events:none;z-index:-1"></video>
 <div id="hud">
-  <div class="mirror">
+  <div class="mirror" id="hudMirror">
+    <div class="h-arrow" id="hudArrow"></div>
     <div class="h-dist" id="hudDist">—</div>
     <div class="h-instr" id="hudInstr"></div>
-    <div class="h-speed"><span id="hudSpeed">0</span> mph</div>
+    <div class="h-speedrow">
+      <div class="h-speed"><span id="hudSpeed">0</span> <i>mph</i></div>
+      <div class="h-limit" id="hudLimit" style="display:none"><span id="hudLimitNum">—</span></div>
+    </div>
+    <div class="h-eta" id="hudEta"></div>
+    <div class="h-haz" id="hudHaz"></div>
   </div>
   <div class="hud-ctrl">
     <button id="hudSmaller" aria-label="Smaller text">A−</button>
     <button id="hudBigger" aria-label="Bigger text">A+</button>
+    <button id="hudFlip" aria-label="Toggle mirror flip">⇋</button>
+    <button id="hudExit" aria-label="Exit HUD">Exit</button>
   </div>
-  <div class="hint">Windshield HUD — place phone on dash at night · tap to exit</div>
+  <div class="hint">Windshield HUD — place phone on dash · swipe down or tap Exit</div>
 </div>
 
 <div id="installBanner" style="position:fixed;left:12px;right:12px;bottom:calc(var(--dockH,150px) + var(--clusterH,120px) + 22px);z-index:5200;display:none;background:var(--panel-solid,#fff);border-radius:16px;padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.4);border:1px solid var(--line)">

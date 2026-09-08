@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v229";
+const APP_VERSION="v230";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -679,6 +679,7 @@ function ensureRouteLayers(){
     // v185 briefly shipped a blurred bloom layer; strip it if a cached session still has one
     try{ if(map.getLayer("route-glow")) map.removeLayer("route-glow"); }catch(e){}
     if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
+    try{ _addSignalImage(); }catch(e){}          // style swaps drop registered images
     if(!map.getSource("signals")||!map.getLayer("signal-dots")) ensureSignalLayer();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
     refreshRouteCondition();
@@ -2041,21 +2042,72 @@ function _sigData(){
   var out=[]; for(var id in _sigFeat) out.push(_sigFeat[id]);
   return {type:"FeatureCollection",features:out};
 }
+/* The signal glyph is drawn to a canvas at boot rather than shipped as a PNG: one less file to
+   keep in sync across the repo + service worker cache, it stays crisp at any device pixel ratio,
+   and the housing colour can follow the theme. All three lamps are lit deliberately — this is a
+   SIGN meaning "signalised intersection", not a claim about the current phase. Lighting only one
+   would read as live state we do not have. */
+function _signalIcon(){
+  var r=Math.min(3,Math.max(2,Math.round(window.devicePixelRatio||2)));
+  var w=20, h=44;                                   // logical size; canvas is r times this
+  var c=document.createElement("canvas"); c.width=w*r; c.height=h*r;
+  var x=c.getContext("2d"); x.scale(r,r);
+  function rrect(a,b,ww,hh,rad){
+    x.beginPath();
+    x.moveTo(a+rad,b);
+    x.arcTo(a+ww,b,a+ww,b+hh,rad); x.arcTo(a+ww,b+hh,a,b+hh,rad);
+    x.arcTo(a,b+hh,a,b,rad);       x.arcTo(a,b,a+ww,b,rad);
+    x.closePath();
+  }
+  // white outer rim so the glyph reads against dark asphalt AND light basemaps
+  x.fillStyle="#FFFFFF"; rrect(1,1,w-2,h-2,6); x.fill();
+  x.fillStyle="#15171A"; rrect(3,3,w-6,h-6,4.5); x.fill();
+  var lamps=[["#FF3B30",10.5],["#FFB020",22],["#34C759",33.5]];
+  lamps.forEach(function(L){
+    x.beginPath(); x.arc(w/2,L[1],3.6,0,Math.PI*2);
+    x.fillStyle=L[0]; x.fill();
+    x.globalAlpha=.35; x.beginPath(); x.arc(w/2,L[1],5.2,0,Math.PI*2); x.fillStyle=L[0]; x.fill(); x.globalAlpha=1;
+  });
+  return {canvas:c,w:w*r,h:h*r,ratio:r};
+}
+function _addSignalImage(){
+  try{
+    if(map.hasImage&&map.hasImage("cw-signal")) return true;
+    var ic=_signalIcon();
+    var d=ic.canvas.getContext("2d").getImageData(0,0,ic.w,ic.h);
+    map.addImage("cw-signal",{width:ic.w,height:ic.h,data:new Uint8Array(d.data.buffer)},{pixelRatio:ic.ratio});
+    return true;
+  }catch(e){ return false; }
+}
 function ensureSignalLayer(){
   try{
     if(!S.mapReady||!map) return;
     if(!map.getSource("signals")) map.addSource("signals",{type:"geojson",data:_sigData()});
+    var hasImg=_addSignalImage();
     if(!map.getLayer("signal-dots")){
       // Sits BELOW the route line: a signal must never obscure the line you're following.
       var before = map.getLayer("route-casing") ? "route-casing" : undefined;
-      map.addLayer({id:"signal-dots",type:"circle",source:"signals",minzoom:SIG_MINZ,
-        paint:{
-          "circle-radius":["interpolate",["linear"],["zoom"],15,2.6,17,4.4,19,6.5],
-          "circle-color":"#FFB020",
-          "circle-opacity":["interpolate",["linear"],["zoom"],15,.55,16.5,.9],
-          "circle-stroke-width":["interpolate",["linear"],["zoom"],15,.6,18,1.4],
-          "circle-stroke-color":"rgba(20,22,25,.85)"
-        }}, before);
+      if(hasImg){
+        map.addLayer({id:"signal-dots",type:"symbol",source:"signals",minzoom:SIG_MINZ,
+          layout:{
+            "icon-image":"cw-signal",
+            "icon-size":["interpolate",["linear"],["zoom"],15,.34,17,.62,19,.9],
+            "icon-anchor":"center",
+            // declutter naturally: at wide zooms MapLibre drops the ones that would collide,
+            // and only at close zoom do we let every signal through
+            "icon-allow-overlap":["step",["zoom"],false,17,true],
+            "icon-ignore-placement":["step",["zoom"],false,17,true],
+            "icon-pitch-alignment":"viewport",       // stays upright when the map tilts for nav
+            "icon-rotation-alignment":"viewport"
+          },
+          paint:{"icon-opacity":["interpolate",["linear"],["zoom"],15,.7,16.5,1]}
+        }, before);
+      } else {
+        // canvas/addImage unavailable — fall back to a plain dot rather than showing nothing
+        map.addLayer({id:"signal-dots",type:"circle",source:"signals",minzoom:SIG_MINZ,
+          paint:{"circle-radius":["interpolate",["linear"],["zoom"],15,2.6,19,6.5],
+                 "circle-color":"#FFB020","circle-stroke-width":1,"circle-stroke-color":"rgba(20,22,25,.85)"}}, before);
+      }
     }
     applySignalVis();
   }catch(e){}
@@ -2635,6 +2687,7 @@ function navTick(){
   $("hudDist").textContent=fmtDist(dNext);
   $("hudInstr").textContent=stepText(cur);
   $("hudSpeed").textContent=Math.round(S.speedMph);
+  try{ hudPaint(cur); }catch(e){}
 
   // spoken guidance
   // Speed-aware guidance: at highway speed you need MILES of warning, not 380 metres.
@@ -2871,6 +2924,7 @@ function hazardAlert(h,stage){
     try{ beep(560,.10,.14); }catch(e){}
     if(navigator.vibrate)navigator.vibrate(45);
     try{ pulseHazard(h); }catch(e){}
+    try{ hudHazard(m.emoji+" "+sizeTxt+m.label+" ahead", 2600); }catch(e){}
     return;
   }
   // close now: sharper double tone + short spoken cue
@@ -2880,6 +2934,7 @@ function hazardAlert(h,stage){
   try{ if(S.voiceOn)speak((sizeTxt?sizeTxt:"")+m.label+" ahead"+(_lnA?", "+_lnA:"")); }catch(e){}
   if(navigator.vibrate)navigator.vibrate([70,50,70]);
   try{ pulseHazard(h); }catch(e){}
+  try{ hudHazard(m.emoji+" "+sizeTxt+m.label+" — RIGHT AHEAD", 3400); }catch(e){}
 }
 // visual cue on the map so the driver can glance instead of listen
 function pulseHazard(h){
@@ -3931,11 +3986,71 @@ $("fab3d").onclick=()=>{
 /* ═══════════ HUD ═══════════ */
 let hudScale=1.5; try{const hs=parseFloat(localStorage.getItem("cw_hud")); if(hs)hudScale=hs;}catch(e){}
 function applyHudScale(){ try{$("hud").style.setProperty("--hudScale",hudScale); localStorage.setItem("cw_hud",hudScale);}catch(e){} }
-$("hudBtn").onclick=()=>{pushUI();$("hud").style.display="flex";applyHudScale();};
-// tap the readout area (not the buttons) to exit HUD
-$("hud").addEventListener("click",(e)=>{ if(e.target.closest(".hud-ctrl"))return; $("hud").style.display="none"; });
+let hudFlip=true; try{ hudFlip=localStorage.getItem("cw_hudflip")!=="0"; }catch(e){}
+function applyHudFlip(){ try{ $("hud").classList.toggle("noflip",!hudFlip); localStorage.setItem("cw_hudflip",hudFlip?"1":"0"); }catch(e){} }
+function hudOpen(){ return $("hud") && $("hud").style.display!=="none" && $("hud").style.display!==""; }
+/* Paint the fields the HUD gained in v230: turn glyph, speed-limit sign, over-limit colour, ETA.
+   Cheap enough to run on every nav tick — it's a handful of textContent writes, and skipping it
+   while closed keeps it free when the HUD isn't up. */
+function hudPaint(step){
+  if(!hudOpen()) return;
+  try{
+    var a=$("hudArrow"); if(a && step) a.textContent=maneuverGlyph(step);
+    var vm=Math.round(S.speedMph||0);
+    var sp=$("hud") && $("hud").querySelector(".h-speed");
+    if(sp){
+      sp.classList.remove("warn","over");
+      if(S.limit){ if(vm>S.limit+8) sp.classList.add("over"); else if(vm>S.limit) sp.classList.add("warn"); }
+      else if(vm>75) sp.classList.add("warn");
+    }
+    var lw=$("hudLimit");
+    if(lw){
+      if(S.limit){ $("hudLimitNum").textContent=S.limit; lw.style.display="block"; }
+      else lw.style.display="none";
+    }
+    var eta=$("hudEta");
+    // Drivers were exiting the HUD purely to check the arrival time — so put it on the glass.
+    if(eta) eta.textContent = S.etaArr ? (S.etaArr+"  ·  "+(S.etaMin||0)+" min") : "";
+  }catch(e){}
+}
+/* Hazard warnings on the glass. Before this they went to #toast (z-index 2500) which renders
+   UNDERNEATH #hud (z-index 3000) — so in HUD mode a driver got the voice cue and nothing to
+   look at, which defeats the point of a heads-up display. */
+var _hudHazT=null;
+function hudHazard(txt,ms){
+  try{
+    if(!hudOpen()) return;
+    var el=$("hudHaz"); if(!el) return;
+    el.textContent=txt; el.classList.add("show");
+    if(_hudHazT) clearTimeout(_hudHazT);
+    _hudHazT=setTimeout(function(){ try{ el.classList.remove("show"); el.textContent=""; }catch(e){} }, ms||3000);
+  }catch(e){}
+}
+function hudShow(){
+  pushUI(); $("hud").style.display="flex"; applyHudScale(); applyHudFlip();
+  try{ hudPaint(S.steps&&S.steps[S.stepIdx]); }catch(e){}
+}
+function hudHide(){ try{ $("hud").style.display="none"; if(_hudHazT) clearTimeout(_hudHazT); }catch(e){} }
+$("hudBtn").onclick=hudShow;
+/* Exit used to be "tap anywhere". Repositioning the phone on the dash — the single most likely
+   thing a driver does while it's up — dropped them straight out mid-drive. Now it takes a
+   deliberate act: the Exit button, or a decisive downward swipe. */
+$("hudExit")&&($("hudExit").onclick=(e)=>{e.stopPropagation();hudHide();});
+(function(){
+  var y0=null,t0=0;
+  var h=$("hud"); if(!h) return;
+  h.addEventListener("touchstart",function(e){ if(e.target.closest(".hud-ctrl")) return; y0=e.touches[0].clientY; t0=Date.now(); },{passive:true});
+  h.addEventListener("touchend",function(e){
+    if(y0===null) return;
+    var y1=(e.changedTouches&&e.changedTouches[0].clientY)||y0;
+    var dy=y1-y0, dt=Date.now()-t0;
+    y0=null;
+    if(dy>110 && dt<800) hudHide();          // long, quick, downward — not a nudge
+  },{passive:true});
+})();
 $("hudBigger")&&($("hudBigger").onclick=(e)=>{e.stopPropagation();hudScale=Math.min(2.8,hudScale+0.3);applyHudScale();});
 $("hudSmaller")&&($("hudSmaller").onclick=(e)=>{e.stopPropagation();hudScale=Math.max(0.9,hudScale-0.3);applyHudScale();});
+$("hudFlip")&&($("hudFlip").onclick=(e)=>{e.stopPropagation();hudFlip=!hudFlip;applyHudFlip();});
 
 /* ═══════════ voice ═══════════ */
 let _rec=null,_recBusy=false;
