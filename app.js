@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v238";
+const APP_VERSION="v239";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2062,6 +2062,75 @@ function areaBoxes(centre,radiusM){
   }
   return boxes;
 }
+/* Named places inside the cached area, so offline search has something to resolve against.
+   Stored as flat [name,lat,lng,kind] rows — an object per place would roughly triple the size
+   for a few thousand entries and buy nothing. */
+var AREA_PLACE_CAP=4000;
+async function captureAreaPlaces(centre){
+  var of=window.overpassFetch;
+  if(typeof of!=="function") return [];
+  var out=[], seen={};
+  var dLat=AREA_RADIUS_M/111320;
+  var dLng=AREA_RADIUS_M/(111320*Math.max(0.2,Math.cos(centre.lat*Math.PI/180)));
+  var bbox=[centre.lat-dLat,centre.lng-dLng,centre.lat+dLat,centre.lng+dLng];
+  /* nwr = nodes, ways and relations in one pass: a supermarket is often a building way and a
+     mall a relation, so a node-only query would miss exactly the large destinations people
+     actually drive to. `out center` gives ways and relations a single representative point. */
+  var qs=[
+    '[out:json][timeout:40];nwr('+bbox.join(",")+')["name"]["amenity"];out center tags;',
+    '[out:json][timeout:40];nwr('+bbox.join(",")+')["name"]["shop"];out center tags;',
+    '[out:json][timeout:40];nwr('+bbox.join(",")+')["name"]["tourism"];out center tags;',
+    '[out:json][timeout:40];nwr('+bbox.join(",")+')["name"]["leisure"];out center tags;'
+  ];
+  for(var i=0;i<qs.length;i++){
+    try{
+      var d=await of(qs[i]);
+      (d&&d.elements||[]).forEach(function(e){
+        var t=e.tags||{}; var nm=t.name; if(!nm) return;
+        var lat=e.lat!==undefined?e.lat:(e.center&&e.center.lat);
+        var lng=e.lon!==undefined?e.lon:(e.center&&e.center.lon);
+        if(!isFinite(lat)||!isFinite(lng)) return;
+        var k=nm.toLowerCase()+"@"+lat.toFixed(4)+","+lng.toFixed(4);
+        if(seen[k]) return; seen[k]=1;
+        out.push([nm,+lat.toFixed(6),+lng.toFixed(6),t.amenity||t.shop||t.tourism||t.leisure||""]);
+      });
+    }catch(e){}
+    await new Promise(function(r){ setTimeout(r,400); });
+  }
+  if(out.length>AREA_PLACE_CAP){
+    // keep the closest to the centre: those are the ones a local search will actually want
+    out.sort(function(a,b){ return distM(centre,{lat:a[1],lng:a[2]})-distM(centre,{lat:b[1],lng:b[2]}); });
+    out=out.slice(0,AREA_PLACE_CAP);
+  }
+  return out;
+}
+/* Offline place lookup across every cached area. Same scoring shape as searchPoiIndex — exact,
+   then prefix, then contains — with distance as the tiebreak. */
+var _areaPlaceCache=null, _areaPlaceAt=0;
+async function areaPlaces(){
+  if(_areaPlaceCache && Date.now()-_areaPlaceAt<60000) return _areaPlaceCache;
+  try{
+    var all=await cwdbAll();
+    var rows=[];
+    all.forEach(function(x){ if(x.kind==="area" && Array.isArray(x.places)) rows=rows.concat(x.places); });
+    _areaPlaceCache=rows; _areaPlaceAt=Date.now();
+    return rows;
+  }catch(e){ return []; }
+}
+async function searchAreaPlaces(typed,limit){
+  var q=_normPlace(typed); if(!q||q.length<2) return [];
+  var rows=await areaPlaces(); if(!rows.length) return [];
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i]; if(!r) continue;
+    var nn=_normPlace(String(r[0]||"")); if(!nn) continue;
+    var sc;
+    if(nn===q) sc=0; else if(nn.indexOf(q)===0) sc=1; else if(nn.indexOf(q)!==-1) sc=2; else continue;
+    out.push({name:r[0],lat:r[1],lng:r[2],cat:r[3]||"",_s:sc,_d:S.pos?distM(S.pos,{lat:r[1],lng:r[2]}):0});
+  }
+  out.sort(function(a,b){ return (a._s-b._s)||(a._d-b._d); });
+  return out.slice(0,limit||8);
+}
 var _areaBusy=false;
 async function captureAreaGraph(force){
   if(_areaBusy) return null;
@@ -2102,9 +2171,16 @@ async function captureAreaGraph(force){
     var n=Object.keys(g.nodes).length;
     if(n<200) return null;
     if(n>AREA_MAX_NODES) return null;                          // would be slow to search and huge to store
+    /* A road graph alone cannot answer "take me to Checker Bar" — routing needs a DESTINATION
+       COORDINATE, and search geocodes online. So harvest the named places in the same area
+       while we're here. This replaces the /poi-detroit.json approach, which required generating
+       and shipping a static file per city (and never was — it 404s and fails silently). This
+       version is self-maintaining and works wherever the driver actually is. */
+    var places=await captureAreaPlaces(cell.centre);
     var rec={key:key,v:2,kind:"area",t:Date.now(),hits:cell.hits,
              centre:cell.centre,radius:AREA_RADIUS_M,destName:"home area",
-             nodes:g.nodes,adj:g.adj,ways:g.ways,names:g.names||[],n:n};
+             nodes:g.nodes,adj:g.adj,ways:g.ways,names:g.names||[],n:n,
+             places:places||[]};
     await cwdbPut(rec);
     await corridorEvict();
     try{ console.log("ConeWatch area cached:",key,n,"nodes /",g.ways,"ways,",failed,"tiles failed"); }catch(e){}
@@ -2116,8 +2192,19 @@ async function captureAreaGraph(force){
    calls nearly free, so this is a cheap way to catch the moment the phone lands on wifi. */
 try{
   setInterval(noteDwell, 60000);
-  setTimeout(function(){ try{ captureAreaGraph(); }catch(e){} }, 45000);
-  setInterval(function(){ try{ captureAreaGraph(); }catch(e){} }, 3*3600*1000);
+  /* Dwell needs ~12 minutes to qualify, so a flat 3-hour retry meant the FIRST area could sit
+     uncaptured for hours after the user became eligible — which read as "it isn't working".
+     Poll briskly until one area exists, then back off hard: the TTL check inside makes the
+     steady-state calls nearly free, but there's no reason to keep asking once we have it. */
+  var _areaTick=null;
+  async function _areaPoll(){
+    try{
+      var got=await captureAreaGraph();
+      if(got && _areaTick){ clearInterval(_areaTick); _areaTick=null;
+        setInterval(function(){ try{ captureAreaGraph(); }catch(e){} }, 3*3600*1000); }
+    }catch(e){}
+  }
+  setTimeout(function(){ _areaPoll(); _areaTick=setInterval(_areaPoll, 150000); }, 40000);
 }catch(e){}
 window.cwCacheAreaNow=function(){ return captureAreaGraph(true); };
 
@@ -5734,7 +5821,8 @@ try{
           all.sort(function(a,b){ return b.t-a.t; });
           var x=all.filter(function(z){ return z.kind!=="area"; })[0]||all[0];
           var _ar=all.filter(function(z){ return z.kind==="area"; })[0];
-          _corrTxt=(_ar? ("area    "+_ar.n+" nodes  "+Math.round((Date.now()-_ar.t)/3600000)+"h old\n")
+          _corrTxt=(_ar? ("area    "+_ar.n+" nodes / "+((_ar.places&&_ar.places.length)||0)+" places\n"+
+                          "        "+Math.round((Date.now()-_ar.t)/3600000)+"h old\n")
                        : "area    not cached yet\n")+
                    "corridor  "+all.filter(function(z){return z.kind!=="area";}).length+" cached\n"+
                    "newest  "+(x.n||0)+" nodes / "+(x.ways||0)+" ways\n"+
@@ -6415,14 +6503,26 @@ async function forceGeocode(q){
     if(cached){ confirmDestination(cached,q); toast("📍 Saved location (offline)",3000); return; }
     var local=lookupAnyLocal(q);
     if(local){ confirmDestination(local,q); toast("📍 "+local.label+" — from places saved on this phone",3400); return; }
-    /* Nothing the driver has personally touched matches. Fall through to the bundled index — the
-       only source on the device that knows about a place they have never searched for. */
-    loadPoiIndex().then(function(idx){
-      var hit = idx ? searchPoiIndex(q,1)[0] : null;
-      if(hit){ confirmDestination({lat:hit.lat,lng:hit.lng},hit.name);
-               toast("\uD83D\uDCCD "+hit.name+" — offline map data",3400); return; }
-      toast("Offline — this phone has no location saved for \""+q+"\". Nothing to route to until you have signal.",5000);
-    });
+    /* Nothing the driver has personally touched matches. Two device-side sources know about
+       places they have never searched for. Try the AREA HARVEST first: it is captured from
+       wherever this driver actually lives, whereas the bundled index below is a static
+       per-city file that has to be generated and shipped — it covers only Detroit and today
+       it 404s, which is why offline search used to dead-end here. */
+    (async function(){
+      try{
+        var loc=await searchAreaPlaces(q,1);
+        var p=loc&&loc[0];
+        if(p){ confirmDestination({lat:p.lat,lng:p.lng},p.name);
+               toast("\uD83D\uDCCD "+p.name+" — saved map data for your area",3400); return; }
+      }catch(e){}
+      try{
+        var idx=await loadPoiIndex();
+        var hit = idx ? searchPoiIndex(q,1)[0] : null;
+        if(hit){ confirmDestination({lat:hit.lat,lng:hit.lng},hit.name);
+                 toast("\uD83D\uDCCD "+hit.name+" — offline map data",3400); return; }
+      }catch(e){}
+      toast("Offline — no saved location for \""+q+"\" yet. Places near you save automatically on wifi.",5000);
+    })();
     return;
   }
   toast("Locating address…",1600);
