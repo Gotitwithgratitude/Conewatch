@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v256";
+const APP_VERSION="v257";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4036,13 +4036,23 @@ function _syncToolRows(){
   }catch(e){}
 }
 function openToolsPage(){ _toolsReturn=false; openSheet("toolsSheet"); _syncToolRows(); }
+/* One place that opens a sheet from inside the tools page, on the next frame. The rAF matters:
+   the tap that triggered this is still being processed, and anything that runs a closeSheets()
+   as that gesture unwinds would otherwise close the sheet we just opened. */
+function _openFromTools(sheetId, fn){
+  requestAnimationFrame(function(){
+    setTimeout(function(){
+      try{ fn ? fn() : openSheet(sheetId); }catch(e){}
+    }, 0);
+  });
+}
 try{
   var _tl=$("toolsList");
   if(_tl) _tl.addEventListener("click",function(ev){
     var row=ev.target.closest && ev.target.closest(".tool-row"); if(!row) return;
     /* Some tools have no tray button behind them — the compass only ever existed as a sheet
        reachable from the dock drawer, which is why it looked missing. Those carry data-act. */
-    if(row.dataset.act==="compass"){ _toolsReturn=true; try{ openCompass(); }catch(e){} return; }
+    if(row.dataset.act==="compass"){ _toolsReturn=true; _openFromTools("compassSheet",openCompass); return; }
     var btn=document.getElementById(row.dataset.fab); if(!btn) return;
     var id=row.dataset.fab;
     /* Three kinds of tool, and my last build got the middle one wrong.
@@ -4052,14 +4062,22 @@ try{
        SHEET OPENERS navigate somewhere and come back here when that place closes.
        IN-PLACE tools (torch, voice) change nothing behind the sheet, so it stays put. */
     var MAP_TOGGLE = ["fabSat","fab3d"];
-    var OPENS_SHEET = ["fabDiscover","fabSettings","fabRoadside","fabFeedback"];
-    _toolsReturn = OPENS_SHEET.indexOf(id)>-1;
+    var SHEET_FOR  = {fabDiscover:"discoverSheet", fabSettings:"settingsSheet",
+                      fabRoadside:"roadsideSheet", fabFeedback:"feedbackSheet"};
+    if(SHEET_FOR[id]){
+      /* Proxying through btn.click() was the bug. The synthetic click originates on a hidden
+         button OUTSIDE the sheet, so it bubbles to document as a tap on nothing, and it lands
+         in the same tick as openSheet's own closeSheets() — the new sheet got added and
+         removed within a frame, which is the flip-up-and-stutter you saw. Open the sheet
+         directly, and on the next frame so the current gesture is fully finished first. */
+      _toolsReturn=true;
+      _openFromTools(SHEET_FOR[id]);
+      return;
+    }
     btn.click();
-    if(MAP_TOGGLE.indexOf(id)>-1){
-      closeSheets();                                   // get out of the way of the result
-    }else if(!_toolsReturn){
+    if(MAP_TOGGLE.indexOf(id)>-1) closeSheets();        // get out of the way of the result
+    else{
       try{ row.animate([{opacity:1},{opacity:.45},{opacity:1}],{duration:260}); }catch(e){}
-      setTimeout(function(){ try{ if(!$("toolsSheet").classList.contains("open")) openSheet("toolsSheet"); }catch(e){} },30);
     }
     setTimeout(_syncToolRows,60);
   });
@@ -5540,6 +5558,7 @@ function bindInspect(){
 
 /* satellite — main-map layer + 360° orbit preview */
 const ESRI=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"];
+var SAT_MINZ=10;   // below this Esri serves error tiles, and imagery is useless anyway
 S.sat=false;
 // HD satellite: if the user supplies a free MapTiler key, use its sharper/newer imagery; else keyless Esri
 function satTiles(){ const k=(S.satKey||"").trim(); return k?["https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key="+k]:ESRI; }
@@ -5553,12 +5572,19 @@ function ensureSat(){
       map.removeSource("esri");
     }
     _satProv=prov; const m=satMeta();
-    if(!map.getSource("esri"))map.addSource("esri",{type:"raster",tiles:satTiles(),tileSize:m.size,maxzoom:19,attribution:m.attr});
-    if(!map.getLayer("esri-sat"))map.addLayer({id:"esri-sat",type:"raster",source:"esri"},map.getLayer("route-casing")?"route-casing":undefined);
+    /* SAT_MINZ: the fix for "Zoom Level Not Supported". Esri's World_Imagery cache is not
+       populated at regional LODs across much of this area, and ArcGIS answers a missing LOD
+       with an error IMAGE at HTTP 200 — indistinguishable from a real tile, so MapLibre
+       happily paints the words across the map. Nothing downstream can filter it; the only
+       cure is to never request those zooms. Aerial imagery below z10 shows no road detail
+       anyway, so this costs nothing a driver would want. */
+    if(!map.getSource("esri"))map.addSource("esri",{type:"raster",tiles:satTiles(),minzoom:SAT_MINZ,maxzoom:19,tileSize:m.size,attribution:m.attr});
+    if(!map.getLayer("esri-sat"))map.addLayer({id:"esri-sat",type:"raster",source:"esri",minzoom:SAT_MINZ},map.getLayer("route-casing")?"route-casing":undefined);
     map.setLayoutProperty("esri-sat","visibility",S.sat?"visible":"none");
   }catch{}
 }
-$("fabSat").onclick=()=>{S.sat=!S.sat;$("fabSat").classList.toggle("active",S.sat);ensureSat();toast(S.sat?"🛰 Satellite imagery on":"Satellite off");};
+$("fabSat").onclick=()=>{S.sat=!S.sat;$("fabSat").classList.toggle("active",S.sat);ensureSat();
+  toast(S.sat?(map&&map.getZoom&&map.getZoom()<SAT_MINZ?"🛰 Satellite on — zoom in to see it":"🛰 Satellite imagery on"):"Satellite off");};
 $("testCue")&&($("testCue").onclick=()=>{ turnCue(2); toast("📳 Turn cue — if you felt a buzz, your iOS supports haptics"); });
 $("satKeySave").onclick=()=>{
   S.satKey=($("satKey").value||"").trim(); saveSettings();
@@ -7799,6 +7825,18 @@ function _placeScore(r,toks,typedPlace){
   });
   let sc = strong*26 + nm*8;
   if((r.name||"").toLowerCase().startsWith(toks[0]||"")) sc+=14;
+  /* A city named inside the query — "Godfrey chicago" — is not comma-separated, so parseAddr
+     never sees it and typedPlace stays false. The distance penalty below then removes 77 points
+     from the only correct answer. If a word the driver typed appears in THIS row's own place
+     label, they named where they meant: treat it as a located search. */
+  var _named = typedPlace;
+  if(!_named && r.label){
+    var _lb=String(r.label).toLowerCase();
+    for(var _i=0;_i<toks.length;_i++){
+      if(toks[_i].length>3 && !GENERIC_WORDS.test(toks[_i]) && _lb.indexOf(toks[_i])>-1){ _named=true; break; }
+    }
+  }
+  typedPlace=_named;
   const mi = (r._d!==undefined && isFinite(r._d)) ? r._d/1609.34 : null;
   if(mi!==null && !typedPlace){
     // near things win. far things need to be a much better match to compete.
@@ -7814,6 +7852,9 @@ function _placeScore(r,toks,typedPlace){
 /* ═══════════ full-screen search panel (Apple-style) ═══════════
    One entry point: tap the search bar (or the From row) and a real page opens with live
    suggestions, recents, saved places and an approximate-match option. */
+/* Bump whenever suggestion ranking or sources change, so cached lists from the old logic are
+   not served instead. */
+var SEARCH_RANK_VER="v257";
 let _spMode="dest", _spTimer=null, _spAbort=null;
 function openSearchPanel(mode,seed){
   _spMode=mode||"dest";
@@ -7921,7 +7962,11 @@ async function spSearch(q){
   _spAbort=new AbortController();
   var sig=_spAbort.signal;
   if(!navigator.onLine){ spRender(offlineMatches(q)); return; }
-  if(acCache.has(q)){ spRender(acCache.get(q)); return; }
+  /* acCache is why three consecutive builds returned an IDENTICAL list: the first answer for a
+     query is kept for the session, so none of the ranking work was ever exercised on a repeat
+     search. Version the cache so a build that changes ranking cannot be masked by it. */
+  var _ck=SEARCH_RANK_VER+"|"+q;
+  if(acCache.has(_ck)){ spRender(acCache.get(_ck)); return; }
   try{ closeTurnList(); }catch(e){}
   spRender([], "Searching…");
 
@@ -7950,7 +7995,34 @@ async function spSearch(q){
     fetch(_photonURL(q),{signal:sig}).then(function(r){return r.json();}).then(function(d){ paint(_photonMap(d)); }),
     overtureSuggest(q,sig).then(paint),
     fsqSuggest(q,sig).then(paint)
-  ].map(function(p){ return p.catch(function(e){ if(e&&e.name==="AbortError") throw e; }); });
+  ];
+  /* CITY SPLIT. All three primaries above are proximity-biased — photon by lat/lon, the two POI
+     indexes by radius — so for "Godfrey chicago" the correct row was never in the pool at all
+     and no amount of rescoring could surface it. Splitting the query so the trailing word is a
+     STRUCTURED city ("Godfrey" in city "chicago") asks a question those sources cannot answer,
+     and it runs alongside them rather than as an empty-pool fallback, because the pool is never
+     empty — it is full of the wrong city. Last one and last two words, since "ann arbor" and
+     "new york" are two tokens. */
+  var _tk=q.trim().split(/\s+/);
+  if(_tk.length>=2){
+    [1,2].forEach(function(n){
+      if(_tk.length<=n) return;
+      var nm2=_tk.slice(0,_tk.length-n).join(" "), city=_tk.slice(-n).join(" ");
+      if(nm2.length<2 || city.length<3 || GENERIC_WORDS.test(city)) return;
+      var u="https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6"+
+            "&q="+encodeURIComponent(nm2)+"&city="+encodeURIComponent(city);
+      jobs.push(fetch(u,{signal:sig,headers:{Accept:"application/json"}})
+        .then(function(r){return r.json();})
+        .then(function(list){
+          paint((list||[]).map(function(r){
+            return {name:String(r.display_name).split(",")[0],
+                    label:String(r.display_name).split(",").slice(1,4).join(",").trim(),
+                    lat:+r.lat, lng:+r.lon};
+          }));
+        }));
+    });
+  }
+  jobs=jobs.map(function(p){ return p.catch(function(e){ if(e&&e.name==="AbortError") throw e; }); });
 
   try{ await Promise.all(jobs); }catch(e){ if(e&&e.name==="AbortError") return; }
   if(sig.aborted) return;
@@ -7977,7 +8049,7 @@ async function spSearch(q){
   }
   if(sig.aborted) return;
   var final=rank(pool);
-  if(S.pos && final.length) acCache.set(q,final);   // don't cache pre-GPS-lock results
+  if(S.pos && final.length) acCache.set(_ck,final);   // don't cache pre-GPS-lock results
   if(!final.length) spRender([], "No matches — try adding a city or ZIP.");
   else if(!painted) spRender(final,null);
 }
