@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v247";
+const APP_VERSION="v249";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -6328,7 +6328,9 @@ function cullMarkers(){
     if(!b) return;
     var pad=0.02;
     var w=b.getWest()-pad, e=b.getEast()+pad, so=b.getSouth()-pad, n=b.getNorth()+pad;
-    if(S._mkHidden) return;                     // a gesture is in flight; leave them parked
+    /* Culling used to be skipped mid-gesture because everything was hidden anyway. Markers stay
+       visible now, so the viewport cull has to keep running — it is what keeps the paint cost
+       proportional to what is actually on screen. */
     (S.hazards||[]).forEach(function(h){
       if(!h||!h._marker) return;
       var vis=(h.lng>=w&&h.lng<=e&&h.lat>=so&&h.lat<=n);
@@ -6345,16 +6347,33 @@ try{
          repositions every marker on every frame — 58 DOM elements fighting the map for the main
          thread, which is exactly the sluggish drag the driver feels. Park them for the duration
          of the gesture and bring them back when the hand comes off. */
+      /* v248: stop hiding them. The cost we were paying for was PAINT — 27px circles with a
+         blur-8 box-shadow, recomposited every frame of a drag. Promoting the markers to their
+         own GPU layer for the duration of the gesture buys back the same frames without the
+         markers vanishing, which is a worse experience than a slightly heavier drag: a driver
+         panning to look at a hazard watched it disappear the moment they touched the screen. */
       map.on("movestart",function(){
         try{
           if(S._mkHidden) return; S._mkHidden=true;
           (S.hazards||[]).forEach(function(h){
             var el=h&&h._marker&&h._marker.getElement&&h._marker.getElement();
-            if(el) el.style.visibility="hidden";
+            if(el){ el.style.willChange="transform"; el.style.contain="layout paint"; }
           });
         }catch(e){}
       });
-      function _unpark(){ S._mkHidden=false; clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,60); }
+      function _unpark(){
+        S._mkHidden=false;
+        /* Drop the layer promotion when the gesture ends — leaving will-change on permanently
+           keeps every marker in its own compositor layer, which costs memory for no benefit
+           while the map is still. */
+        try{
+          (S.hazards||[]).forEach(function(h){
+            var el=h&&h._marker&&h._marker.getElement&&h._marker.getElement();
+            if(el){ el.style.willChange=""; el.style.contain=""; el.style.visibility=""; }
+          });
+        }catch(e){}
+        clearTimeout(_cullT); _cullT=setTimeout(cullMarkers,60);
+      }
       map.on("moveend",_unpark);
       map.on("zoomend",_unpark);
       map.on("rotateend",_unpark);
@@ -7012,7 +7031,12 @@ var POI_CAT_ICON = {
   fuel:"\u26FD", restaurant:"\uD83C\uDF7D\uFE0F", cafe:"\u2615", bar:"\uD83C\uDF7A",
   pharmacy:"\uD83D\uDC8A", hospital:"\uD83C\uDFE5", bank:"\uD83C\uDFE6",
   shop:"\uD83D\uDECD\uFE0F", grocery:"\uD83D\uDED2", hotel:"\uD83C\uDFE8",
-  park:"\uD83C\uDF33", school:"\uD83C\uDFEB", police:"\uD83D\uDE94", parking:"\uD83C\uDD7F\uFE0F"
+  park:"\uD83C\uDF33", school:"\uD83C\uDFEB", police:"\uD83D\uDE94", parking:"\uD83C\uDD7F\uFE0F",
+  /* Categories the shipped Detroit index actually contains. Without these the biggest groups in
+     the file — parks, repair shops, rec centres, museums — came back with a blank pin. */
+  fire:"\uD83D\uDE92", library:"\uD83D\uDCDA", post:"\u2709\uFE0F", venue:"\uD83C\uDFAD",
+  civic:"\uD83C\uDFDB\uFE0F", museum:"\uD83C\uDFDB\uFE0F", attraction:"\uD83D\uDCCD",
+  sport:"\u26BD", carrepair:"\uD83D\uDD27"
 };
 
 /* Scan the index for a query. Ranked the same way lookupAnyLocal ranks: exact, then prefix, then

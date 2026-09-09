@@ -724,7 +724,9 @@
   body.driving #speed .v{font-size:28px}
   body.driving .fab{width:47px;height:47px;font-size:18px}
 
-  .hz{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;border:2px solid #141619;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.5);cursor:pointer}
+  /* The blurred box-shadow is what made 58 of these expensive to recomposite on every frame of
+     a drag. A hard-edged ring reads the same at 27px against the map but costs no blur pass. */
+  .hz{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;border:2px solid #141619;font-size:13px;box-shadow:0 0 0 1px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);cursor:pointer;backface-visibility:hidden}
   #meArrow{width:36px;height:36px;border-radius:50%;background:#fff;box-shadow:0 3px 12px rgba(0,0,0,.4),0 0 0 6px rgba(255,255,255,.22);position:relative;transform-origin:50% 50%}
   #meArrow::after{content:"";position:absolute;left:50%;top:7px;transform:translateX(-50%);border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:17px solid #1B3B6F}
   .stopdot{width:20px;height:20px;border-radius:50%;background:var(--purple);border:2px solid #141619;color:#141619;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
