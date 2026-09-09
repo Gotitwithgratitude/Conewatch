@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v257";
+const APP_VERSION="v258";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -758,6 +758,9 @@ function ensureRouteLayers(){
     try{ if(map.getLayer("route-glow")) map.removeLayer("route-glow"); }catch(e){}
     if(!map.getSource("route")||!map.getLayer("route-line")) addMapLayers();
     try{ _addSignalImage(); }catch(e){}          // style swaps drop registered images
+    /* A style swap rebuilds the sat layer from scratch — re-assert the zoom floor or the error
+       tiles come straight back the next time the driver zooms out. */
+    try{ if(S.sat) ensureSat(); else if(map.getLayer("esri-sat")) map.setLayerZoomRange("esri-sat",SAT_MINZ,24); }catch(e){}
     if(!map.getSource("signals")||!map.getLayer("signal-dots")) ensureSignalLayer();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
     refreshRouteCondition();
@@ -3265,8 +3268,15 @@ function renderRouteSheet(r){
       });
       if(!hits.length) return {n:0,txt:"Clear — nothing reported"};
       const by={}; hits.forEach(function(h){ by[h.type]=(by[h.type]||0)+1; });
-      const parts=Object.keys(by).sort(function(a,b){return by[b]-by[a];}).slice(0,3)
-        .map(function(k){ const m=HZ_META[k]||{emoji:"⚠️",label:k}; return m.emoji+" "+by[k]; });
+      /* The breakdown showed only the top THREE types but the total counted all of them, so
+         "7 + 4 + 2 · 14 total" did not add up — a fourth category was being dropped in silence.
+         Show every type present; if there are more than four, roll the tail into "+N" so the
+         row still adds to the stated total. */
+      const keys=Object.keys(by).sort(function(a,b){return by[b]-by[a];});
+      const shown=keys.slice(0,4);
+      const parts=shown.map(function(k){ const m=HZ_META[k]||{emoji:"⚠️",label:k}; return m.emoji+" "+by[k]; });
+      const restN=keys.slice(4).reduce(function(a,k){ return a+by[k]; },0);
+      if(restN) parts.push("+"+restN);
       return {n:hits.length,txt:parts.join("  ")+"  ·  "+hits.length+" total"};
     }catch(e){ return null; }
   })();
@@ -4040,11 +4050,20 @@ function openToolsPage(){ _toolsReturn=false; openSheet("toolsSheet"); _syncTool
    the tap that triggered this is still being processed, and anything that runs a closeSheets()
    as that gesture unwinds would otherwise close the sheet we just opened. */
 function _openFromTools(sheetId, fn){
-  requestAnimationFrame(function(){
-    setTimeout(function(){
-      try{ fn ? fn() : openSheet(sheetId); }catch(e){}
-    }, 0);
-  });
+  _toolsDebug("tap->"+sheetId);
+  /* Close the tools page FIRST and on its own, so the outgoing sheet's transition and any
+     cleanup that rides on it are finished before the new sheet is added. Opening and closing
+     in the same tick was producing the flip-up-then-revert. 180ms is the sheet transition. */
+  try{ closeSheets(); }catch(e){}
+  setTimeout(function(){
+    try{
+      if(fn) fn(); else openSheet(sheetId);
+      var ok=!!(document.getElementById(sheetId)||{}).classList &&
+              document.getElementById(sheetId).classList.contains("open");
+      _toolsDebug((ok?"opened ":"FAILED ")+sheetId);
+      _returnToToolsWhenClosed(sheetId);
+    }catch(e){ _toolsDebug("threw "+sheetId+": "+(e&&e.message)); }
+  }, 180);
 }
 try{
   var _tl=$("toolsList");
@@ -4082,19 +4101,32 @@ try{
     setTimeout(_syncToolRows,60);
   });
 }catch(e){}
-/* When a sheet opened FROM the tools page closes, come back to the page. */
-try{
-  ["discoverSheet","settingsSheet","roadsideSheet","feedbackSheet","compassSheet"].forEach(function(id){
-    var el=document.getElementById(id); if(!el) return;
-    var mo=new MutationObserver(function(){
-      if(!el.classList.contains("open") && _toolsReturn){
-        _toolsReturn=false;
-        setTimeout(function(){ try{ openSheet("toolsSheet"); }catch(e){} },120);
-      }
-    });
-    mo.observe(el,{attributes:true,attributeFilter:["class"]});
-  });
-}catch(e){}
+/* The MutationObserver that used to live here is gone. It fired on EVERY class change of five
+   sheets, including the ones closeSheets() makes while opening a different sheet — so it could
+   reopen the tools page 120ms after a sheet opened, closing that sheet again. That is a global
+   watching a global, and it is the kind of thing that produces a bug you cannot reproduce by
+   reading. Returning to tools is now driven by one explicit poll of a single flag, started only
+   when we ourselves opened a sheet from the page, and stopped the moment it fires. */
+function _returnToToolsWhenClosed(sheetId){
+  var el=document.getElementById(sheetId); if(!el) return;
+  var started=Date.now(), sawOpen=false;
+  var iv=setInterval(function(){
+    var open=el.classList.contains("open");
+    if(open){ sawOpen=true; return; }
+    if(!sawOpen){                                  // never opened — give up rather than guess
+      if(Date.now()-started>2500){ clearInterval(iv); _toolsDebug("never-opened:"+sheetId); }
+      return;
+    }
+    clearInterval(iv);
+    if(_toolsReturn){ _toolsReturn=false; try{ openSheet("toolsSheet"); _syncToolRows(); }catch(e){} }
+  }, 160);
+}
+/* A breadcrumb for the LIVE-badge debug panel. After three wrong guesses about this flow, the
+   app should be able to say what it did rather than leave us inferring it from screenshots. */
+var _toolsLog=[];
+function _toolsDebug(msg){
+  try{ _toolsLog.push(new Date().toTimeString().slice(0,8)+" "+msg); if(_toolsLog.length>8) _toolsLog.shift(); }catch(e){}
+}
 try{
   window.addEventListener("resize",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") layoutRadial(false); });
   window.addEventListener("orientationchange",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") setTimeout(function(){layoutRadial(false);},250); });
@@ -5578,8 +5610,21 @@ function ensureSat(){
        happily paints the words across the map. Nothing downstream can filter it; the only
        cure is to never request those zooms. Aerial imagery below z10 shows no road detail
        anyway, so this costs nothing a driver would want. */
+    /* v258 — why v257's minzoom did nothing. Both lines below are guarded by "if it does not
+       already exist", and on your device the sat source and layer DID already exist: you had
+       turned satellite on before updating. addSource/addLayer were skipped, so the minzoom was
+       never applied to the objects actually doing the requesting. A source's zoom range also
+       cannot be edited in place — it has to be torn down and rebuilt. */
+    var _src=map.getSource("esri");
+    if(_src && !(_src.minzoom>=SAT_MINZ)){          // legacy source with no floor — rebuild it
+      try{ if(map.getLayer("esri-sat")) map.removeLayer("esri-sat"); }catch(e){}
+      try{ map.removeSource("esri"); }catch(e){}
+    }
     if(!map.getSource("esri"))map.addSource("esri",{type:"raster",tiles:satTiles(),minzoom:SAT_MINZ,maxzoom:19,tileSize:m.size,attribution:m.attr});
     if(!map.getLayer("esri-sat"))map.addLayer({id:"esri-sat",type:"raster",source:"esri",minzoom:SAT_MINZ},map.getLayer("route-casing")?"route-casing":undefined);
+    /* Enforce the floor on every call, not just on creation. setLayerZoomRange works on a layer
+       that already exists, which addLayer's guard does not. */
+    try{ map.setLayerZoomRange("esri-sat", SAT_MINZ, 24); }catch(e){}
     map.setLayoutProperty("esri-sat","visibility",S.sat?"visible":"none");
   }catch{}
 }
@@ -6253,6 +6298,10 @@ try{
                    "to      "+((x.destName||"?").slice(0,18))+"\n"+
                    "age     "+Math.round((Date.now()-x.t)/60000)+" min"+
                    (_offTxt?("\noffline "+_offTxt):"")+
+                   /* Tools trail: long-press LIVE after tapping a tool row and this says whether
+                      the sheet actually opened, so the next report is evidence not inference. */
+                   ((typeof _toolsLog!=="undefined" && _toolsLog.length)
+                      ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
                    "\ndecl    "+(_declNative?"OS true north":
                       (_decl===null?"learning…":(_decl.toFixed(1)+"\u00B0 / "+_declN+" samples")));
           // probe the A* path against the live position so the panel proves the search works
@@ -6892,6 +6941,8 @@ async function overturePOIs(q){
 async function geocodeCandidates(q){
   var p=parseAddr(q), out=[];
   var qs=new URLSearchParams({format:"jsonv2",addressdetails:"1",limit:"10"});
+  /* With no house number or street, "street" is an empty param and the structured search asks
+     for nothing at all in that city. Fall back to the place name as free text. */
   qs.set("street",[p.housenumber,p.street].filter(Boolean).join(" "));
   /* The structured pass used to fall back to the DRIVER'S OWN city when the query named none —
      so "Godfrey Hotel Chicago" was literally sent to Nominatim as "Godfrey Hotel, in Detroit".
@@ -6928,13 +6979,22 @@ async function geocodeCandidates(q){
      the query so the trailing word becomes a STRUCTURED city ("Godfrey" in city "chicago")
      asks a different question entirely, and Nominatim answers it directly. Tried for the last
      one and last two words, since city names like "ann arbor" and "new york" are two tokens. */
+  /* v258: the !p.city guard was killing this on the exact query it was written for. parseAddr
+     DOES extract a bare trailing city from a comma-less string, so "The Godfrey Hotel Chicago"
+     arrives with p.city already set — the split pass was skipped, and the structured pass above
+     had no street to go with the city, so it searched for nothing in Chicago. Run the split
+     regardless; duplicates are deduped and rescored anyway. */
   var _tk=q.trim().split(/\s+/);
-  if(_tk.length>=2 && !p.city){
+  if(_tk.length>=2){
     [1,2].forEach(function(n){
       if(_tk.length<=n) return;
       var name=_tk.slice(0,_tk.length-n).join(" "), city=_tk.slice(-n).join(" ");
       if(name.length<2 || city.length<3) return;
-      var sq=new URLSearchParams({format:"jsonv2",addressdetails:"1",limit:"6",q:name,city:city});
+      /* MUST be structured-only. Nominatim rejects any request that mixes free-form q with
+         structured fields, so the q+city version of this pass returned nothing every single
+         time it ran — which is why adding it in v256 changed absolutely nothing on screen.
+         "amenity" is the structured field for a named place, and it pairs legally with city. */
+      var sq=new URLSearchParams({format:"jsonv2",addressdetails:"1",limit:"6",amenity:name,city:city});
       jobs.push(fetchT("https://nominatim.openstreetmap.org/search?"+sq,8000)
         .then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}));
     });
@@ -7854,7 +7914,7 @@ function _placeScore(r,toks,typedPlace){
    suggestions, recents, saved places and an approximate-match option. */
 /* Bump whenever suggestion ranking or sources change, so cached lists from the old logic are
    not served instead. */
-var SEARCH_RANK_VER="v257";
+var SEARCH_RANK_VER="v258";
 let _spMode="dest", _spTimer=null, _spAbort=null;
 function openSearchPanel(mode,seed){
   _spMode=mode||"dest";
@@ -8009,8 +8069,9 @@ async function spSearch(q){
       if(_tk.length<=n) return;
       var nm2=_tk.slice(0,_tk.length-n).join(" "), city=_tk.slice(-n).join(" ");
       if(nm2.length<2 || city.length<3 || GENERIC_WORDS.test(city)) return;
+      /* Structured-only for the same reason as above: q and city cannot coexist. */
       var u="https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6"+
-            "&q="+encodeURIComponent(nm2)+"&city="+encodeURIComponent(city);
+            "&amenity="+encodeURIComponent(nm2)+"&city="+encodeURIComponent(city);
       jobs.push(fetch(u,{signal:sig,headers:{Accept:"application/json"}})
         .then(function(r){return r.json();})
         .then(function(list){
