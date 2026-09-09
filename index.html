@@ -574,6 +574,9 @@
   .tool-row .tt{display:flex;flex-direction:column;min-width:0}
   .tool-row .tt b{font-size:15px;font-weight:700}
   .tool-row .tt small{font-size:12px;color:var(--mute);margin-top:2px}
+  .tool-row.on{border-color:rgba(124,252,177,.55);background:rgba(124,252,177,.10)}
+  .tflag{margin-left:auto;flex:none;font-size:11px;font-weight:800;letter-spacing:.08em;
+    color:#8CFFC0}
   /* The fan is retired. Keeping the buttons in the DOM means every existing handler still
      works — the rows above just click them — but they never render on the map again. */
   #moreFabs{display:none !important}
@@ -1194,7 +1197,8 @@
   <h3>⋯ Tools</h3>
   <p class="sub">Stays open while you work — close it with ✕ when you're done.</p>
   <div id="toolsList" class="tools-list">
-    <button class="tool-row" data-fab="fabDiscover"><span class="ti">🧭</span><span class="tt"><b>Discover nearby</b><small>Food, fuel, parking and more around you</small></span></button>
+    <button class="tool-row" data-act="compass"><span class="ti">🧭</span><span class="tt"><b>Compass</b><small>True-north dial for walking and hiking</small></span></button>
+    <button class="tool-row" data-fab="fabDiscover"><span class="ti">📍</span><span class="tt"><b>Discover nearby</b><small>Food, fuel, parking and more around you</small></span></button>
     <button class="tool-row" data-fab="fabSat"><span class="ti">🛰</span><span class="tt"><b>Satellite imagery</b><small>Switch the basemap to aerial</small></span></button>
     <button class="tool-row" data-fab="fab3d"><span class="ti">🏙</span><span class="tt"><b>3D buildings</b><small>Tilt the map and raise the skyline</small></span></button>
     <button class="tool-row" data-fab="fabVoice"><span class="ti">🎤</span><span class="tt"><b>Voice command</b><small>Speak a destination instead of typing</small></span></button>

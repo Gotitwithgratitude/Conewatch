@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v254";
+const APP_VERSION="v256";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -343,7 +343,11 @@ function rasterStyleObj(dark){
      - SLOW RENDERING generally: every one of those tiles is a decode and an upload.
      A phone-sized retina screen online is exactly where the sharpness is visible and the cost
      is bearable, so that is the only place it stays. */
-  var _ts = (_dpr>=2 && _vw<900 && !_off) ? 128 : 256;
+  /* v255: 128 is gone. It was my sharpness fix in v240 and it has now caused black patches
+     offline, "Zoom Level Not Supported" wallpaper on two devices, and slow rendering — Esri
+     serves error PNGs with a 200 status, so MapLibre cannot tell a refusal from a tile and
+     paints it. A basemap that is reliably correct beats one that is occasionally sharper. */
+  var _ts = 256; void _dpr; void _vw; void _off;
   return {version:8,
     sources:{basemap:{type:"raster",tiles:[url],tileSize:_ts,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
     layers:[{id:"bg",type:"background",paint:{"background-color":bgc}},
@@ -355,7 +359,7 @@ function rasterStyleObj(dark){
 var _tsLast=null, _tsT=null;
 function _tileSizeNow(){
   var d=(window.devicePixelRatio||1), w=(window.innerWidth||400), off=(navigator.onLine===false);
-  return (d>=2 && w<900 && !off) ? 128 : 256;
+  void d; void w; void off; return 256;
 }
 function _restyleIfTileSizeChanged(){
   clearTimeout(_tsT);
@@ -4017,27 +4021,52 @@ function toggleTools(){ openToolsPage(); }
    dumping them on the map. openSheet() closes every sheet before opening the next, so the
    return has to be remembered explicitly rather than relying on stacking. */
 var _toolsReturn=false;
-function openToolsPage(){ _toolsReturn=false; openSheet("toolsSheet"); }
+/* Show which toggles are currently ON. Without this the page is a list of verbs with no state,
+   so a driver cannot tell whether satellite is already on without closing the sheet to look. */
+function _syncToolRows(){
+  try{
+    document.querySelectorAll("#toolsList .tool-row").forEach(function(r){
+      var b=document.getElementById(r.dataset.fab);
+      var on=!!(b && (b.classList.contains("active")||b.classList.contains("lit")));
+      r.classList.toggle("on",on);
+      var f=r.querySelector(".tflag");
+      if(!f){ f=document.createElement("span"); f.className="tflag"; r.appendChild(f); }
+      f.textContent = on ? "ON" : "";
+    });
+  }catch(e){}
+}
+function openToolsPage(){ _toolsReturn=false; openSheet("toolsSheet"); _syncToolRows(); }
 try{
   var _tl=$("toolsList");
   if(_tl) _tl.addEventListener("click",function(ev){
     var row=ev.target.closest && ev.target.closest(".tool-row"); if(!row) return;
+    /* Some tools have no tray button behind them — the compass only ever existed as a sheet
+       reachable from the dock drawer, which is why it looked missing. Those carry data-act. */
+    if(row.dataset.act==="compass"){ _toolsReturn=true; try{ openCompass(); }catch(e){} return; }
     var btn=document.getElementById(row.dataset.fab); if(!btn) return;
-    /* Toggles (satellite, 3D, torch) change the map and leave every sheet alone, so the page
-       must stay put. Anything that opens its own sheet flags a return instead. */
-    var opensSheet = ["fabDiscover","fabSettings","fabRoadside","fabFeedback"].indexOf(row.dataset.fab)>-1;
-    _toolsReturn = opensSheet;
+    var id=row.dataset.fab;
+    /* Three kinds of tool, and my last build got the middle one wrong.
+       MAP TOGGLES (satellite, 3D) change the map — and the sheet sits ON TOP of the map, so
+       holding it open hid the only thing that changed and the button read as dead. They close
+       the page so the driver can actually see what they turned on.
+       SHEET OPENERS navigate somewhere and come back here when that place closes.
+       IN-PLACE tools (torch, voice) change nothing behind the sheet, so it stays put. */
+    var MAP_TOGGLE = ["fabSat","fab3d"];
+    var OPENS_SHEET = ["fabDiscover","fabSettings","fabRoadside","fabFeedback"];
+    _toolsReturn = OPENS_SHEET.indexOf(id)>-1;
     btn.click();
-    if(!opensSheet){
-      // keep the page open and let the row show it took effect
+    if(MAP_TOGGLE.indexOf(id)>-1){
+      closeSheets();                                   // get out of the way of the result
+    }else if(!_toolsReturn){
       try{ row.animate([{opacity:1},{opacity:.45},{opacity:1}],{duration:260}); }catch(e){}
       setTimeout(function(){ try{ if(!$("toolsSheet").classList.contains("open")) openSheet("toolsSheet"); }catch(e){} },30);
     }
+    setTimeout(_syncToolRows,60);
   });
 }catch(e){}
 /* When a sheet opened FROM the tools page closes, come back to the page. */
 try{
-  ["discoverSheet","settingsSheet","roadsideSheet","feedbackSheet"].forEach(function(id){
+  ["discoverSheet","settingsSheet","roadsideSheet","feedbackSheet","compassSheet"].forEach(function(id){
     var el=document.getElementById(id); if(!el) return;
     var mo=new MutationObserver(function(){
       if(!el.classList.contains("open") && _toolsReturn){
@@ -6867,6 +6896,24 @@ async function geocodeCandidates(q){
     // Second POI index — fills Overture/OSM gaps on newer or smaller businesses.
     jobs.push(foursquarePOIs(q).then(rows=>{out=out.concat(rows);}).catch(()=>{}));
   }
+  /* CITY-SPLIT PASS. The real reason "Godfrey chicago" kept returning Detroit: every pass
+     treats the whole string as one name, and free-text ranking on a 2-word query is dominated
+     by whichever index has more nearby matches — which downtown Detroit always will. Splitting
+     the query so the trailing word becomes a STRUCTURED city ("Godfrey" in city "chicago")
+     asks a different question entirely, and Nominatim answers it directly. Tried for the last
+     one and last two words, since city names like "ann arbor" and "new york" are two tokens. */
+  var _tk=q.trim().split(/\s+/);
+  if(_tk.length>=2 && !p.city){
+    [1,2].forEach(function(n){
+      if(_tk.length<=n) return;
+      var name=_tk.slice(0,_tk.length-n).join(" "), city=_tk.slice(-n).join(" ");
+      if(name.length<2 || city.length<3) return;
+      var sq=new URLSearchParams({format:"jsonv2",addressdetails:"1",limit:"6",q:name,city:city});
+      jobs.push(fetchT("https://nominatim.openstreetmap.org/search?"+sq,8000)
+        .then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}));
+    });
+  }
+
   /* UNBIASED PASS. Every request above carries either a viewbox or a lat/lon, so all of them
      lean local — and when a driver names a distant place the correct answer was never in the
      candidate set for scoring to find. One pass with no geographic hint at all guarantees the
