@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v249";
+const APP_VERSION="v251";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -495,6 +495,15 @@ let mapStyleTheme="dark";
   try{ map.dragRotate.enable(); }catch(e){}
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker(); try{ restoreRouteLocal(); }catch(e){}
     try{ ensureSignalLayer(); scheduleSignalFetch(); }catch(e){}
+    /* Radar was writing cw_radar on every toggle and never reading it back, so it reset to off
+       on every launch. Restore it — and default to ON, since precipitation is something a
+       driver wants to see without having gone looking for a setting. */
+    try{
+      var _rp=null; try{ _rp=localStorage.getItem("cw_radar"); }catch(e){}
+      if(_rp!=="0"){
+        setTimeout(function(){ try{ if(!S.radarOn) toggleRadar(); }catch(e){} }, 2500);
+      }
+    }catch(e){}
     _cwAddMapModeBtn(); applyMapMode();
     if(S.queuedTheme&&S.queuedTheme!==mapStyleTheme) swapMapStyle(S.queuedTheme);
     if(seenWelcome()){ startGPS(); if(S.sb.url&&S.sb.key){ loadSharedHazards(); startHazardSync(); startRealtime(); } if(!tutSeen()){ setTimeout(startTutorial,700); } else { toast("ConeWatch Pro — search a destination, or tap ⋯ for tools."); } }
@@ -2717,7 +2726,12 @@ function _sigCacheLoad(){
     var c=JSON.parse(localStorage.getItem("cw_sig")||"null");
     if(c && c.t && Date.now()-c.t < 14*864e5 && Array.isArray(c.f)){       // signals move rarely; a fortnight is safe
       c.f.forEach(function(p){ _sigFeat[p[0]]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p[1],p[2]]}}; });
-      _sigDone=c.k||[]; _sigClusterDirty=true;
+      /* Deliberately NOT restoring the covered-bbox list. It used to persist alongside the
+         nodes, but the node cache is capped and drops the oldest entries — so after enough
+         driving the app believed a box was covered while the nodes for it had been evicted,
+         and the lights simply stopped appearing. Session-only: worst case we re-query one
+         viewport on launch, which is cheap and self-correcting. */
+      _sigDone=[]; _sigClusterDirty=true;
     }
   }catch(e){}
 }
@@ -2726,7 +2740,7 @@ function _sigCacheSave(){
     var f=[];
     for(var id in _sigFeat){ var c=_sigFeat[id].geometry.coordinates; f.push([id,+c[0].toFixed(5),+c[1].toFixed(5)]); }
     if(f.length>4000) f=f.slice(-4000);                                    // hard cap so localStorage can't bloat
-    localStorage.setItem("cw_sig",JSON.stringify({t:Date.now(),f:f,k:_sigDone.slice(-60)}));
+    localStorage.setItem("cw_sig",JSON.stringify({t:Date.now(),f:f}));
   }catch(e){}
 }
 /* WHY THE DOTS SIT OFF THE INTERSECTION
@@ -4926,6 +4940,28 @@ let hudScale=1.5; try{const hs=parseFloat(localStorage.getItem("cw_hud")); if(hs
 function applyHudScale(){ try{$("hud").style.setProperty("--hudScale",hudScale); localStorage.setItem("cw_hud",hudScale);}catch(e){} }
 let hudFlip=true; try{ hudFlip=localStorage.getItem("cw_hudflip")!=="0"; }catch(e){}
 function applyHudFlip(){ try{ $("hud").classList.toggle("noflip",!hudFlip); localStorage.setItem("cw_hudflip",hudFlip?"1":"0"); }catch(e){} }
+/* A stroked SVG arrow rather than a text glyph. Two reasons: a glyph mirrored by the HUD's
+   scaleX(-1) and scaled 1.5x rasterizes soft, where vector geometry stays sharp at any size;
+   and a rounded, single-weight stroke reads as an instrument rather than as a character
+   borrowed from the font. Geometry is keyed off the maneuver, so a slight right and a hard
+   right no longer share one arrow. */
+function hudArrowSVG(step){
+  var m=(step&&step.maneuver)||{}, t=String(m.type||""), mod=String(m.modifier||"");
+  var d;
+  if(t==="arrive")      d="M32 54 L32 20 M20 32 L32 20 L44 32";          // straight up, journey end
+  else if(t==="depart") d="M32 54 L32 22 M22 32 L32 22 L42 32";
+  else if(mod.indexOf("uturn")>-1) d="M22 54 L22 32 A10 10 0 0 1 42 32 L42 44 M34 36 L42 44 L50 36";
+  else if(mod.indexOf("sharp right")>-1) d="M22 54 L22 34 L46 34 M36 24 L46 34 L36 44";
+  else if(mod.indexOf("sharp left")>-1)  d="M42 54 L42 34 L18 34 M28 24 L18 34 L28 44";
+  else if(mod.indexOf("slight right")>-1)d="M24 54 L24 40 L42 22 M32 20 L44 20 L44 32";
+  else if(mod.indexOf("slight left")>-1) d="M40 54 L40 40 L22 22 M32 20 L20 20 L20 32";
+  else if(mod.indexOf("right")>-1)       d="M22 54 L22 30 L44 30 M34 20 L44 30 L34 40";
+  else if(mod.indexOf("left")>-1)        d="M42 54 L42 30 L20 30 M30 20 L20 30 L30 40";
+  else                                   d="M32 54 L32 20 M20 32 L32 20 L44 32";   // continue
+  return '<svg viewBox="0 0 64 64" width="100%" height="100%" fill="none" '+
+         'stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">'+
+         '<path d="'+d+'"/></svg>';
+}
 function hudOpen(){ return $("hud") && $("hud").style.display!=="none" && $("hud").style.display!==""; }
 /* Paint the fields the HUD gained in v230: turn glyph, speed-limit sign, over-limit colour, ETA.
    Cheap enough to run on every nav tick — it's a handful of textContent writes, and skipping it
@@ -4933,7 +4969,7 @@ function hudOpen(){ return $("hud") && $("hud").style.display!=="none" && $("hud
 function hudPaint(step){
   if(!hudOpen()) return;
   try{
-    var a=$("hudArrow"); if(a && step) a.textContent=maneuverGlyph(step);
+    var a=$("hudArrow"); if(a && step) a.innerHTML=hudArrowSVG(step);
     var vm=Math.round(S.speedMph||0);
     var sp=$("hud") && $("hud").querySelector(".h-speed");
     if(sp){
@@ -6911,7 +6947,20 @@ function scoreRows(rows,q){
     // The old capped penalty (-12) let a match 9,000 miles away out-score one down the street.
     if(S.pos){
       var d=distM(S.pos,{lat:+r.lat,lng:+r.lon})/1609.34;
+      /* A city named INSIDE a business name — "Godfrey Hotel Chicago" — is not comma-separated,
+         so parseAddr never saw it and the query looked purely local. The uncapped distance
+         penalty then buried the correct result 280 miles away. If a word the driver typed also
+         appears in this result's own city or state, they named the place: allow the distance. */
       var saidWhere = !!(want.city||want.state||want.postalcode);
+      if(!saidWhere){
+        try{
+          var place=String(rCity||"")+" "+String(a.state||"")+" "+String(a.country||"");
+          place=place.toLowerCase();
+          for(var qi=0; qi<toks.length; qi++){
+            if(toks[qi].length>3 && place.indexOf(toks[qi])>-1){ saidWhere=true; break; }
+          }
+        }catch(e){}
+      }
       if(want.housenumber){ sc += d<60?Math.max(0,6-d/12):-8; }
       else if(saidWhere){ sc += Math.max(-25, 40 - d*0.6); }      // they named a place → allow distance
       else {
@@ -7595,7 +7644,11 @@ function openSearchPanel(mode,seed){
   $("spInput").placeholder = _spMode==="from" ? "Start — or leave blank for my location" : "Search a place or address";
   $("spInput").value = seed||"";
   spRender([]);
-  setTimeout(()=>{ try{$("spInput").focus();}catch(e){} },60);
+  /* Focus SYNCHRONOUSLY. iOS grants a keyboard only to a focus() call still inside the user
+     gesture; a setTimeout, however short, lands after the gesture ends and the keyboard is
+     silently refused. The timer below is a fallback for the non-gesture callers only. */
+  try{ $("spInput").focus(); }catch(e){}
+  setTimeout(()=>{ try{ if(document.activeElement!==$("spInput")) $("spInput").focus(); }catch(e){} },60);
 }
 function closeSearchPanel(){
   const p=$("searchPanel"); if(!p) return;
@@ -7754,7 +7807,13 @@ $("spInput")&&($("spInput").addEventListener("keydown",e=>{
 $("spClear")&&($("spClear").onclick=()=>{ $("spInput").value=""; spRender([]); $("spInput").focus(); });
 $("spBack")&&($("spBack").onclick=closeSearchPanel);
 // the main search bar and the From row both open the panel instead of typing inline
-$("search")&&($("search").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("dest",$("search").value.trim()); }));
+/* Hand focus straight to the panel input instead of blurring first — a focus TRANSFER inside
+   one gesture keeps the keyboard, a blur-then-refocus loses it. */
+$("search")&&($("search").addEventListener("focus",(e)=>{
+  var v=$("search").value.trim();
+  openSearchPanel("dest",v);
+  try{ e.target.blur(); }catch(x){}
+}));
 $("tripFrom")&&($("tripFrom").addEventListener("focus",(e)=>{ try{e.target.blur();}catch(x){} openSearchPanel("from",S.originName||""); }));
 
 /* ═══════════ both endpoints editable, plus swap ═══════════

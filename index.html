@@ -661,7 +661,12 @@
   #bumpYes{background:var(--yellow);color:#141619}#bumpNo{background:var(--panel-hi);color:var(--mute)}
 
   #hud{--hudScale:1.5;position:fixed;inset:0;z-index:3000;background:#000;display:none;flex-direction:column;align-items:center;justify-content:center;gap:calc(14px*var(--hudScale))}
-  #hud .mirror{transform:scaleX(-1);text-align:center;padding:0 4vw}
+  #hud .mirror{transform:scaleX(-1);text-align:center;padding:0 4vw;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  /* Large soft text-shadows are the other half of the blur: at 1.5x scale a 16-18px shadow
+     spreads far enough to eat the letterforms once the windshield adds its own spread. */
+  #hud .h-dist{text-shadow:0 0 7px rgba(124,252,177,.55)}
+  #hud .h-instr{text-shadow:0 0 6px rgba(255,255,255,.35)}
   #hud .h-dist{font-family:var(--display);font-size:calc(60px*var(--hudScale));color:#8CFFC0;font-weight:800;text-shadow:0 0 18px rgba(124,252,177,.85),0 0 4px rgba(124,252,177,1);line-height:1}
   #hud .h-instr{font-size:calc(22px*var(--hudScale));color:#fff;max-width:92vw;font-weight:700;text-shadow:0 0 14px rgba(255,255,255,.7);line-height:1.15;margin-top:calc(6px*var(--hudScale))}
   #hud .h-speed{font-family:var(--display);font-size:calc(34px*var(--hudScale));color:#fff;margin-top:calc(10px*var(--hudScale));font-weight:800;text-shadow:0 0 14px rgba(255,255,255,.8)}
@@ -672,16 +677,21 @@
      phone on the dash does not. Was hardcoded on, which made the propped case unreadable. */
   #hud.noflip .mirror{transform:none}
   /* Big glyph reads at a glance where a sentence does not — the whole point of a HUD. */
-  #hud .h-arrow{font-family:var(--display);font-size:calc(74px*var(--hudScale));color:#8CFFC0;line-height:.9;
-    text-shadow:0 0 22px rgba(124,252,177,.9),0 0 5px rgba(124,252,177,1);min-height:1px}
+  /* Now an SVG, so it is sized as a box rather than as type. The heavy 22px bloom is gone:
+     on a windshield the glass already spreads the light, and stacking a big CSS glow on top of
+     that physical bloom is most of what made the HUD look out of focus. A tight 6px halo keeps
+     the brightness without smearing the edges. */
+  #hud .h-arrow{width:calc(86px*var(--hudScale));height:calc(86px*var(--hudScale));color:#8CFFC0;
+    filter:drop-shadow(0 0 6px rgba(124,252,177,.65));margin:0 auto}
+  #hud .h-arrow svg{display:block}
   #hud .h-speedrow{display:flex;align-items:center;justify-content:center;gap:calc(14px*var(--hudScale));margin-top:calc(10px*var(--hudScale))}
   /* .h-speed carried its own margin-top from when it was a standalone block; inside the flex
      row that pushed the number out of line with the limit sign next to it. */
   #hud .h-speedrow .h-speed{margin-top:0}
   #hud .h-speed i{font-style:normal;font-size:calc(16px*var(--hudScale));opacity:.75}
   /* Over the limit turns the speed amber, then red — glanceable without reading a number. */
-  #hud .h-speed.warn{color:#FFD24A;text-shadow:0 0 16px rgba(255,210,74,.85)}
-  #hud .h-speed.over{color:#FF7A7A;text-shadow:0 0 18px rgba(255,122,122,.9)}
+  #hud .h-speed.warn{color:#FFD24A;text-shadow:0 0 7px rgba(255,210,74,.7)}
+  #hud .h-speed.over{color:#FF7A7A;text-shadow:0 0 8px rgba(255,122,122,.75)}
   #hud .h-limit{font-family:var(--display);font-weight:800;background:#fff;color:#111;border:calc(3px*var(--hudScale)) solid #111;
     border-radius:calc(8px*var(--hudScale));padding:calc(2px*var(--hudScale)) calc(9px*var(--hudScale));
     font-size:calc(24px*var(--hudScale));line-height:1.1;box-shadow:0 0 14px rgba(255,255,255,.5)}
@@ -691,7 +701,7 @@
      warning rendered underneath it. In HUD mode the driver got voice and a blank windshield. */
   #hud .h-haz{margin-top:calc(12px*var(--hudScale));font-size:calc(20px*var(--hudScale));font-weight:800;
     color:#FFB3B3;opacity:0;transition:opacity .2s;min-height:calc(24px*var(--hudScale));
-    text-shadow:0 0 16px rgba(255,120,120,.9)}
+    text-shadow:0 0 7px rgba(255,120,120,.8)}
   #hud .h-haz.show{opacity:1;animation:hudHazPulse 1s ease-in-out infinite}
   @keyframes hudHazPulse{0%,100%{opacity:1}50%{opacity:.55}}
   html[data-lite="1"] #hud .h-haz.show{animation:none}
