@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v251";
+const APP_VERSION="v254";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -273,6 +273,17 @@ function rasterStyle(dark){
     sources:{ basemap:{ type:"raster", tiles:[url], tileSize:256, maxzoom:19, attribution:"© Esri, © OpenStreetMap contributors" }},
     layers:[{id:"bg",type:"background",paint:{"background-color":bg}},{id:"basemap",type:"raster",source:"basemap",paint:paint}] };
 }
+function _offNow(){ try{ return navigator.onLine===false; }catch(e){ return false; } }
+/* Even online a lookup can hang or fail. A placeholder that never resolves reads as a frozen
+   app, so give both rows a deadline and let them say what actually happened. */
+function _settleStat(id, ms){
+  setTimeout(function(){
+    try{
+      var el=document.getElementById(id);
+      if(el && /^(loading…)$/.test(el.textContent.trim())) el.textContent = _offNow()? "unavailable offline" : "unavailable";
+    }catch(e){}
+  }, ms||9000);
+}
 function rasterStyleObj(dark){
   // CARTO began requiring an API key (unauthenticated tiles get an "API KEY REQUIRED" watermark)
   // and is retiring its raster basemaps, so we use Esri's keyless tiles instead.
@@ -320,12 +331,51 @@ function rasterStyleObj(dark){
      same view, so twice the pixel density lands in the same space. Costs ~4x the tile requests,
      which is why it is applied only where the screen can actually show the difference. */
   var _dpr = (typeof window!=="undefined" && window.devicePixelRatio) || 1;
-  var _ts = _dpr>=2 ? 128 : 256;
+  var _vw  = (typeof window!=="undefined" && window.innerWidth) || 400;
+  var _off = (typeof navigator!=="undefined" && navigator.onLine===false);
+  /* v254: the 4x tile cost has to be earned. Three cases where it is not:
+     - OFFLINE. Four times the tiles means four times the cache misses, which is why the map
+       came up in black patches in airplane mode. 256 asks for a quarter as many, and the ones
+       it asks for are the ones the browser is most likely to already hold.
+     - BIG VIEWPORTS. An iPad shows several times a phone's area, so 4x on top of that is
+       hundreds of simultaneous requests; Esri starts refusing them and MapLibre paints the
+       refusal tiles, which is the "Zoom Level Not Supported" wallpaper.
+     - SLOW RENDERING generally: every one of those tiles is a decode and an upload.
+     A phone-sized retina screen online is exactly where the sharpness is visible and the cost
+     is bearable, so that is the only place it stays. */
+  var _ts = (_dpr>=2 && _vw<900 && !_off) ? 128 : 256;
   return {version:8,
     sources:{basemap:{type:"raster",tiles:[url],tileSize:_ts,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
     layers:[{id:"bg",type:"background",paint:{"background-color":bgc}},
             {id:"basemap",type:"raster",source:"basemap",paint:paint,layout:{visibility:"visible"}}]};
 }
+/* The tile-size decision depends on things that change while the app is open — going offline,
+   rotating an iPad. Rebuild the basemap when they do, debounced so a flapping connection or a
+   drag-resize doesn't thrash the style. */
+var _tsLast=null, _tsT=null;
+function _tileSizeNow(){
+  var d=(window.devicePixelRatio||1), w=(window.innerWidth||400), off=(navigator.onLine===false);
+  return (d>=2 && w<900 && !off) ? 128 : 256;
+}
+function _restyleIfTileSizeChanged(){
+  clearTimeout(_tsT);
+  _tsT=setTimeout(function(){
+    try{
+      var now=_tileSizeNow();
+      if(_tsLast===null){ _tsLast=now; return; }
+      if(now===_tsLast) return;
+      _tsLast=now;
+      var src=map&&map.getSource&&map.getSource("basemap");
+      if(!src) return;
+      applyTheme(S.theme||"dark");        // rebuilds the style object at the new tile size
+    }catch(e){}
+  }, 900);
+}
+try{
+  window.addEventListener("online", _restyleIfTileSizeChanged);
+  window.addEventListener("offline", _restyleIfTileSizeChanged);
+  window.addEventListener("resize", _restyleIfTileSizeChanged);
+}catch(e){}
 async function styleFor(theme){
   return rasterStyleObj(theme!=="light");   // raster PNG = reliably cacheable offline
 }
@@ -2780,11 +2830,42 @@ function _sigClusters(){
     if(!members.length) members=[i];
     var sla=0,sln=0;
     members.forEach(function(mi){ pts[mi].used=true; sla+=pts[mi].lat; sln+=pts[mi].lng; });
-    out.push({type:"Feature",properties:{n:members.length},
-      geometry:{type:"Point",coordinates:[sln/members.length, sla/members.length]}});
+    out.push({lat:sla/members.length, lng:sln/members.length, n:members.length});
   });
-  _sigClustered=out; _sigClusterDirty=false;
-  return out;
+
+  /* MERGE PASS. The greedy pass above seeds from whichever node happens to come first, which
+     is never the junction itself — it is one arm's stop line, 20-30m out. A node on the
+     OPPOSITE arm is then up to ~60m from that seed, past the 38m radius, so it starts a second
+     cluster and the intersection renders as two half-lights flanking the corner instead of one
+     sitting on it. Merging clusters whose centroids are close pulls those halves back together,
+     and weighting by member count puts the result on the junction rather than between two
+     arbitrary points. Repeated until stable, because a merge can bring a third arm in range. */
+  for(var pass=0; pass<4; pass++){
+    var merged=false;
+    for(var x=0; x<out.length; x++){
+      if(!out[x]) continue;
+      for(var y=x+1; y<out.length; y++){
+        if(!out[y]) continue;
+        /* Cheap reject before the trig: distM is the hot call here and most pairs downtown are
+           nowhere near each other. A latitude gate rules those out for the cost of a subtract. */
+        if(Math.abs(out[x].lat-out[y].lat) > cell*2) continue;
+        if(distM(out[x],out[y])>SIG_CLUSTER_M*1.5) continue;
+        var tot=out[x].n+out[y].n;
+        out[x]={ lat:(out[x].lat*out[x].n + out[y].lat*out[y].n)/tot,
+                 lng:(out[x].lng*out[x].n + out[y].lng*out[y].n)/tot, n:tot };
+        out[y]=null; merged=true;
+      }
+    }
+    out=out.filter(function(c){ return !!c; });
+    if(!merged) break;
+  }
+
+  _sigClustered=out.map(function(c){
+    return {type:"Feature",properties:{n:c.n},
+            geometry:{type:"Point",coordinates:[c.lng,c.lat]}};
+  });
+  _sigClusterDirty=false;
+  return _sigClustered;
 }
 function _sigData(){
   return {type:"FeatureCollection",features:_sigClusters()};
@@ -3189,8 +3270,9 @@ function renderRouteSheet(r){
     <div class="kv"><span>Est. fuel cost</span><span>$${fuel} (${gal.toFixed(1)} gal @ ${mpg} mpg)</span></div>
     ${onRoute?`<div class="kv"><span>Hazards on route</span><span style="color:${onRoute.n?"var(--orange,#FF8A2B)":"var(--green,#46C08A)"}">${onRoute.txt}</span></div>`:""}
     <div class="kv"><span>Road character</span><span>${curve.label} · ${curve.turns} sharp turns</span></div>
-    <div class="kv"><span>Weather at destination</span><span id="wxDest">loading…</span></div>
-    <div class="kv"><span>Elevation</span><span id="elevStat">loading…</span></div>`;
+    <div class="kv"><span>Weather at destination</span><span id="wxDest">${_offNow()?"unavailable offline":"loading…"}</span></div>
+    <div class="kv"><span>Elevation</span><span id="elevStat">${_offNow()?"unavailable offline":"loading…"}</span></div>`;
+  try{ _settleStat("wxDest"); _settleStat("elevStat"); }catch(e){}
   const ol=el("steps"); if(ol) ol.innerHTML="";
   S.steps.forEach((st,i)=>{
     const li=document.createElement("li");
@@ -3928,7 +4010,44 @@ function closeTools(){
   tray.classList.remove("open");
   clearRadial();
 }
-function toggleTools(){ toolsAreOpen()?closeTools():openTools(); }
+function toggleTools(){ openToolsPage(); }
+
+/* The tools PAGE. Two behaviours the fan never had: it is a real sheet the driver can read,
+   and picking something that opens another sheet comes BACK here afterwards instead of
+   dumping them on the map. openSheet() closes every sheet before opening the next, so the
+   return has to be remembered explicitly rather than relying on stacking. */
+var _toolsReturn=false;
+function openToolsPage(){ _toolsReturn=false; openSheet("toolsSheet"); }
+try{
+  var _tl=$("toolsList");
+  if(_tl) _tl.addEventListener("click",function(ev){
+    var row=ev.target.closest && ev.target.closest(".tool-row"); if(!row) return;
+    var btn=document.getElementById(row.dataset.fab); if(!btn) return;
+    /* Toggles (satellite, 3D, torch) change the map and leave every sheet alone, so the page
+       must stay put. Anything that opens its own sheet flags a return instead. */
+    var opensSheet = ["fabDiscover","fabSettings","fabRoadside","fabFeedback"].indexOf(row.dataset.fab)>-1;
+    _toolsReturn = opensSheet;
+    btn.click();
+    if(!opensSheet){
+      // keep the page open and let the row show it took effect
+      try{ row.animate([{opacity:1},{opacity:.45},{opacity:1}],{duration:260}); }catch(e){}
+      setTimeout(function(){ try{ if(!$("toolsSheet").classList.contains("open")) openSheet("toolsSheet"); }catch(e){} },30);
+    }
+  });
+}catch(e){}
+/* When a sheet opened FROM the tools page closes, come back to the page. */
+try{
+  ["discoverSheet","settingsSheet","roadsideSheet","feedbackSheet"].forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    var mo=new MutationObserver(function(){
+      if(!el.classList.contains("open") && _toolsReturn){
+        _toolsReturn=false;
+        setTimeout(function(){ try{ openSheet("toolsSheet"); }catch(e){} },120);
+      }
+    });
+    mo.observe(el,{attributes:true,attributeFilter:["class"]});
+  });
+}catch(e){}
 try{
   window.addEventListener("resize",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") layoutRadial(false); });
   window.addEventListener("orientationchange",function(){ if(toolsAreOpen()&&toolsStyle()==="radial") setTimeout(function(){layoutRadial(false);},250); });
@@ -6719,7 +6838,11 @@ async function geocodeCandidates(q){
   var p=parseAddr(q), out=[];
   var qs=new URLSearchParams({format:"jsonv2",addressdetails:"1",limit:"10"});
   qs.set("street",[p.housenumber,p.street].filter(Boolean).join(" "));
-  if(p.city)qs.set("city",p.city); else {var loc=await getLocality(); if(loc)qs.set("city",loc.split(",")[0]);}
+  /* The structured pass used to fall back to the DRIVER'S OWN city when the query named none —
+     so "Godfrey Hotel Chicago" was literally sent to Nominatim as "Godfrey Hotel, in Detroit".
+     That is a hard filter, not a bias: a Chicago hotel can never come back from it. Leave the
+     city empty and let the proximity viewbox do the biasing, which is what it is for. */
+  if(p.city)qs.set("city",p.city);
   if(p.state)qs.set("state",p.state);
   if(p.postalcode)qs.set("postalcode",p.postalcode);
   // bias every source toward where the user actually is → surfaces the NEAREST place they mean
@@ -6744,6 +6867,15 @@ async function geocodeCandidates(q){
     // Second POI index — fills Overture/OSM gaps on newer or smaller businesses.
     jobs.push(foursquarePOIs(q).then(rows=>{out=out.concat(rows);}).catch(()=>{}));
   }
+  /* UNBIASED PASS. Every request above carries either a viewbox or a lat/lon, so all of them
+     lean local — and when a driver names a distant place the correct answer was never in the
+     candidate set for scoring to find. One pass with no geographic hint at all guarantees the
+     far result is at least present; scoreRows still has to decide it beats the local ones. */
+  jobs.push(fetchT("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=10&q="+encodeURIComponent(q),8000)
+    .then(r=>r.json()).then(a=>{out=out.concat(a||[]);}).catch(()=>{}));
+  jobs.push(fetchT("https://photon.komoot.io/api/?limit=10&lang=en&q="+encodeURIComponent(q),8000)
+    .then(r=>r.json()).then(d=>{out=out.concat(photonToRows(d.features||[]));}).catch(()=>{}));
+
   await Promise.all(jobs);
   return scoreRows(out,q);
 }
@@ -7650,6 +7782,16 @@ function openSearchPanel(mode,seed){
   try{ $("spInput").focus(); }catch(e){}
   setTimeout(()=>{ try{ if(document.activeElement!==$("spInput")) $("spInput").focus(); }catch(e){} },60);
 }
+try{
+  var _sg=$("spGo");
+  if(_sg) _sg.onclick=function(){
+    var q=($("spInput").value||"").trim(); if(!q) { try{$("spInput").focus();}catch(e){} return; }
+    try{ $("spInput").blur(); }catch(e){}
+    closeSearchPanel();
+    try{ $("search").value=q; }catch(e){}
+    forceGeocode(q);
+  };
+}catch(e){}
 function closeSearchPanel(){
   const p=$("searchPanel"); if(!p) return;
   p.classList.remove("open"); p.setAttribute("aria-hidden","true");

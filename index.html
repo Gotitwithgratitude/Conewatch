@@ -565,6 +565,24 @@
   /* The scrim was a soft vignette that barely touched the map, so translucent tool buttons sat
      on top of street labels and were genuinely hard to read. Now it dims the whole screen and
      blurs properly — the map recedes, the tray reads, and it's obvious the app is in a mode. */
+  .tools-list{display:flex;flex-direction:column;gap:8px;padding:6px 0 14px}
+  .tool-row{display:flex;align-items:center;gap:14px;width:100%;text-align:left;
+    background:var(--btn-face);border:1px solid var(--edge);border-radius:14px;
+    padding:13px 14px;color:inherit;font:inherit;cursor:pointer}
+  .tool-row:active{transform:scale(.985);background:rgba(127,127,127,.16)}
+  .tool-row .ti{font-size:22px;width:34px;text-align:center;flex:none}
+  .tool-row .tt{display:flex;flex-direction:column;min-width:0}
+  .tool-row .tt b{font-size:15px;font-weight:700}
+  .tool-row .tt small{font-size:12px;color:var(--mute);margin-top:2px}
+  /* The fan is retired. Keeping the buttons in the DOM means every existing handler still
+     works — the rows above just click them — but they never render on the map again. */
+  #moreFabs{display:none !important}
+  /* A real search action. The dock's arrow is a long way from the keyboard and reads as
+     "next", not "search"; this sits in the search bar where the thumb already is. */
+  .sp-go{flex:none;margin-left:8px;background:var(--accent,#F26B21);color:#fff;border:none;
+    border-radius:12px;padding:10px 16px;font-weight:800;font-size:14px;cursor:pointer;
+    letter-spacing:.02em}
+  .sp-go:active{filter:brightness(.92)}
   #radialScrim{position:fixed;inset:0;z-index:997;display:none;
     background:radial-gradient(circle at var(--rx,80%) var(--ry,60%),rgba(4,6,10,.72) 0,rgba(4,6,10,.62) 42%,rgba(4,6,10,.50) 100%);
     -webkit-backdrop-filter:blur(7px) saturate(.75);backdrop-filter:blur(7px) saturate(.75)}
@@ -1079,6 +1097,7 @@
       <input id="spInput" placeholder="Search a place or address" autocomplete="off" autocorrect="off" spellcheck="false">
       <button id="spClear" class="sp-clr" aria-label="Clear">✕</button>
     </div>
+    <button id="spGo" class="sp-go" aria-label="Search">Search</button>
   </div>
   <div id="spWhich" class="sp-which"></div>
   <div id="spList" class="sp-list"></div>
@@ -1166,6 +1185,26 @@
 <!-- Compass lives in its own panel now. On the map it was a permanently animating dial competing
      with the speed readout and the hazard buttons for a driver's attention, and a compass is a
      thing you CONSULT, not something you monitor while driving. -->
+<!-- Tools as a PAGE, not a scatter. The tray fanned buttons over the map and vanished the
+     moment anything was picked, dumping the driver back to the map even when they had more to
+     do. This behaves like the report and emergency flows: a sheet you open, act in, and close
+     when you're done. Rows carry labels — eight unlabelled emoji was a memory test. -->
+<div class="sheet" id="toolsSheet">
+  <div class="grabber"></div>
+  <h3>⋯ Tools</h3>
+  <p class="sub">Stays open while you work — close it with ✕ when you're done.</p>
+  <div id="toolsList" class="tools-list">
+    <button class="tool-row" data-fab="fabDiscover"><span class="ti">🧭</span><span class="tt"><b>Discover nearby</b><small>Food, fuel, parking and more around you</small></span></button>
+    <button class="tool-row" data-fab="fabSat"><span class="ti">🛰</span><span class="tt"><b>Satellite imagery</b><small>Switch the basemap to aerial</small></span></button>
+    <button class="tool-row" data-fab="fab3d"><span class="ti">🏙</span><span class="tt"><b>3D buildings</b><small>Tilt the map and raise the skyline</small></span></button>
+    <button class="tool-row" data-fab="fabVoice"><span class="ti">🎤</span><span class="tt"><b>Voice command</b><small>Speak a destination instead of typing</small></span></button>
+    <button class="tool-row" data-fab="fabFlash"><span class="ti">🔦</span><span class="tt"><b>Flashlight</b><small>Turn on the phone torch</small></span></button>
+    <button class="tool-row" data-fab="fabRoadside"><span class="ti">🛠</span><span class="tt"><b>Roadside assistance</b><small>Help if you're broken down</small></span></button>
+    <button class="tool-row" data-fab="fabFeedback"><span class="ti">📣</span><span class="tt"><b>Send feedback</b><small>Tell us what's wrong or missing</small></span></button>
+    <button class="tool-row" data-fab="fabSettings"><span class="ti">⚙️</span><span class="tt"><b>Settings</b><small>Map detail, buttons, voice, themes</small></span></button>
+  </div>
+</div>
+
 <div class="sheet" id="compassSheet">
   <div class="grabber"></div>
   <h3>🧭 Compass</h3>
