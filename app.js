@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v268";
+const APP_VERSION="v269";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -340,13 +340,17 @@ var BASE_PROVIDER = (function(){
   try{
     /* One-time migration off Esri, including for anyone whose stored preference is the old
        default. Someone who deliberately picks Esri later keeps it. */
-    if(localStorage.getItem("cw_baseMigrated")!=="268"){
-      localStorage.setItem("cw_baseProvider","carto");
-      localStorage.setItem("cw_baseMigrated","268");
-      return "carto";
+    /* v269 — reverted. CARTO's raster basemaps are no longer keyless: the tiles come back
+       stamped "API KEY REQUIRED", which is worse than Esri's patchy coverage because it fails
+       everywhere instead of somewhere. Esri is the default again. Anyone who supplies a CARTO
+       key in Settings still gets CARTO through the existing keyed path. */
+    if(localStorage.getItem("cw_baseMigrated")!=="269"){
+      localStorage.setItem("cw_baseProvider","esri");
+      localStorage.setItem("cw_baseMigrated","269");
+      return "esri";
     }
-    return localStorage.getItem("cw_baseProvider")||"carto";
-  }catch(e){ return "carto"; }
+    return localStorage.getItem("cw_baseProvider")||"esri";
+  }catch(e){ return "esri"; }
 })();
 function baseTileURL(dark){
   if(BASE_PROVIDER==="carto"){
@@ -355,7 +359,9 @@ function baseTileURL(dark){
     /* Retina tiles and all four subdomains: CARTO serves @2x, which fixes the sharpness the
        v240 experiment was chasing — without quadrupling the request count, because the tile
        still covers 256 CSS pixels. */
-    return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+"/{z}/{x}/{y}@2x.png";
+    var ck=""; try{ ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim(); }catch(e){}
+    return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+
+           "/{z}/{x}/{y}@2x.png"+(ck?("?key="+ck):"");
   }
   return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
 }
@@ -530,7 +536,10 @@ async function probeBasemapFloor(force){
     if(a.clean && a.bad>0){
       /* Esri is refusing tiles this driver can see. Switch providers rather than keep painting
          the refusals — a basemap with gaps is not a basemap. */
-      if(BASE_PROVIDER!=="carto"){
+      /* Only auto-switch if a CARTO key exists, otherwise we swap a partly-broken map for a
+         completely broken one. */
+      var _ck=""; try{ _ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim(); }catch(e){}
+      if(BASE_PROVIDER!=="carto" && _ck){
         BASE_PROVIDER="carto";
         try{ localStorage.setItem("cw_baseProvider","carto"); }catch(e){}
         _probeTxt+="\n         switched to CARTO";
@@ -8460,6 +8469,16 @@ try{
   var _sg=$("spGo");
   if(_sg) _sg.onclick=function(){
     var q=($("spInput").value||"").trim(); if(!q) { try{$("spInput").focus();}catch(e){} return; }
+    /* v269: the Search button used to close this panel and open a separate "Which one?" sheet
+       built by forceGeocode — a different pipeline that keeps returning local matches for a
+       query naming a distant city. The list ALREADY ON SCREEN here is correct. So Search now
+       commits to the top suggestion in front of the driver rather than throwing it away and
+       asking a worse question. If nothing has come back yet, fall back to the old path so the
+       button is never dead. */
+    try{
+      var first=document.querySelector("#spList .sp-row");
+      if(first){ first.click(); return; }
+    }catch(e){}
     try{ $("spInput").blur(); }catch(e){}
     closeSearchPanel();
     try{ $("search").value=q; }catch(e){}
