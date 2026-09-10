@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v259";
+const APP_VERSION="v260";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -299,6 +299,7 @@ function _settleStat(id, ms){
    that floor MapLibre stretches the lowest good tile, which looks coarse but is correct. */
 var BASE_MINZ = (function(){ try{ var v=parseInt(localStorage.getItem("cw_baseMinz"),10); return isFinite(v)?v:0; }catch(e){ return 0; } })();
 var _probeTxt = "basemap  not probed yet";
+var _probeRan = false;
 function _tileXY(lat,lng,z){
   var n=Math.pow(2,z);
   var x=Math.floor((lng+180)/360*n);
@@ -307,43 +308,70 @@ function _tileXY(lat,lng,z){
   return [Math.max(0,Math.min(n-1,x)), Math.max(0,Math.min(n-1,y))];
 }
 async function probeBasemapFloor(force){
+  /* v260 — why v259's probe reported "not probed yet": eleven awaited fetches ran SERIALLY with
+     no timeout. One slow or hanging request and the loop never reached the line that writes the
+     result, so the panel showed the initial string forever. Now: all requests in flight at once,
+     each with its own deadline, status written before AND after so it can never go silent.
+     It also probes BOTH candidate services, because I still do not know which one is painting
+     the words and the point of this is to stop me guessing. */
   try{
-    if(!navigator.onLine) return;
+    _probeTxt="basemap  probing…";
+    if(!navigator.onLine){ _probeTxt="basemap  offline — not probed"; return; }
     var done=0; try{ done=parseInt(localStorage.getItem("cw_baseMinzAt"),10)||0; }catch(e){}
-    if(!force && Date.now()-done < 7*864e5) return;          // weekly is plenty
+    if(!force && Date.now()-done < 7*864e5){ _probeTxt="basemap  floor z"+BASE_MINZ+" (cached)"; return; }
     var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
-    var lens={}, order=[];
-    for(var z=0; z<=10; z++){
+
+    function grab(base,z){
       var xy=_tileXY(lat,lng,z);
-      var u="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/"+z+"/"+xy[1]+"/"+xy[0];
-      try{
-        var r=await fetch(u,{cache:"no-store"});
-        var b=await r.arrayBuffer();
-        lens[z]=b.byteLength; order.push(z);
-      }catch(e){ lens[z]=-1; }
+      var u=base+"/"+z+"/"+xy[1]+"/"+xy[0];
+      return Promise.race([
+        fetch(u,{cache:"no-store"}).then(function(r){
+          if(!r.ok) return {z:z,len:-1,code:r.status};
+          return r.arrayBuffer().then(function(b){ return {z:z,len:b.byteLength}; });
+        }).catch(function(e){ return {z:z,len:-2}; }),          // -2 = blocked/CORS/network
+        new Promise(function(res){ setTimeout(function(){ res({z:z,len:-3}); },6000); })  // -3 = timeout
+      ]);
     }
-    // a byte length seen at two or more different zooms is the repeated error image
-    var count={};
-    order.forEach(function(z){ if(lens[z]>0) count[lens[z]]=(count[lens[z]]||0)+1; });
-    var errLens={};
-    Object.keys(count).forEach(function(L){ if(count[L]>=2) errLens[L]=true; });
-    var floor=0;
-    for(var i=0;i<order.length;i++){
-      var z2=order[i];
-      if(lens[z2]>0 && !errLens[lens[z2]]){ floor=z2; break; }
-      floor=z2+1;
+    async function survey(base){
+      var zs=[]; for(var z=0; z<=10; z++) zs.push(z);
+      var res=await Promise.all(zs.map(function(z){ return grab(base,z); }));
+      var lens={}; res.forEach(function(r){ lens[r.z]=r.len; });
+      var count={};
+      res.forEach(function(r){ if(r.len>0) count[r.len]=(count[r.len]||0)+1; });
+      var err={}; Object.keys(count).forEach(function(L){ if(count[L]>=2) err[L]=true; });
+      var floor=0, any=false;
+      for(var i=0;i<zs.length;i++){
+        var z2=zs[i];
+        if(lens[z2]>0 && !err[lens[z2]]){ floor=z2; any=true; break; }
+        floor=z2+1;
+      }
+      if(!any) floor=0;                                       // inconclusive — change nothing
+      var map10=zs.map(function(z){
+        var L=lens[z];
+        return z+":"+(L===-2?"net":L===-3?"t/o":L<0?("h"+(L===-1?"?":"")):(err[L]?"X":"ok"));
+      }).join(" ");
+      return {floor:floor, line:map10, any:any};
     }
-    if(floor>10) floor=0;                                    // probe inconclusive — change nothing
-    _probeTxt="basemap  floor z"+floor+"\n         "+order.map(function(z){
-      return z+":"+(lens[z]<0?"err":(errLens[lens[z]]?"X":"ok"));
-    }).join(" ");
+
+    var STREET="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile";
+    var IMAGERY="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile";
+    var a=await survey(STREET);
+    var b=await survey(IMAGERY);
+    _probeTxt="basemap  street floor z"+a.floor+"\n         "+a.line+
+              "\nimagery  floor z"+b.floor+"\n         "+b.line;
     try{ localStorage.setItem("cw_baseMinzAt",String(Date.now())); }catch(e){}
-    if(floor!==BASE_MINZ){
-      BASE_MINZ=floor;
-      try{ localStorage.setItem("cw_baseMinz",String(floor)); }catch(e){}
-      try{ applyTheme(S.theme||"dark"); }catch(e){}          // rebuild with the real floor
+    /* Apply the street floor to the basemap, and the imagery floor to the sat layer — whichever
+       of the two is the culprit, it gets a floor it actually supports. */
+    if(a.any && a.floor!==BASE_MINZ){
+      BASE_MINZ=a.floor;
+      try{ localStorage.setItem("cw_baseMinz",String(a.floor)); }catch(e){}
+      try{ applyTheme(S.theme||"dark"); }catch(e){}
     }
-  }catch(e){}
+    if(b.any && b.floor>SAT_MINZ){
+      SAT_MINZ=b.floor;
+      try{ if(map.getLayer("esri-sat")) map.setLayerZoomRange("esri-sat",SAT_MINZ,24); }catch(e){}
+    }
+  }catch(e){ _probeTxt="basemap  probe threw: "+((e&&e.message)||"?"); }
 }
 
 function rasterStyleObj(dark){
@@ -5673,7 +5701,7 @@ function bindInspect(){
 
 /* satellite — main-map layer + 360° orbit preview */
 const ESRI=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"];
-var SAT_MINZ=10;   // below this Esri serves error tiles, and imagery is useless anyway
+var SAT_MINZ=10;   // raised automatically if the probe finds a higher real floor   // below this Esri serves error tiles, and imagery is useless anyway
 S.sat=false;
 // HD satellite: if the user supplies a free MapTiler key, use its sharper/newer imagery; else keyless Esri
 function satTiles(){ const k=(S.satKey||"").trim(); return k?["https://api.maptiler.com/tiles/satellite-v2/{z}/{x}/{y}.jpg?key="+k]:ESRI; }
@@ -6366,6 +6394,9 @@ try{
     var _corrTxt="corridor  reading…", _corrTick=null, _offTxt="", _offAt=0;
     function _corridorLine(){ return _corrTxt; }
     function _corridorRefresh(){
+      /* Opening the debug panel forces a fresh probe. Waiting a week for the cache to expire is
+         no use while we are actively hunting this. */
+      try{ if(!_probeRan){ _probeRan=true; probeBasemapFloor(true); } }catch(e){}
       try{
         if(typeof cwdbAll!=="function"){ _corrTxt="corridor  n/a (old build)"; return; }
         cwdbAll().then(function(all){

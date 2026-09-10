@@ -425,7 +425,10 @@
      part needs to be addressable. The look is "instrument under glass" — a lit dial you read
      through, not a flat icon pasted on the map. */
   :root{ --cw-hue:#6FF3D0; }
-  #compass{position:relative;width:168px;height:168px;border-radius:50%;
+  /* 168px was sized for a small dial floating over the map. In its own sheet the compass has
+     most of a screen to itself and was using a third of it, which is also why the bearing
+     readout crowded the rose. Scale to the viewport with a sane floor and ceiling. */
+  #compass{position:relative;width:min(78vw,300px);height:min(78vw,300px);border-radius:50%;
     background:radial-gradient(circle at 50% 34%, rgba(30,44,48,.92), rgba(10,14,17,.94));
     border:1px solid rgba(120,240,210,.22);cursor:pointer;
     display:flex;align-items:center;justify-content:center;
@@ -452,7 +455,11 @@
   #compDial{transform-origin:50px 50px;transition:transform .22s cubic-bezier(.22,.8,.3,1)}
   #compSweep{transform-origin:50px 50px;animation:cwSweepSpin 5.5s linear infinite;opacity:.75}
   @keyframes cwSweepSpin{to{transform:rotate(360deg)}}
-  #compass small{position:absolute;bottom:22px;left:0;right:0;text-align:center;
+  /* This sat at a fixed 22px from the bottom, which put it straight through the S cardinal and
+     the tick ring — the overlap you saw. Anchor it to the CENTRE of the dial instead, where the
+     rose is empty by construction, and scale the offset with the dial so it stays clear at any
+     size. */
+  #compass small{position:absolute;top:62%;left:0;right:0;text-align:center;
     font-family:var(--tech);font-size:11px;letter-spacing:.6px;
     color:rgba(180,255,238,.82);text-shadow:0 0 6px rgba(90,240,200,.55);pointer-events:none}
   #compass.hup{border-color:rgba(140,255,220,.55);
@@ -565,7 +572,11 @@
   /* The scrim was a soft vignette that barely touched the map, so translucent tool buttons sat
      on top of street labels and were genuinely hard to read. Now it dims the whole screen and
      blurs properly — the map recedes, the tray reads, and it's obvious the app is in a mode. */
-  .tools-list{display:flex;flex-direction:column;gap:8px;padding:6px 0 14px}
+  /* The close ✕ is absolutely positioned top-right on every sheet, and the Tools heading ran
+     underneath it. Reserve the corner instead of letting them share it. */
+  #toolsSheet h3{padding-right:64px}
+  #toolsSheet .sub{padding-right:64px}
+  .tools-list{display:flex;flex-direction:column;gap:8px;padding:10px 0 22px}
   .tool-row{display:flex;align-items:center;gap:14px;width:100%;text-align:left;
     background:var(--btn-face);border:1px solid var(--edge);border-radius:14px;
     padding:13px 14px;color:inherit;font:inherit;cursor:pointer}
@@ -1197,15 +1208,15 @@
   <h3>⋯ Tools</h3>
   <p class="sub">Stays open while you work — close it with ✕ when you're done.</p>
   <div id="toolsList" class="tools-list">
-    <button class="tool-row" data-act="compass"><span class="ti">🧭</span><span class="tt"><b>Compass</b><small>True-north dial for walking and hiking</small></span></button>
     <button class="tool-row" data-fab="fabDiscover"><span class="ti">📍</span><span class="tt"><b>Discover nearby</b><small>Food, fuel, parking and more around you</small></span></button>
+    <button class="tool-row" data-fab="fabSettings"><span class="ti">⚙️</span><span class="tt"><b>Settings</b><small>Map detail, buttons, voice, themes</small></span></button>
     <button class="tool-row" data-fab="fabSat"><span class="ti">🛰</span><span class="tt"><b>Satellite imagery</b><small>Switch the basemap to aerial</small></span></button>
     <button class="tool-row" data-fab="fab3d"><span class="ti">🏙</span><span class="tt"><b>3D buildings</b><small>Tilt the map and raise the skyline</small></span></button>
     <button class="tool-row" data-fab="fabVoice"><span class="ti">🎤</span><span class="tt"><b>Voice command</b><small>Speak a destination instead of typing</small></span></button>
-    <button class="tool-row" data-fab="fabFlash"><span class="ti">🔦</span><span class="tt"><b>Flashlight</b><small>Turn on the phone torch</small></span></button>
     <button class="tool-row" data-fab="fabRoadside"><span class="ti">🛠</span><span class="tt"><b>Roadside assistance</b><small>Help if you're broken down</small></span></button>
+    <button class="tool-row" data-fab="fabFlash"><span class="ti">🔦</span><span class="tt"><b>Flashlight</b><small>Turn on the phone torch</small></span></button>
+    <button class="tool-row" data-act="compass"><span class="ti">🧭</span><span class="tt"><b>Compass</b><small>True-north dial for walking and hiking</small></span></button>
     <button class="tool-row" data-fab="fabFeedback"><span class="ti">📣</span><span class="tt"><b>Send feedback</b><small>Tell us what's wrong or missing</small></span></button>
-    <button class="tool-row" data-fab="fabSettings"><span class="ti">⚙️</span><span class="tt"><b>Settings</b><small>Map detail, buttons, voice, themes</small></span></button>
   </div>
 </div>
 
@@ -1213,7 +1224,7 @@
   <div class="grabber"></div>
   <h3>🧭 Compass</h3>
   <p class="sub" id="compassSub">True north, calibrated from your own movement.</p>
-  <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0 18px">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:20px;padding:14px 0 26px">
     <div id="compass" title="Toggle heading-up">
 
     <svg id="compRose" viewBox="0 0 100 100" aria-hidden="true">
