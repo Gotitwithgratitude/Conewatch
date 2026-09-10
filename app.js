@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v266";
+const APP_VERSION="v267";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -426,16 +426,38 @@ async function probeBasemapFloor(force){
     var done=0; try{ done=parseInt(localStorage.getItem("cw_baseMinzAt"),10)||0; }catch(e){}
     if(!force && Date.now()-done < 3*864e5){ _probeTxt="basemap  "+BASE_PROVIDER+" (cached)"; return; }
 
-    var z = Math.max(3, Math.min(14, Math.round((map&&map.getZoom&&map.getZoom())||9)));
-    var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
-    var c=_tileXY(lat,lng,z), n=Math.pow(2,z);
-
-    /* A 3x3 block around the driver at the live zoom — the tiles actually on screen. */
-    var cells=[];
-    for(var dx=-1; dx<=1; dx++) for(var dy=-1; dy<=1; dy++){
-      var x=c[0]+dx, y=c[1]+dy;
-      if(x<0||y<0||x>=n||y>=n) continue;
-      cells.push([x,y]);
+    /* v267 — third time I have sampled the wrong tiles, and the reason is the same each time:
+       I kept probing around the DRIVER. The map is very often somewhere else entirely. In free
+       roam you can be parked downtown while looking at Eight Mile, and that is exactly the case
+       where the wallpaper shows up. Probing your position while the wallpaper sits on the other
+       side of the county could only ever come back clean.
+       Sample the tiles the MAP is showing: derive the range from the viewport bounds and take a
+       spread across it, so what we measure is what you can see. */
+    var z = Math.max(3, Math.min(16, Math.round((map&&map.getZoom&&map.getZoom())||9)));
+    var n=Math.pow(2,z), cells=[];
+    try{
+      var b=map.getBounds();
+      var nw=_tileXY(b.getNorth(), b.getWest(), z);
+      var se=_tileXY(b.getSouth(), b.getEast(), z);
+      var x0=Math.min(nw[0],se[0]), x1=Math.max(nw[0],se[0]);
+      var y0=Math.min(nw[1],se[1]), y1=Math.max(nw[1],se[1]);
+      /* Up to a 4x4 spread across whatever is on screen — enough to catch a patchy provider
+         without hammering it, which is how the probe poisoned itself back in v260. */
+      var sx=Math.max(1,Math.ceil((x1-x0+1)/4)), sy=Math.max(1,Math.ceil((y1-y0+1)/4));
+      for(var x=x0; x<=x1; x+=sx) for(var y=y0; y<=y1; y+=sy){
+        if(x<0||y<0||x>=n||y>=n) continue;
+        cells.push([x,y]);
+        if(cells.length>=16) break;
+      }
+    }catch(e){}
+    if(!cells.length){
+      var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
+      var c=_tileXY(lat,lng,z);
+      for(var dx=-1; dx<=1; dx++) for(var dy=-1; dy<=1; dy++){
+        var xx=c[0]+dx, yy=c[1]+dy;
+        if(xx<0||yy<0||xx>=n||yy>=n) continue;
+        cells.push([xx,yy]);
+      }
     }
 
     function grab(base,x,y){
@@ -773,7 +795,16 @@ let mapStyleTheme="dark";
     // auto-recenter after a few seconds of no interaction (no button needed)
     _reCenterT=setTimeout(()=>{ if(!S.touching){ S.follow=true; updateFollowUI(); hideRelock(); cameraFollow(); } }, S.navigating?6000:9000);
   });
-  map.on("moveend",()=>{ if(!S.follow && S.mapReady) startRelock(); try{ scheduleSignalFetch(); }catch(e){} });
+  map.on("moveend",()=>{ if(!S.follow && S.mapReady) startRelock(); try{ scheduleSignalFetch(); }catch(e){}
+    /* Coverage is a property of WHERE you are looking, so re-check when that changes. Heavily
+       throttled: a probe is a burst of tile requests and must never ride along with panning. */
+    try{
+      if(!window._probeMoveAt || Date.now()-window._probeMoveAt > 120000){
+        window._probeMoveAt=Date.now();
+        setTimeout(function(){ try{ probeBasemapFloor(true); }catch(e){} }, 1500);
+      }
+    }catch(e){}
+  });
   map.on("error",()=>{});
   applyTheme(true);
 })();
@@ -7389,7 +7420,7 @@ async function placeCandidates(q){
      disagree, this has to query the same sources, not a subset of them. */
   var _ac=null; try{ _ac=new AbortController(); }catch(e){}
   var _sig=_ac?_ac.signal:undefined;
-  var counts={photon:0,unbiased:0,fsq:0,overture:0,split:0};
+  var counts={photon:0,unbiased:0,fsq:0,overture:0,split:0,citybias:0};
   var jobs=[
     fetch(_photonURL(q)).then(function(r){return r.json();})
       .then(function(d){ var m=_photonMap(d); counts.photon=m.length; add(m); }).catch(function(){}),
@@ -7400,8 +7431,38 @@ async function placeCandidates(q){
     fsqSuggest(q,_sig).then(function(r){ counts.fsq=(r||[]).length; add(r); }).catch(function(){}),
     overtureSuggest(q,_sig).then(function(r){ counts.overture=(r||[]).length; add(r); }).catch(function(){})
   ];
+  /* CITY-BIASED PASS. The counts told us what was wrong: photon:1 unbiased:1 fsq:9 overture:0.
+     Nine of the thirteen rows came from the POI index doing a category match on the word
+     "hotel" near the driver, and the correct answer was never in the pool at all. Both photon
+     passes returned a single row because a five-word string is a poor free-text query.
+     So: resolve the trailing city to coordinates, then ask the same sources again with the
+     search biased THERE instead of here. "The Godfrey Hotel" near Chicago is a question these
+     services answer well; "The Godfrey Hotel Chicago" near Detroit is not. */
   var tk=q.trim().split(/\s+/);
   if(tk.length>=2){
+    jobs.push((async function(){
+      for(var n=1;n<=2;n++){
+        if(tk.length<=n) break;
+        var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
+        if(nm.length<2 || city.length<3 || GENERIC_WORDS.test(city)) continue;
+        try{
+          var cu="https://nominatim.openstreetmap.org/search?format=json&limit=1&city="+encodeURIComponent(city);
+          var cr=await (await fetch(cu,{headers:{Accept:"application/json"}})).json();
+          if(!cr || !cr.length) continue;
+          var clat=+cr[0].lat, clng=+cr[0].lon;
+          if(!isFinite(clat)) continue;
+          /* Only worth doing when the named city is somewhere else — otherwise this is just the
+             local search again with extra steps. */
+          if(S.pos && distM(S.pos,{lat:clat,lng:clng})<40000) continue;
+          var pu="https://photon.komoot.io/api/?limit=8&lang=en&lat="+clat+"&lon="+clng+
+                 "&q="+encodeURIComponent(nm);
+          var pr=await (await fetch(pu)).json();
+          var rows=_photonMap(pr);
+          counts.citybias=(counts.citybias||0)+rows.length;
+          add(rows);
+        }catch(e){}
+      }
+    })());
     [1,2].forEach(function(n){
       if(tk.length<=n) return;
       var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
