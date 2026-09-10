@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v261";
+const APP_VERSION="v262";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -309,7 +309,18 @@ function _settleStat(id, ms){
    Bumping this string changes the URL, which the cache has no entry for. Bump it again if
    poisoned tiles ever reappear. */
 var TILE_CB = "?cw=2";
-var BASE_MINZ = (function(){ try{ var v=parseInt(localStorage.getItem("cw_baseMinz"),10); return isFinite(v)?v:0; }catch(e){ return 0; } })();
+var BASE_MINZ = (function(){
+  /* v260/v261 could persist a floor derived from a rate-limited survey. Discard anything stored
+     by those builds; a wrong floor blanks the map at zooms that were always fine. */
+  try{
+    if(localStorage.getItem("cw_minzVer")!=="262"){
+      localStorage.removeItem("cw_baseMinz"); localStorage.removeItem("cw_baseMinzAt");
+      localStorage.setItem("cw_minzVer","262");
+      return 0;
+    }
+    var v=parseInt(localStorage.getItem("cw_baseMinz"),10); return isFinite(v)?v:0;
+  }catch(e){ return 0; }
+})();
 var _probeTxt = "basemap  not probed yet";
 var _probeRan = false;
 function _tileXY(lat,lng,z){
@@ -346,7 +357,16 @@ async function probeBasemapFloor(force){
     }
     async function survey(base){
       var zs=[]; for(var z=0; z<=10; z++) zs.push(z);
-      var res=await Promise.all(zs.map(function(z){ return grab(base,z); }));
+      /* v262: firing all 11 at once — 22 across both services — got us rate-limited by Esri and
+         the survey came back mostly "t/o", from which a bogus floor of z2 was then derived and
+         APPLIED. An instrument that changes the thing it measures is worse than none. Three at
+         a time, with a breath between batches. */
+      var res=[];
+      for(var b=0; b<zs.length; b+=3){
+        var batch=await Promise.all(zs.slice(b,b+3).map(function(z){ return grab(base,z); }));
+        res=res.concat(batch);
+        await new Promise(function(r){ setTimeout(r,220); });
+      }
       var lens={}; res.forEach(function(r){ lens[r.z]=r.len; });
       var count={};
       res.forEach(function(r){ if(r.len>0) count[r.len]=(count[r.len]||0)+1; });
@@ -358,11 +378,15 @@ async function probeBasemapFloor(force){
         floor=z2+1;
       }
       if(!any) floor=0;                                       // inconclusive — change nothing
+      /* Only trust a CLEAN survey. Any timeout or network failure means we measured our own
+         rate limit, not Esri's coverage, and must not act on it. */
+      var clean=zs.every(function(z){ return lens[z]>0; });
+      if(!clean) any=false;
       var map10=zs.map(function(z){
         var L=lens[z];
         return z+":"+(L===-2?"net":L===-3?"t/o":L<0?("h"+(L===-1?"?":"")):(err[L]?"X":"ok"));
       }).join(" ");
-      return {floor:floor, line:map10, any:any};
+      return {floor:floor, line:map10+(clean?"":"  [dirty — ignored]"), any:any};
     }
 
     var STREET="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile";
@@ -5778,8 +5802,13 @@ function openSat(lat,lng,name){
   bel.innerHTML='<div class="sat-pulse"></div><div class="sat-pulse b"></div><div class="sat-dot"></div>';
   let touched=false, paused=false;
   function spinStep(){ if(!satMapObj||touched||paused)return; satMapObj.setBearing(satMapObj.getBearing()+0.13); orbitRAF=requestAnimationFrame(spinStep); }
+  /* A map that is still fetching tiles fires dragstart-like events during its own settle, and
+     stopSpin was treating any of them as the user grabbing the map. Only count a gesture once
+     the map has actually been interactive for a moment. */
+  var _spinArmedAt=Date.now()+1200;
   // only a real drag/zoom/rotate gesture stops it — NOT the tap that opened the preview
   const stopSpin=(e)=>{ if(e && !e.originalEvent) return;   // ignore programmatic setBearing/resize; only real finger gestures pause
+    if(Date.now()<_spinArmedAt) return;                     // ...and not during the initial settle
     touched=true; cancelAnimationFrame(orbitRAF); orbitRAF=null; if(_tog)_tog.innerHTML="\u25B6\uFE0E&nbsp; Resume rotation"; };
   ["dragstart","zoomstart","rotatestart","pitchstart"].forEach(ev=>satMapObj.on(ev,stopSpin));
   var _tog=$("satOrbitToggle");
@@ -5790,6 +5819,12 @@ function openSat(lat,lng,name){
     try{ satPin=new maplibregl.Marker({element:bel,anchor:"center"}).setLngLat([lng,lat]).addTo(satMapObj); }catch(e){}
     spinStep();
   });
+  /* The spin was started ONLY from the map's "load" event. If the style resolves before that
+     handler is attached — which is exactly what happens when the tiles are already in cache,
+     as they are the second time you preview a place — "load" never fires and the image just
+     sits there. Start it independently too; spinStep is idempotent because it bails when an
+     animation frame is already pending. */
+  setTimeout(function(){ try{ if(!orbitRAF && !touched && !paused) spinStep(); }catch(e){} }, 900);
 }
 $("geoPickerX")&&($("geoPickerX").onclick=()=>{$("geoPicker").style.display="none";});
 let satPin=null;
@@ -6003,7 +6038,11 @@ function runStartLight(done){
 function startTour(co,cum,total,marks){
   cancelAnimationFrame(tourRAF);
   var _mm=$("driveMap"); if(_mm)_mm.style.transform="scale(1.08) rotate(0deg)";
-  const baseDur=Math.min(60000,Math.max(14000, total*7)); // slower base = clearer; ~7ms per meter, 14–60s
+  /* v262: the 60-second ceiling was the whole problem. A 285-mile route was being flown in one
+     minute at 1x — roughly 17,000 mph of ground speed — so 0.5x only halved something already
+     impossible to read. Duration now scales with distance up to five minutes, and the camera
+     compensates for whatever speed remains (see _tourRender). */
+  const baseDur=Math.min(480000,Math.max(14000, total*7)); // ~7ms per metre, 14s–8min
   tourState={co,cum,total,marks,baseDur,frac:0,speed:0.5,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
   $("tourSpeed").innerHTML="0.5&times;";
   try{ var _g0=$("tourGear"); if(_g0) _g0.textContent="G1"; }catch(e){}
@@ -6025,14 +6064,31 @@ function _tourRender(){
   /* Tile budget is the real limit at 4x: the camera outruns the network. Games solve this with
      LOD by velocity, so do the same — every zoom level back quarters the tiles needed to cover
      the same ground, and at speed nobody is reading rooftops anyway. */
-  var zoom=17.7 - Math.max(0,Math.min(1.9,(spd-1)*0.62));
+  /* Camera altitude follows GROUND SPEED, not the speed multiplier. The old formula only knew
+     about the 0.5x/1x/2x chip, so a long route flown at "0.5x" still had the camera down at
+     street level while the world tore past — everything smeared. Compute how fast we are
+     actually covering ground and pull the camera up and back as that rises: fast means higher,
+     wider and flatter, which is exactly how the eye stays able to follow it. */
+  var _mps = (st.total / (st.baseDur/1000)) * spd;      // metres of route per second of playback
+  /* Linear was wrong: it saturated at 325 m/s and then stopped responding, so a 765 m/s flight
+     got the same camera as a 325 m/s one. Speed varies over orders of magnitude here, so scale
+     the response logarithmically — 45 m/s (about 100mph) is the reference where the close
+     cinematic camera is right, and every doubling above that pulls the camera back further. At
+     the top it becomes a regional map flyover, which is honest: you cannot show street detail
+     at that speed, so show something legible instead of a smear. */
+  var _fast = Math.max(0, Math.min(1, Math.log2(Math.max(1,_mps)/45)/3.2));
+  var zoom=17.7 - Math.max(0,Math.min(1.9,(spd-1)*0.62)) - _fast*6.6;
+  st._fastness=_fast;
   // CHASE CAM: center between car and the near look-ahead, pitch ~78 so the horizon rises and the road stretches out ahead
   // push the camera target further down the road as speed rises: the ground enters the viewport
   // earlier, so its tiles are requested earlier and are in by the time we get there
   var _look=9+Math.max(0,Math.min(80,(spd-1)*24));
   var camCtr=_posAt(st.co,st.cum,Math.min(st.total,d+_look));
   var H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
-  tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:(S._drivePitch||78),zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
+  /* Flatten the pitch as speed rises too. At 78 degrees the horizon is high and the road
+     stretches away, which is lovely at city speed and unreadable at freeway-times-ten. */
+  var _pitch=(S._drivePitch||78) - (st._fastness||0)*26;
+  tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:_pitch,zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
   // apply the lean (scale hides rotation corners + adds cockpit-forward feel)
   var mm=$("driveMap"); if(mm) mm.style.transform="scale(1.08) rotate("+lean.toFixed(2)+"deg)";
   // ═══ SPEED WARP intensity: streaks + vignette ramp up with speed and in turns ═══
@@ -6161,7 +6217,10 @@ function endBoost(){
     setTimeout(function(){ try{ b.classList.remove("cooling"); }catch(e){} }, BOOST_COOL); }
 }
 $("tourBoost")&&($("tourBoost").onclick=function(){ startBoost(); });
-$("tourSpeed")&&($("tourSpeed").onclick=()=>{ const st=tourState; if(!st)return; st.speed=st.speed===0.5?1:st.speed===1?2:st.speed===2?4:0.5; $("tourSpeed").innerHTML=(st.speed===0.5?"0.5":st.speed)+"&times;"; });
+/* 0.25x added: on a 285-mile route even 0.5x is covering ground faster than any real vehicle. */
+$("tourSpeed")&&($("tourSpeed").onclick=()=>{ const st=tourState; if(!st)return;
+  st.speed = st.speed===0.25?0.5 : st.speed===0.5?1 : st.speed===1?2 : st.speed===2?4 : 0.25;
+  $("tourSpeed").innerHTML=(st.speed<1?String(st.speed):st.speed)+"&times;"; });
 $("tourRestart")&&($("tourRestart").onclick=()=>{ const st=tourState; if(!st)return; st.frac=0;st.done=false;st.paused=false;st.curBrg=_brg(st.co[0],st.co[1]);$("tourPlay").innerHTML="&#10073;&#10073;";runTour(); });
 $("tourPlay")&&($("tourPlay").onclick=()=>{ const st=tourState; if(!st)return; if(st.done){ st.frac=0;st.done=false;st.paused=false;$("tourPlay").innerHTML="&#10073;&#10073;";runTour(); } else { st.paused=!st.paused; $("tourPlay").innerHTML=st.paused?"&#9654;":"&#10073;&#10073;"; if(!st.paused)runTour(); } });
 
