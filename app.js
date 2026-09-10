@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v267";
+const APP_VERSION="v268";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -252,6 +252,16 @@ function rasterStyle(dark){
   const url = _hw
     ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"+TILE_CB
     : baseTileURL(dark);
+  /* CARTO ships proper dark and light styles, so the filter that was compensating for Esri's
+     daylight cartography would now crush an already-dark basemap. Leave CARTO nearly alone. */
+  if(BASE_PROVIDER==="carto" && !_hw){
+    return {version:8,sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:20,
+      attribution:"© OpenStreetMap © CARTO"}},
+      layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0d1013":"#eae7e0"}},
+              {id:"basemap",type:"raster",source:"basemap",
+               paint:{"raster-brightness-min":0,"raster-brightness-max":1,
+                      "raster-saturation":dark?-0.06:0,"raster-contrast":dark?0.04:0}}]};
+  }
   let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
     : {};
@@ -314,12 +324,38 @@ var TILE_CB = "?cw=3";
 /* Which basemap provider to draw. Esri is the default for its look; CARTO is the fallback when
    the probe finds Esri refusing tiles in this area. Persisted, because a driver who has hit the
    gap once will hit it again tomorrow in the same place. */
-var BASE_PROVIDER = (function(){ try{ return localStorage.getItem("cw_baseProvider")||"esri"; }catch(e){ return "esri"; } })();
+/* v268 — the decision I should have made three versions ago.
+   Facts we now have, all from the device rather than from my guessing: the tile cache is empty,
+   the service worker is current, and live fetches of the tiles the probe samples come back as
+   real images — yet the wallpaper is still on screen. Esri is serving "Zoom Level Not Supported"
+   for SOME tiles, live, and I have failed three times to build a sampler that reliably catches
+   which ones. World_Street_Map is a legacy ArcGIS service with genuine gaps in its cache, and
+   every hour spent detecting those gaps is an hour not spent on the product.
+   So stop detecting and stop using it. CARTO's raster basemap is complete, keyless, free, and
+   the app already knew how to draw it. This removes the entire class of problem rather than
+   one more instance of it. Esri remains available for anyone who prefers the look — the probe
+   still runs and will flip them back to CARTO if it sees refusals — but it is no longer what a
+   driver gets by default. A basemap with holes in it is not a basemap. */
+var BASE_PROVIDER = (function(){
+  try{
+    /* One-time migration off Esri, including for anyone whose stored preference is the old
+       default. Someone who deliberately picks Esri later keeps it. */
+    if(localStorage.getItem("cw_baseMigrated")!=="268"){
+      localStorage.setItem("cw_baseProvider","carto");
+      localStorage.setItem("cw_baseMigrated","268");
+      return "carto";
+    }
+    return localStorage.getItem("cw_baseProvider")||"carto";
+  }catch(e){ return "carto"; }
+})();
 function baseTileURL(dark){
   if(BASE_PROVIDER==="carto"){
     /* Keyless CARTO raster. Complete global coverage, and it already matches the app's dark
        and light themes without the luminance filter doing all the work. */
-    return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+"/{z}/{x}/{y}.png";
+    /* Retina tiles and all four subdomains: CARTO serves @2x, which fixes the sharpness the
+       v240 experiment was chasing — without quadrupling the request count, because the tile
+       still covers 256 CSS pixels. */
+    return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+"/{z}/{x}/{y}@2x.png";
   }
   return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
 }
@@ -2072,7 +2108,7 @@ function _baseTileTpl(){
      CARTO would fill the cache with bytes nothing ever reads, and leave the dead zone uncovered
      — which is the one thing this feature exists to prevent. */
   if(BASE_PROVIDER==="carto")
-    return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+((S.theme==="dark")?"dark_all":"voyager")+"/{z}/{x}/{y}.png", yx:false};
+    return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+((S.theme==="dark")?"dark_all":"voyager")+"/{z}/{x}/{y}@2x.png", yx:false};
   return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB, yx:true};
 }
 function corridorTileURLs(coords){
@@ -7421,6 +7457,11 @@ async function placeCandidates(q){
   var _ac=null; try{ _ac=new AbortController(); }catch(e){}
   var _sig=_ac?_ac.signal:undefined;
   var counts={photon:0,unbiased:0,fsq:0,overture:0,split:0,citybias:0};
+  /* The POI indexes are radius searches around the driver. Held back rather than merged
+     immediately, because if the query names a distant city they are not weak evidence — they
+     are the wrong question, and no ranking tweak fixes that. See below. */
+  var _local={fsq:[],ov:[]};
+  var _farCity=false;
   var jobs=[
     fetch(_photonURL(q)).then(function(r){return r.json();})
       .then(function(d){ var m=_photonMap(d); counts.photon=m.length; add(m); }).catch(function(){}),
@@ -7428,8 +7469,8 @@ async function placeCandidates(q){
     fetch("https://photon.komoot.io/api/?limit=10&lang=en&q="+encodeURIComponent(q))
       .then(function(r){return r.json();})
       .then(function(d){ var m=_photonMap(d); counts.unbiased=m.length; add(m); }).catch(function(){}),
-    fsqSuggest(q,_sig).then(function(r){ counts.fsq=(r||[]).length; add(r); }).catch(function(){}),
-    overtureSuggest(q,_sig).then(function(r){ counts.overture=(r||[]).length; add(r); }).catch(function(){})
+    fsqSuggest(q,_sig).then(function(r){ counts.fsq=(r||[]).length; _local.fsq=r||[]; }).catch(function(){}),
+    overtureSuggest(q,_sig).then(function(r){ counts.overture=(r||[]).length; _local.ov=r||[]; }).catch(function(){})
   ];
   /* CITY-BIASED PASS. The counts told us what was wrong: photon:1 unbiased:1 fsq:9 overture:0.
      Nine of the thirteen rows came from the POI index doing a category match on the word
@@ -7454,6 +7495,7 @@ async function placeCandidates(q){
           /* Only worth doing when the named city is somewhere else — otherwise this is just the
              local search again with extra steps. */
           if(S.pos && distM(S.pos,{lat:clat,lng:clng})<40000) continue;
+          _farCity=true;   // the driver named a city that is not this one
           var pu="https://photon.komoot.io/api/?limit=8&lang=en&lat="+clat+"&lon="+clng+
                  "&q="+encodeURIComponent(nm);
           var pr=await (await fetch(pu)).json();
@@ -7484,6 +7526,15 @@ async function placeCandidates(q){
     });
   }
   await Promise.all(jobs);
+  /* THE DECISION. Nine of thirteen rows were Detroit hotels, because the POI index matched the
+     word "hotel" within a few miles of the driver. I have tried three times to out-rank them
+     and it has not worked, because they are not badly ranked — they are irrelevant. If someone
+     types a city 280 miles away, results from a five-mile radius are noise by definition, and
+     the right move is to exclude them rather than to score them down.
+     So: when a distant city is named, the local POI indexes sit this one out. They still lead
+     for every ordinary local search, which is the overwhelming majority. */
+  if(!_farCity){ add(_local.fsq); add(_local.ov); }
+  else { counts.fsq=-counts.fsq; counts.overture=-counts.overture; }   // negative = excluded
   /* Report what each source returned, so the next time this disagrees with the typeahead we can
      see WHICH source is missing rather than guessing at the ranking again. */
   try{ _searchTxt="search   "+Object.keys(counts).map(function(k){return k+":"+counts[k];}).join(" "); }catch(e){}
