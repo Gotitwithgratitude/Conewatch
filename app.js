@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v258";
+const APP_VERSION="v259";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -284,6 +284,68 @@ function _settleStat(id, ms){
     }catch(e){}
   }, ms||9000);
 }
+
+/* ═══════════ basemap LOD probe ═══════════
+   "Zoom Level Not Supported" is an ERROR IMAGE that ArcGIS returns with HTTP 200. MapLibre
+   cannot tell it from a real tile, so it paints the words across the map — and nothing
+   downstream can filter it. I have now guessed twice at which zoom levels are affected and
+   been wrong twice, so this stops guessing: ask the service directly, once, and set the
+   source's minzoom to whatever it turns out to support.
+
+   Detection: the error tile is the SAME image at every zoom, so its byte length repeats
+   exactly across unrelated tiles. A real street tile at a different z/x/y essentially never
+   matches another's length to the byte. Any length seen at two or more different zooms is
+   therefore the error image, and the floor is the lowest zoom that does not return it. Below
+   that floor MapLibre stretches the lowest good tile, which looks coarse but is correct. */
+var BASE_MINZ = (function(){ try{ var v=parseInt(localStorage.getItem("cw_baseMinz"),10); return isFinite(v)?v:0; }catch(e){ return 0; } })();
+var _probeTxt = "basemap  not probed yet";
+function _tileXY(lat,lng,z){
+  var n=Math.pow(2,z);
+  var x=Math.floor((lng+180)/360*n);
+  var r=lat*Math.PI/180;
+  var y=Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n);
+  return [Math.max(0,Math.min(n-1,x)), Math.max(0,Math.min(n-1,y))];
+}
+async function probeBasemapFloor(force){
+  try{
+    if(!navigator.onLine) return;
+    var done=0; try{ done=parseInt(localStorage.getItem("cw_baseMinzAt"),10)||0; }catch(e){}
+    if(!force && Date.now()-done < 7*864e5) return;          // weekly is plenty
+    var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
+    var lens={}, order=[];
+    for(var z=0; z<=10; z++){
+      var xy=_tileXY(lat,lng,z);
+      var u="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/"+z+"/"+xy[1]+"/"+xy[0];
+      try{
+        var r=await fetch(u,{cache:"no-store"});
+        var b=await r.arrayBuffer();
+        lens[z]=b.byteLength; order.push(z);
+      }catch(e){ lens[z]=-1; }
+    }
+    // a byte length seen at two or more different zooms is the repeated error image
+    var count={};
+    order.forEach(function(z){ if(lens[z]>0) count[lens[z]]=(count[lens[z]]||0)+1; });
+    var errLens={};
+    Object.keys(count).forEach(function(L){ if(count[L]>=2) errLens[L]=true; });
+    var floor=0;
+    for(var i=0;i<order.length;i++){
+      var z2=order[i];
+      if(lens[z2]>0 && !errLens[lens[z2]]){ floor=z2; break; }
+      floor=z2+1;
+    }
+    if(floor>10) floor=0;                                    // probe inconclusive — change nothing
+    _probeTxt="basemap  floor z"+floor+"\n         "+order.map(function(z){
+      return z+":"+(lens[z]<0?"err":(errLens[lens[z]]?"X":"ok"));
+    }).join(" ");
+    try{ localStorage.setItem("cw_baseMinzAt",String(Date.now())); }catch(e){}
+    if(floor!==BASE_MINZ){
+      BASE_MINZ=floor;
+      try{ localStorage.setItem("cw_baseMinz",String(floor)); }catch(e){}
+      try{ applyTheme(S.theme||"dark"); }catch(e){}          // rebuild with the real floor
+    }
+  }catch(e){}
+}
+
 function rasterStyleObj(dark){
   // CARTO began requiring an API key (unauthenticated tiles get an "API KEY REQUIRED" watermark)
   // and is retiring its raster basemaps, so we use Esri's keyless tiles instead.
@@ -349,7 +411,9 @@ function rasterStyleObj(dark){
      paints it. A basemap that is reliably correct beats one that is occasionally sharper. */
   var _ts = 256; void _dpr; void _vw; void _off;
   return {version:8,
-    sources:{basemap:{type:"raster",tiles:[url],tileSize:_ts,minzoom:0,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
+    /* minzoom comes from the probe above rather than an assumption. At 0 (the default until
+       the probe runs) behaviour is exactly as before. */
+    sources:{basemap:{type:"raster",tiles:[url],tileSize:_ts,minzoom:BASE_MINZ,maxzoom:19,attribution:"© Esri, © OpenStreetMap contributors"}},
     layers:[{id:"bg",type:"background",paint:{"background-color":bgc}},
             {id:"basemap",type:"raster",source:"basemap",paint:paint,layout:{visibility:"visible"}}]};
 }
@@ -549,6 +613,7 @@ let mapStyleTheme="dark";
   try{ map.dragRotate.enable(); }catch(e){}
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker(); try{ restoreRouteLocal(); }catch(e){}
     try{ ensureSignalLayer(); scheduleSignalFetch(); }catch(e){}
+    setTimeout(function(){ try{ probeBasemapFloor(false); }catch(e){} }, 4000);
     /* Radar was writing cw_radar on every toggle and never reading it back, so it reset to off
        on every launch. Restore it — and default to ON, since precipitation is something a
        driver wants to see without having gone looking for a setting. */
@@ -3419,17 +3484,26 @@ function attachPullToDismiss(el, onDismiss, opts){
     if(sc && sc.scrollTop>0) return;                 // let content scroll first
     if(opts.canStart && !opts.canStart()) return;
     armed=true; live=false; startY=pos(e); base=el.style.transition;
-    /* A tall sheet is mostly scroll surface. Even sitting at scrollTop 0, the browser claims a
-       downward drag as a scroll before our handler can commit — so the sheet never moved. Lock
-       scrolling for the duration of the press and hand it back on release. */
-    if(el.scrollHeight>el.clientHeight){ el.dataset.cwOv=el.style.overflowY||""; el.style.overflowY="hidden"; }
+    /* v259: the overflow lock used to go on HERE, at pointerdown, whenever the sheet was at
+       scrollTop 0. That killed scrolling outright: to scroll a list you press and drag, and by
+       the time you moved, overflow was already hidden — so an upward drag scrolled nothing and
+       a tall sheet (Settings, the report grid) could never reach its own bottom. It read as
+       "cut off" because the part below the fold was genuinely unreachable.
+       The lock now waits until we KNOW the gesture is a downward pull, decided on first move. */
   });
   el.addEventListener("pointermove", function(e){
     if(!armed && !live) return;
     var dy=pos(e)-startY;
     if(!live){
-      if(dy<10) return;                              // upward or tiny: not this gesture
+      if(dy<-6){ armed=false; return; }              // upward: this is a scroll, hands off
+      if(dy<10) return;                              // too small to call yet
       live=true; armed=false;
+      /* Commit to the pull only now, and take the scroll surface with it. Locking at this
+         point still stops the browser stealing the rest of the drag, without ever blocking a
+         gesture that turned out to be a scroll. */
+      if(el.scrollHeight>el.clientHeight && el.dataset.cwOv===undefined){
+        el.dataset.cwOv=el.style.overflowY||""; el.style.overflowY="hidden";
+      }
       el.style.transition="none";
       try{ el.setPointerCapture(e.pointerId); }catch(err){}
     }
@@ -5293,6 +5367,15 @@ function openSheet(id){
   // the "destination set" confirm card floats over the sheet and was eating taps on
   // Start navigation — get it out of the way as soon as a sheet opens
   try{ if(id==="routeSheet"){ $("confirmBar").style.display="none"; clearTimeout(window.__confT); } }catch(e){}
+  /* Clear any residue from an interrupted pull. If a gesture is cut short — which happens
+     whenever we close one sheet to open another — the sheet can keep a translateY and a hidden
+     overflow forever, which looks exactly like "cut off and won't scroll". */
+  try{
+    var _sh=$(id);
+    _sh.style.transform=""; _sh.style.opacity="";
+    if(_sh.dataset.cwOv!==undefined){ _sh.style.overflowY=_sh.dataset.cwOv; delete _sh.dataset.cwOv; }
+    else _sh.style.overflowY="";
+  }catch(e){}
   $(id).classList.add("open");pushUI();try{window._cwSheetAt=Date.now();}catch(e){}
 }
 document.querySelectorAll(".sheet").forEach(s=>{
@@ -6300,6 +6383,7 @@ try{
                    (_offTxt?("\noffline "+_offTxt):"")+
                    /* Tools trail: long-press LIVE after tapping a tool row and this says whether
                       the sheet actually opened, so the next report is evidence not inference. */
+                   ((typeof _probeTxt!=="undefined") ? ("\n"+_probeTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
                    "\ndecl    "+(_declNative?"OS true north":
