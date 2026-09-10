@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v269";
+const APP_VERSION="v270";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -442,6 +442,21 @@ var BASE_MINZ = (function(){
 var _probeTxt = "basemap  not probed yet";
 var _probeRan = false;
 var _searchTxt = "";
+/* Which raster layers are ACTUALLY in the style right now, with their visibility and zoom
+   range. Every theory about the wallpaper has assumed which layer is drawing it; this stops the
+   assuming. If a layer is listed as visible at a zoom where the words appear, that is the one. */
+function _rasterTxt(){
+  try{
+    if(!map||!map.getStyle) return "";
+    var ls=(map.getStyle().layers||[]).filter(function(l){ return l.type==="raster"; });
+    if(!ls.length) return "raster   none";
+    return "raster   "+ls.map(function(l){
+      var vis="?"; try{ vis=map.getLayoutProperty(l.id,"visibility")||"visible"; }catch(e){}
+      var z=(l.minzoom!==undefined?l.minzoom:0)+"-"+(l.maxzoom!==undefined?l.maxzoom:24);
+      return l.id+"["+vis.charAt(0)+" z"+z+"]";
+    }).join(" ");
+  }catch(e){ return "raster   err"; }
+}
 function _tileXY(lat,lng,z){
   var n=Math.pow(2,z);
   var x=Math.floor((lng+180)/360*n);
@@ -820,6 +835,8 @@ let mapStyleTheme="dark";
   map.on("load",()=>{ S.mapReady=true; addMapLayers(); initUserMarker(); try{ restoreRouteLocal(); }catch(e){}
     try{ ensureSignalLayer(); scheduleSignalFetch(); }catch(e){}
     setTimeout(function(){ try{ probeBasemapFloor(false); }catch(e){} }, 4000);
+    /* Clear any satellite layer left behind by an earlier session before it can paint. */
+    try{ pruneSat(); }catch(e){}
     /* Radar was writing cw_radar on every toggle and never reading it back, so it reset to off
        on every launch. Restore it — and default to ON, since precipitation is something a
        driver wants to see without having gone looking for a setting. */
@@ -1040,7 +1057,7 @@ function ensureRouteLayers(){
     try{ _addSignalImage(); }catch(e){}          // style swaps drop registered images
     /* A style swap rebuilds the sat layer from scratch — re-assert the zoom floor or the error
        tiles come straight back the next time the driver zooms out. */
-    try{ if(S.sat) ensureSat(); else if(map.getLayer("esri-sat")) map.setLayerZoomRange("esri-sat",SAT_MINZ,24); }catch(e){}
+    try{ if(S.sat) ensureSat(); else pruneSat(); }catch(e){}
     if(!map.getSource("signals")||!map.getLayer("signal-dots")) ensureSignalLayer();
     if(S.route&&S.route.geometry&&map.getSource("route")) map.getSource("route").setData({type:"Feature",geometry:S.route.geometry});
     refreshRouteCondition();
@@ -1801,6 +1818,9 @@ async function upgradePoiDistances(els){
   });
 }
 
+/* The dock's orange arrow — the "force search" box — went straight to forceGeocode, which is
+   the pipeline that keeps returning local matches. My last fix only covered the Search button
+   inside the panel, so this one stayed broken. Both routes now go through the same place. */
 function doSearch(){const q=$("search").value.trim();if(!q)return;$("results").style.display="none";const cat=poiCategory(q);if(cat){$("search").blur();openCategorySearch(cat);return;}forceGeocode(q);}
 $("searchbtn").onclick=doSearch;
 $("search").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doSearch();}});
@@ -5972,9 +5992,26 @@ function ensureSat(){
        that already exists, which addLayer's guard does not. */
     try{ map.setLayerZoomRange("esri-sat", SAT_MINZ, 24); }catch(e){}
     map.setLayoutProperty("esri-sat","visibility",S.sat?"visible":"none");
+  }catch(e){}
+}
+/* Satellite off means GONE, not hidden. A hidden layer still sits in the style, still gets its
+   zoom range reset by any style rebuild, and is one stray setLayoutProperty away from painting
+   again — which is exactly the kind of ghost that would explain error tiles appearing over a
+   basemap that is itself fine. Called on every style load, not only when the driver toggles. */
+function pruneSat(){
+  try{
+    if(!map||!map.getStyle) return;
+    if(S.sat){ if(map.getLayer("esri-sat")) map.setLayerZoomRange("esri-sat",SAT_MINZ,24); return; }
+    if(map.getLayer("esri-sat")) map.removeLayer("esri-sat");
+    if(map.getSource("esri")) map.removeSource("esri");
+  }catch(e){}
+}
+function _satTail(){
+  try{
   }catch{}
 }
-$("fabSat").onclick=()=>{S.sat=!S.sat;$("fabSat").classList.toggle("active",S.sat);ensureSat();
+$("fabSat").onclick=()=>{S.sat=!S.sat;$("fabSat").classList.toggle("active",S.sat);
+  if(S.sat) ensureSat(); else pruneSat();
   toast(S.sat?(map&&map.getZoom&&map.getZoom()<SAT_MINZ?"🛰 Satellite on — zoom in to see it":"🛰 Satellite imagery on"):"Satellite off");};
 $("testCue")&&($("testCue").onclick=()=>{ turnCue(2); toast("📳 Turn cue — if you felt a buzz, your iOS supports haptics"); });
 $("satKeySave").onclick=()=>{
@@ -6713,6 +6750,7 @@ try{
                       the sheet actually opened, so the next report is evidence not inference. */
                    ((typeof _probeTxt!=="undefined") ? ("\n"+_probeTxt) : "")+
                    ((typeof _searchTxt!=="undefined" && _searchTxt) ? ("\n"+_searchTxt) : "")+
+                   ((typeof _rasterTxt==="function") ? ("\n"+_rasterTxt()) : "")+
                    ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
@@ -7496,10 +7534,19 @@ async function placeCandidates(q){
         var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
         if(nm.length<2 || city.length<3 || GENERIC_WORDS.test(city)) continue;
         try{
-          var cu="https://nominatim.openstreetmap.org/search?format=json&limit=1&city="+encodeURIComponent(city);
-          var cr=await (await fetch(cu,{headers:{Accept:"application/json"}})).json();
-          if(!cr || !cr.length) continue;
-          var clat=+cr[0].lat, clng=+cr[0].lon;
+          /* v270 — the actual reason nothing I built for this ever worked.
+             Every fix since v256 — the city split, the amenity pass, the city-bias lookup —
+             went through Nominatim. Nominatim requires an identifying User-Agent and rate-limits
+             hard; a browser fetch cannot set User-Agent, so those requests were being refused
+             and I was reading empty responses as a ranking problem. The debug counts said so
+             every time and I did not hear it: photon:1 unbiased:1 with Nominatim contributing
+             nothing, build after build.
+             Photon answers browsers without a key and geocodes cities perfectly well. Use it. */
+          var cu="https://photon.komoot.io/api/?limit=1&lang=en&osm_tag=place:city&q="+encodeURIComponent(city);
+          var cj=await (await fetch(cu)).json();
+          var f=(cj&&cj.features&&cj.features[0]);
+          if(!f||!f.geometry) continue;
+          var clng=+f.geometry.coordinates[0], clat=+f.geometry.coordinates[1];
           if(!isFinite(clat)) continue;
           /* Only worth doing when the named city is somewhere else — otherwise this is just the
              local search again with extra steps. */
@@ -7518,20 +7565,12 @@ async function placeCandidates(q){
       if(tk.length<=n) return;
       var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
       if(nm.length<2 || city.length<3 || GENERIC_WORDS.test(city)) return;
-      counts.split++;
-      /* Structured-only — Nominatim rejects any request mixing free-form q with structured
-         fields, which is what made the earlier version of this pass return nothing. */
-      var u="https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6"+
-            "&amenity="+encodeURIComponent(nm)+"&city="+encodeURIComponent(city);
-      jobs.push(fetch(u,{headers:{Accept:"application/json"}})
-        .then(function(r){return r.json();})
-        .then(function(list){
-          add((list||[]).map(function(r){
-            return {name:String(r.display_name).split(",")[0],
-                    label:String(r.display_name).split(",").slice(1,4).join(",").trim(),
-                    lat:+r.lat, lng:+r.lon};
-          }));
-        }).catch(function(){}));
+      /* Also Photon: "<name> <city>" as free text with no local bias. Cheap, and it covers the
+         case where the city-lookup above misses. */
+      var u="https://photon.komoot.io/api/?limit=8&lang=en&q="+encodeURIComponent(nm+" "+city);
+      jobs.push(fetch(u).then(function(r){return r.json();})
+        .then(function(d){ var m=_photonMap(d); counts.split+=m.length; add(m); })
+        .catch(function(){}));
     });
   }
   await Promise.all(jobs);
