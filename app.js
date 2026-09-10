@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v260";
+const APP_VERSION="v261";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -249,7 +249,7 @@ function rasterStyle(dark){
   var _hw=false; try{ _hw=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
   const url = _hw
     ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
   let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
     : {};
@@ -297,6 +297,18 @@ function _settleStat(id, ms){
    matches another's length to the byte. Any length seen at two or more different zooms is
    therefore the error image, and the floor is the lowest zoom that does not return it. Below
    that floor MapLibre stretches the lowest good tile, which looks coarse but is correct. */
+/* TILE_CB — cache buster, and the fix for "Zoom Level Not Supported".
+   The probe settled this. Fetched fresh with cache:"no-store", Esri returns a real tile at
+   every zoom 0-10, for BOTH services. So the map was never getting those bytes: it reads
+   through the normal HTTP cache, which is still holding error PNGs from an earlier episode —
+   almost certainly the v240-v254 window when 128px tiles quadrupled the request rate and Esri
+   started refusing. Those refusals came back 200 OK and fully cacheable, so the phone stored
+   them and has re-served them ever since, at exactly the zooms that were being hammered.
+   That is why this survived every zoom-range change, every revert, and a fresh version each
+   time: nothing I changed ever made the browser ASK again.
+   Bumping this string changes the URL, which the cache has no entry for. Bump it again if
+   poisoned tiles ever reappear. */
+var TILE_CB = "?cw=2";
 var BASE_MINZ = (function(){ try{ var v=parseInt(localStorage.getItem("cw_baseMinz"),10); return isFinite(v)?v:0; }catch(e){ return 0; } })();
 var _probeTxt = "basemap  not probed yet";
 var _probeRan = false;
@@ -388,7 +400,7 @@ function rasterStyleObj(dark){
   // ONE source for both themes: Esri's street map has tiles all the way to nav zoom (17-19).
   // The dark canvas basemap tops out ~z16, which produced "Map data not yet available" while driving.
   // Night mode is rendered by darkening these tiles instead of swapping to a shallower source.
-  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}";
+  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
   /* Dark mode used to knock 35% of the saturation out of the tiles. That is what made parks,
      water and road classes collapse into the same grey — next to Apple Maps it reads as a dead
      map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
@@ -1926,7 +1938,7 @@ function _baseTileTpl(){
     if(ck){ var base=(S.theme==="dark")?"dark_all":"voyager";
       return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+base+"/{z}/{x}/{y}.png?key="+ck, yx:false}; }
   }catch(e){}
-  return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", yx:true};
+  return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB, yx:true};
 }
 function corridorTileURLs(coords){
   var tpl=_baseTileTpl(), seen={}, out=[], CAP=800;
@@ -5700,7 +5712,7 @@ function bindInspect(){
 (function waitMap(){ if(typeof map!=="undefined"&&map){bindInspect();} else setTimeout(waitMap,300); })();
 
 /* satellite — main-map layer + 360° orbit preview */
-const ESRI=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"];
+const ESRI=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"+TILE_CB];
 var SAT_MINZ=10;   // raised automatically if the probe finds a higher real floor   // below this Esri serves error tiles, and imagery is useless anyway
 S.sat=false;
 // HD satellite: if the user supplies a free MapTiler key, use its sharper/newer imagery; else keyless Esri
@@ -6440,7 +6452,11 @@ try{
         _dbg=document.createElement("div"); _dbg.id="dockDbg";
         _dbg.style.cssText="position:fixed;left:8px;top:52%;z-index:9999;font:11px/1.45 ui-monospace,monospace;"+
           "background:rgba(0,0,0,.86);color:#5BF0C8;padding:8px 10px;border-radius:8px;"+
-          "pointer-events:none;white-space:pre;max-width:74vw";
+          /* The probe's per-zoom map is a long line and white-space:pre refuses to break it, so
+             it ran off the panel and over the map. Wrap it, cap the height, and let it scroll —
+             which needs pointer events back on. */
+          "white-space:pre-wrap;word-break:break-word;max-width:min(92vw,560px);"+
+          "max-height:64vh;overflow:auto;-webkit-overflow-scrolling:touch";
         document.body.appendChild(_dbg);
       }
       _corridorRefresh();
@@ -7185,7 +7201,18 @@ async function forceGeocode(q){
   const crowd=await crowdLookup(q);
   if(crowd){ confirmDestination({lat:crowd.lat,lng:crowd.lng,label:crowd.label||q},q); toast("📍 Matched to where most drivers go",2600); return; }
   const want=parseAddr(q);
-  let cands=await geocodeCandidates(q);
+  /* The typeahead already resolves this correctly — its sources include the city-split pass
+     and its ranking is city-aware. geocodeCandidates is a separate, older pipeline that keeps
+     missing the same row. Rather than maintain two rankings that disagree with each other,
+     prefer whatever the suggestion pipeline already resolved for this exact query. */
+  let cands=null;
+  try{
+    var _hit=(typeof acCache!=="undefined") && acCache.get(SEARCH_RANK_VER+"|"+q);
+    if(_hit && _hit.length) cands=_hit.map(function(r){
+      return {name:r.name, display_name:(r.name+(r.label?(", "+r.label):"")), lat:r.lat, lon:r.lng};
+    });
+  }catch(e){}
+  if(!cands || !cands.length) cands=await geocodeCandidates(q);
   // Places often carry a longer official name than what people type ("Godfrey rooftop" vs
   // "I|O Godfrey Rooftop Lounge"). If the full phrase finds nothing, retry on the distinctive
   // words only — the same retry the search panel does.
@@ -7741,7 +7768,7 @@ async function downloadOfflineArea(){
       const n=Math.pow(2,z); if(x<0||y<0||x>=n||y>=n)continue;
       const url= ck
         ? `https://${subs[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/${dark?"dark_all":"voyager"}/${z}/${x}/${y}.png?key=${ck}`
-        : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`;
+        : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`+TILE_CB;
       total++;
       jobs.push(fetch(url,{mode:"cors"}).then(res=>{if(res.ok){okc++;return cache.put(url,res.clone());}}).catch(()=>{}));
       if(jobs.length>=60){await Promise.all(jobs);jobs.length=0;$("dlOffline").querySelector("small").textContent=`Downloading… ${okc} tiles`;}
