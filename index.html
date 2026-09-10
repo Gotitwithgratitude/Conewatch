@@ -1487,7 +1487,7 @@
   </div>
   <div id="tourFade" style="position:absolute;top:0;left:0;right:0;height:34%;pointer-events:none;background:linear-gradient(to bottom,rgba(191,224,255,.65),rgba(191,224,255,0))"></div>
   <div style="position:absolute;top:calc(10px + env(safe-area-inset-top));left:12px;right:12px;display:flex;gap:10px;align-items:flex-start;pointer-events:none">
-    <div style="flex:1;min-width:0;background:rgba(8,12,20,.8);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:12px 16px;color:#fff">
+    <div id="tourBanner" style="flex:1;min-width:0;background:rgba(8,12,20,.8);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:12px 16px;color:#fff">
       <div id="tourInstr" style="font-size:16px;font-weight:700;line-height:1.25;overflow-wrap:break-word">Building preview…</div>
       <div id="tourDist" style="font-size:13px;color:#22d3aa;margin-top:3px;font-family:var(--tech,monospace)"></div>
     </div>
@@ -1498,6 +1498,9 @@
     <div style="display:flex;gap:8px;align-items:center">
       <div id="tourGear" style="flex:0 0 auto;min-width:44px;text-align:center;color:#ffd24a;font-family:var(--tech,monospace);font-size:15px;font-weight:700;letter-spacing:1px;text-shadow:0 0 10px rgba(255,168,32,.55)">G1</div>
       <button class="btn ghost" id="tourSpeed" style="flex:0 0 auto;min-width:50px">1&times;</button>
+      <!-- The turn banner is off by default now: this is a look at the road, not a nav screen.
+           Anyone who wants the instructions can put them back with one tap. -->
+      <button class="btn ghost" id="tourCues" style="flex:0 0 auto;min-width:44px" title="Show turn instructions">🗒</button>
       <button class="btn ghost" id="tourRestart" style="flex:0 0 auto;min-width:50px">&#8635;</button>
       <button class="btn ghost" id="tourPlay" style="flex:0 0 auto;min-width:50px">&#10073;&#10073;</button>
       <button class="btn ghost" id="tourBoost" style="flex:0 0 auto;min-width:58px;color:#c9a4ff;border-color:rgba(160,110,255,.5);text-shadow:0 0 10px rgba(150,90,255,.7)">N2O</button>

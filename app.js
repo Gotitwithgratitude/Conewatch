@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v262";
+const APP_VERSION="v263";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -308,7 +308,35 @@ function _settleStat(id, ms){
    time: nothing I changed ever made the browser ASK again.
    Bumping this string changes the URL, which the cache has no entry for. Bump it again if
    poisoned tiles ever reappear. */
-var TILE_CB = "?cw=2";
+var TILE_CB = "?cw=3";
+
+/* v263 — why the v262 cache-buster did not work.
+   There is a SERVICE WORKER with its own tile cache ("cw-tiles-v2"), and the app precaches
+   tiles into it. A service worker sits IN FRONT of the HTTP cache, so changing the query string
+   only helps if its fetch handler keys on the full URL; if it matches with ignoreSearch — or
+   simply already holds an entry it considers good — the poisoned "Zoom Level Not Supported"
+   PNGs keep being served no matter what URL we ask for.
+   Routing around it clearly did not work, so delete the bytes instead. This runs once per
+   purge version and drops every ConeWatch tile cache outright. The cost is re-downloading
+   tiles the driver has already seen; the benefit is that a corrupted cache can no longer
+   outlive any number of releases. */
+(async function purgePoisonedTiles(){
+  try{
+    if(!("caches" in window)) return;
+    if(localStorage.getItem("cw_tilePurge")==="3") return;
+    var names=await caches.keys();
+    for(var i=0;i<names.length;i++){
+      if(/^cw-tiles/.test(names[i])) await caches.delete(names[i]);
+    }
+    /* And tell the service worker to forget them too, in case it holds its own handle. */
+    try{
+      if(navigator.serviceWorker && navigator.serviceWorker.controller)
+        navigator.serviceWorker.controller.postMessage({type:"cw-purge-tiles"});
+    }catch(e){}
+    localStorage.setItem("cw_tilePurge","3");
+    try{ console.log("ConeWatch: purged",names.filter(function(n){return /^cw-tiles/.test(n);}).length,"tile cache(s)"); }catch(e){}
+  }catch(e){}
+})();
 var BASE_MINZ = (function(){
   /* v260/v261 could persist a floor derived from a rate-limited survey. Discard anything stored
      by those builds; a wrong floor blanks the map at zooms that were always fine. */
@@ -6043,8 +6071,11 @@ function startTour(co,cum,total,marks){
      impossible to read. Duration now scales with distance up to five minutes, and the camera
      compensates for whatever speed remains (see _tourRender). */
   const baseDur=Math.min(480000,Math.max(14000, total*7)); // ~7ms per metre, 14s–8min
-  tourState={co,cum,total,marks,baseDur,frac:0,speed:0.5,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
-  $("tourSpeed").innerHTML="0.5&times;";
+  /* Default 1x, not 0.5x. Duration now scales with distance, so 0.5x on top of that was
+     genuinely sluggish on a short route — the two slowdowns were compounding. */
+  tourState={co,cum,total,marks,baseDur,frac:0,speed:1,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
+  $("tourSpeed").innerHTML="1&times;";
+  try{ _applyTourCues(); }catch(e){}
   try{ var _g0=$("tourGear"); if(_g0) _g0.textContent="G1"; }catch(e){}
   $("tourPlay").innerHTML="&#10073;&#10073;";
   runTour();
@@ -6076,8 +6107,13 @@ function _tourRender(){
      cinematic camera is right, and every doubling above that pulls the camera back further. At
      the top it becomes a regional map flyover, which is honest: you cannot show street detail
      at that speed, so show something legible instead of a smear. */
+  /* v263: I over-corrected. Pulling the camera back 6.6 zoom levels turned the drive preview
+     into a map flyover — you could see the route but you were no longer IN the car, which is
+     the entire point of the feature. The pullback is now gentle (2.4 levels, floored at z15 so
+     the road always fills the frame) and the speed problem is solved where it belongs: by
+     slowing the flight down, not by retreating from it. */
   var _fast = Math.max(0, Math.min(1, Math.log2(Math.max(1,_mps)/45)/3.2));
-  var zoom=17.7 - Math.max(0,Math.min(1.9,(spd-1)*0.62)) - _fast*6.6;
+  var zoom=Math.max(15.0, 17.7 - Math.max(0,Math.min(1.9,(spd-1)*0.62)) - _fast*2.4);
   st._fastness=_fast;
   // CHASE CAM: center between car and the near look-ahead, pitch ~78 so the horizon rises and the road stretches out ahead
   // push the camera target further down the road as speed rises: the ground enters the viewport
@@ -6087,7 +6123,9 @@ function _tourRender(){
   var H=(tourMap.getContainer&&tourMap.getContainer().clientHeight)||600;
   /* Flatten the pitch as speed rises too. At 78 degrees the horizon is high and the road
      stretches away, which is lovely at city speed and unreadable at freeway-times-ten. */
-  var _pitch=(S._drivePitch||78) - (st._fastness||0)*26;
+  /* Keep the windshield angle. 78 degrees is what makes it feel like the driver's seat; the
+     old flattening to 52 was the "high up" look you spotted. Never drop below 72. */
+  var _pitch=Math.max(72,(S._drivePitch||78) - (st._fastness||0)*6);
   tourMap.jumpTo({center:camCtr,bearing:st.curBrg,pitch:_pitch,zoom:zoom,padding:{top:Math.round(H*0.34),bottom:0,left:0,right:0}});
   // apply the lean (scale hides rotation corners + adds cockpit-forward feel)
   var mm=$("driveMap"); if(mm) mm.style.transform="scale(1.08) rotate("+lean.toFixed(2)+"deg)";
@@ -6218,6 +6256,23 @@ function endBoost(){
 }
 $("tourBoost")&&($("tourBoost").onclick=function(){ startBoost(); });
 /* 0.25x added: on a 285-mile route even 0.5x is covering ground faster than any real vehicle. */
+/* Turn instructions OFF by default in the drive preview. You are previewing what the road
+   looks like; a nav banner reading "Take the exit in 1.4 mi" is the regular GPS experience
+   layered on top and it competes with the thing you came to see. One tap restores it, and the
+   choice persists. */
+var _tourCues = (function(){ try{ return localStorage.getItem("cw_tourCues")==="1"; }catch(e){ return false; } })();
+function _applyTourCues(){
+  try{
+    var b=$("tourBanner"); if(b) b.style.display=_tourCues?"":"none";
+    var t=$("tourCues"); if(t){ t.style.opacity=_tourCues?"1":".45"; t.title=_tourCues?"Hide turn instructions":"Show turn instructions"; }
+  }catch(e){}
+}
+$("tourCues")&&($("tourCues").onclick=()=>{
+  _tourCues=!_tourCues;
+  try{ localStorage.setItem("cw_tourCues",_tourCues?"1":"0"); }catch(e){}
+  _applyTourCues();
+  try{ toast(_tourCues?"Turn instructions on":"Turn instructions off"); }catch(e){}
+});
 $("tourSpeed")&&($("tourSpeed").onclick=()=>{ const st=tourState; if(!st)return;
   st.speed = st.speed===0.25?0.5 : st.speed===0.5?1 : st.speed===1?2 : st.speed===2?4 : 0.25;
   $("tourSpeed").innerHTML=(st.speed<1?String(st.speed):st.speed)+"&times;"; });
@@ -7818,7 +7873,7 @@ async function downloadOfflineArea(){
   const ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim();
   const subs=["a","b","c","d"];
   const lat=S.pos.lat,lon=S.pos.lng;
-  const cache=await caches.open("cw-tiles-v2");
+  const cache=await caches.open("cw-tiles-v3");
   let total=0,okc=0;const jobs=[];
   for(let z=11;z<=17;z++){
     const [cx,cy]=tileXY(lat,lon,z);
