@@ -593,6 +593,16 @@
   #moreFabs{display:none !important}
   /* A real search action. The dock's arrow is a long way from the keyboard and reads as
      "next", not "search"; this sits in the search bar where the thumb already is. */
+  .sp-row{position:relative}
+  .sp-del{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+    width:32px;height:32px;border-radius:50%;border:none;background:transparent;
+    color:var(--mute);font-size:15px;line-height:1;cursor:pointer;flex:none}
+  .sp-del:active{background:rgba(127,127,127,.22);color:inherit}
+  .sp-row .sp-tx{padding-right:34px}
+  .sp-clearall{display:block;width:100%;margin:10px 0 4px;padding:12px;
+    background:transparent;border:1px solid var(--edge);border-radius:12px;
+    color:var(--mute);font:inherit;font-size:14px;cursor:pointer}
+  .sp-clearall:active{background:rgba(127,127,127,.14)}
   .sp-go{flex:none;margin-left:8px;background:var(--accent,#F26B21);color:#fff;border:none;
     border-radius:12px;padding:10px 16px;font-weight:800;font-size:14px;cursor:pointer;
     letter-spacing:.02em}
@@ -1495,12 +1505,15 @@
   </div>
   <div style="position:absolute;left:10px;right:10px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:4;background:rgba(14,16,20,.5);-webkit-backdrop-filter:saturate(170%) blur(22px);backdrop-filter:saturate(170%) blur(22px);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:12px 12px;box-shadow:0 0 0 .5px rgba(255,255,255,.1),0 10px 30px rgba(0,0,0,.45)">
     <div id="tourTrack" style="height:14px;display:flex;align-items:center;margin-bottom:8px;cursor:pointer;touch-action:none"><div style="height:5px;width:100%;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden"><div id="tourProg" style="height:100%;width:0;background:linear-gradient(90deg,#22d3aa,#5bf0c8)"></div></div></div>
-    <div style="display:flex;gap:8px;align-items:center">
+    <!-- Adding the notes button made seven controls compete for one row and pushed "Start
+         driving" off the right edge. Let the row wrap instead of overflowing; the primary
+         action keeps its own line on a narrow phone rather than being clipped. -->
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <div id="tourGear" style="flex:0 0 auto;min-width:44px;text-align:center;color:#ffd24a;font-family:var(--tech,monospace);font-size:15px;font-weight:700;letter-spacing:1px;text-shadow:0 0 10px rgba(255,168,32,.55)">G1</div>
       <button class="btn ghost" id="tourSpeed" style="flex:0 0 auto;min-width:50px">1&times;</button>
       <!-- The turn banner is off by default now: this is a look at the road, not a nav screen.
            Anyone who wants the instructions can put them back with one tap. -->
-      <button class="btn ghost" id="tourCues" style="flex:0 0 auto;min-width:44px" title="Show turn instructions">🗒</button>
+      <button class="btn ghost" id="tourCues" style="flex:0 0 auto;min-width:42px;padding-left:10px;padding-right:10px" title="Show turn instructions">🗒</button>
       <button class="btn ghost" id="tourRestart" style="flex:0 0 auto;min-width:50px">&#8635;</button>
       <button class="btn ghost" id="tourPlay" style="flex:0 0 auto;min-width:50px">&#10073;&#10073;</button>
       <button class="btn ghost" id="tourBoost" style="flex:0 0 auto;min-width:58px;color:#c9a4ff;border-color:rgba(160,110,255,.5);text-shadow:0 0 10px rgba(150,90,255,.7)">N2O</button>

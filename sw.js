@@ -10,7 +10,12 @@
    • skipWaiting + clients.claim so a new version takes over promptly.
 */
 const CACHE = "conewatch-cache-v2";
-const TILES = "conewatch-tiles-v2";   // v1 purged: it held unverifiable opaque responses
+/* v3: v2 is deliberately abandoned rather than reused. It accumulated Esri "Zoom Level Not
+   Supported" error tiles, which are served as 200 OK PNGs and so passed every check below.
+   Once cached they became permanent — the map reads the cache, so the wallpaper survived every
+   app release, every version bump and every zoom-range fix. Renaming the cache is what actually
+   removes them, because activate() deletes any cache that is not the current pair. */
+const TILES = "conewatch-tiles-v3";
 const TILE_CAP = 1400;                 // ~50-90MB of 256px tiles; trimmed oldest-first
 const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/apple-touch-icon.png","/icon-512.png"];
 /* The POI index is same-origin and immutable, so it falls into the cache-first branch below with
@@ -21,6 +26,26 @@ const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/
    served from cache — a cached hazard or a cached route would be worse than no answer at all. */
 const TILE_HOSTS = ["server.arcgisonline.com","api.maptiler.com","basemaps.cartocdn.com"];
 function isTile(url){ return TILE_HOSTS.indexOf(url.hostname) !== -1; }
+
+/* THE ROOT CAUSE, and the guard against it happening again.
+   ArcGIS answers a tile it will not serve with an error IMAGE — "Zoom Level Not Supported" —
+   at HTTP 200, with content-type image/png. Status, type and content-type all look correct, so
+   every validity check we had passed and the refusal was cached like a real tile. From then on
+   the map painted those words at that zoom forever, and no amount of changing the request URL
+   helped, because the service worker answers before the network is ever consulted.
+   The one thing that separates them is size: an error card is a flat box with a line of text and
+   compresses to a couple of KB, where a real street or imagery tile at any zoom we request runs
+   into tens of KB. Refusing to cache anything under 4KB costs at most one refetch of a genuinely
+   empty tile — over open water, say — and prevents a transient refusal from becoming permanent. */
+const MIN_TILE_BYTES = 4096;
+async function isRealTile(res){
+  try{
+    const cl = parseInt(res.headers.get("content-length") || "", 10);
+    if (isFinite(cl)) return cl >= MIN_TILE_BYTES;
+    const buf = await res.clone().arrayBuffer();     // no content-length → measure it ourselves
+    return buf.byteLength >= MIN_TILE_BYTES;
+  }catch(err){ return false; }                        // cannot verify → do not cache
+}
 
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
@@ -34,7 +59,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil((async () => {
     const keys = await caches.keys();
-    // keep both of ours; drop anything older
+    // keep both of ours; drop anything older — this is what finally removes conewatch-tiles-v2
     await Promise.all(keys.filter((k) => k !== CACHE && k !== TILES).map((k) => caches.delete(k)));
     await self.clients.claim();
     // tell any open pages a fresh worker is now in control
@@ -69,14 +94,16 @@ async function precacheTiles(urls){
            rate-limit body and a real tile are indistinguishable — and caching one poisons that
            tile forever, which is what was painting garbled fragments over the map. */
         const res = await fetch(u, { mode: "cors", credentials: "omit" });
-        if (res && res.ok && (res.headers.get("content-type") || "").indexOf("image") === 0) {
+        if (res && res.ok && (res.headers.get("content-type") || "").indexOf("image") === 0
+            && await isRealTile(res)) {
           await c.put(u, res.clone()); ok++;
         }
       }catch(err){}
     }
   }
   /* Two workers, not four. This runs while the driver is still using the app, and four parallel
-     tile fetches on one cell connection starve the live map of the tiles it needs right now. */
+     tile fetches on one cell connection starve the live map of the tiles it needs right now.
+     Bulk-fetching harder is also what got us rate-limited into error tiles in the first place. */
   await Promise.all([worker(), worker()]);
   await trimTiles();
   return ok;
@@ -90,7 +117,15 @@ self.addEventListener("message", (e) => {
       try{ e.source && e.source.postMessage({ type: "cw-tiles-ready", count: n }); }catch(err){}
     }));
   }
-  if (d.type === "cw-clear-tiles") { e.waitUntil(caches.delete(TILES)); }
+  /* Accepts both names. The app asked for "cw-purge-tiles" while this listened only for
+     "cw-clear-tiles", so the purge request was silently dropped. Also purges by pattern rather
+     than by exact name, so a rename on either side can never orphan a poisoned cache again. */
+  if (d.type === "cw-clear-tiles" || d.type === "cw-purge-tiles") {
+    e.waitUntil((async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => /tiles/i.test(k)).map((k) => caches.delete(k)));
+    })());
+  }
 });
 
 function isCode(url) {
@@ -112,8 +147,10 @@ self.addEventListener("fetch", (e) => {
       if (hit) return hit;
       try{
         const res = await fetch(req);
-        // only ever store a response we could actually verify
-        if (res && res.ok && res.type !== "opaque") c.put(req, res.clone());
+        // only store a response we could verify AND that is big enough to be a real tile
+        if (res && res.ok && res.type !== "opaque") {
+          if (await isRealTile(res)) c.put(req, res.clone());
+        }
         return res;
       }catch(err){
         return hit || Response.error();

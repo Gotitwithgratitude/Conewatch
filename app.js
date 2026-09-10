@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v263";
+const APP_VERSION="v264";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -323,18 +323,23 @@ var TILE_CB = "?cw=3";
 (async function purgePoisonedTiles(){
   try{
     if(!("caches" in window)) return;
-    if(localStorage.getItem("cw_tilePurge")==="3") return;
+    if(localStorage.getItem("cw_tilePurge")==="4") return;
     var names=await caches.keys();
     for(var i=0;i<names.length;i++){
-      if(/^cw-tiles/.test(names[i])) await caches.delete(names[i]);
+      /* v264: this matched /^cw-tiles/ and the real cache is called "conewatch-tiles-v2", so it
+         never matched anything and the purge did nothing at all. Match on the word instead of a
+         guessed prefix — a rename on either side can no longer orphan a poisoned cache. */
+      if(/tiles/i.test(names[i])) await caches.delete(names[i]);
     }
     /* And tell the service worker to forget them too, in case it holds its own handle. */
     try{
       if(navigator.serviceWorker && navigator.serviceWorker.controller)
-        navigator.serviceWorker.controller.postMessage({type:"cw-purge-tiles"});
+        /* And the worker listens for "cw-clear-tiles" — the name I sent did not exist, so the
+           message was silently dropped. Send both; sw.js now accepts either. */
+        navigator.serviceWorker.controller.postMessage({type:"cw-clear-tiles"});
     }catch(e){}
-    localStorage.setItem("cw_tilePurge","3");
-    try{ console.log("ConeWatch: purged",names.filter(function(n){return /^cw-tiles/.test(n);}).length,"tile cache(s)"); }catch(e){}
+    localStorage.setItem("cw_tilePurge","4");
+    try{ console.log("ConeWatch: purged",names.filter(function(n){return /tiles/i.test(n);}).length,"tile cache(s)"); }catch(e){}
   }catch(e){}
 })();
 var BASE_MINZ = (function(){
@@ -7277,6 +7282,51 @@ function crowdSave(q,res){
   if(!S.sb.url||!S.sb.key)return;
   try{ fetch(`${S.sb.url}/rest/v1/geo_picks`,{method:"POST",headers:sbH({"Content-Type":"application/json"}),body:JSON.stringify({q:q.trim().toLowerCase(),lat:res.lat,lng:res.lng,label:res.label||q})}); }catch(e){}
 }
+/* The suggestion pipeline, minus the rendering — so the Search button and the typeahead can
+   never disagree about what "Godfrey chicago" means. Deliberately shares _placeScore and the
+   city-split pass with spSearch rather than reimplementing either. */
+async function placeCandidates(q){
+  var pool=[];
+  var toks=q.toLowerCase().replace(/['\u2019]/g,"").split(/\s+/).filter(function(w){return w.length>1;});
+  var typedPlace=(function(){ try{ var p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
+  function add(rows){ if(rows&&rows.length) pool=pool.concat(rows); }
+
+  var jobs=[
+    fetch(_photonURL(q)).then(function(r){return r.json();}).then(function(d){ add(_photonMap(d)); }).catch(function(){}),
+    /* Unbiased: no lat/lon at all, so a distant named place can actually reach the pool. */
+    fetch("https://photon.komoot.io/api/?limit=10&lang=en&q="+encodeURIComponent(q))
+      .then(function(r){return r.json();}).then(function(d){ add(_photonMap(d)); }).catch(function(){})
+  ];
+  var tk=q.trim().split(/\s+/);
+  if(tk.length>=2){
+    [1,2].forEach(function(n){
+      if(tk.length<=n) return;
+      var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
+      if(nm.length<2 || city.length<3 || GENERIC_WORDS.test(city)) return;
+      /* Structured-only — Nominatim rejects any request mixing free-form q with structured
+         fields, which is what made the earlier version of this pass return nothing. */
+      var u="https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6"+
+            "&amenity="+encodeURIComponent(nm)+"&city="+encodeURIComponent(city);
+      jobs.push(fetch(u,{headers:{Accept:"application/json"}})
+        .then(function(r){return r.json();})
+        .then(function(list){
+          add((list||[]).map(function(r){
+            return {name:String(r.display_name).split(",")[0],
+                    label:String(r.display_name).split(",").slice(1,4).join(",").trim(),
+                    lat:+r.lat, lng:+r.lon};
+          }));
+        }).catch(function(){}));
+    });
+  }
+  await Promise.all(jobs);
+  if(!pool.length) return [];
+  var out=dedupeSuggest(pool).map(function(r){
+    var withD=Object.assign({},r,{_d:S.pos?distM(S.pos,r):undefined});
+    return Object.assign({},withD,{_sc:_placeScore(withD,toks,typedPlace)});
+  });
+  out.sort(function(a,b){ return b._sc-a._sc; });
+  return out.slice(0,10);
+}
 async function forceGeocode(q){
   $("results").style.display="none";
   // offline or instant: use a previously-cached result if we have one
@@ -7315,14 +7365,15 @@ async function forceGeocode(q){
   const crowd=await crowdLookup(q);
   if(crowd){ confirmDestination({lat:crowd.lat,lng:crowd.lng,label:crowd.label||q},q); toast("📍 Matched to where most drivers go",2600); return; }
   const want=parseAddr(q);
-  /* The typeahead already resolves this correctly — its sources include the city-split pass
-     and its ranking is city-aware. geocodeCandidates is a separate, older pipeline that keeps
-     missing the same row. Rather than maintain two rankings that disagree with each other,
-     prefer whatever the suggestion pipeline already resolved for this exact query. */
+  /* v264: reading the typeahead's CACHE was too fragile — it only hits when the exact same
+     string was typed into the panel, and the Search button is often pressed with a differently
+     cased or trimmed query, so it silently fell through to the old pipeline every time. Run the
+     suggestion pipeline directly instead. Same sources, same city-aware ranking, no dependence
+     on what happened to be cached. */
   let cands=null;
   try{
-    var _hit=(typeof acCache!=="undefined") && acCache.get(SEARCH_RANK_VER+"|"+q);
-    if(_hit && _hit.length) cands=_hit.map(function(r){
+    var _rows=await placeCandidates(q);
+    if(_rows && _rows.length) cands=_rows.map(function(r){
       return {name:r.name, display_name:(r.name+(r.label?(", "+r.label):"")), lat:r.lat, lon:r.lng};
     });
   }catch(e){}
@@ -8204,6 +8255,17 @@ function closeSearchPanel(){
 function spIcon(r){
   const ic=poiIcon(r); return '<span class="sp-ic" style="background:'+ic[1]+'">'+ic[0]+'</span>';
 }
+/* Match on coordinates rather than name: two different places can share a name, and the name is
+   what the driver typed rather than a stable key. */
+function removeRecent(r){
+  try{
+    QK.recents=(QK.recents||[]).filter(function(x){
+      var same = Math.abs((x.lat||0)-(r.lat||0))<1e-6 && Math.abs((x.lng||0)-(r.lng||0))<1e-6;
+      return !(same || (x.name===r.name && !isFinite(r.lat)));
+    });
+    saveQK();
+  }catch(e){}
+}
 function spRender(items,note){
   const list=$("spList"); if(!list) return;
   const q=($("spInput").value||"").trim();
@@ -8215,14 +8277,42 @@ function spRender(items,note){
     if(QK.home) rows.push({name:"Home",label:"Saved place",icon:"🏠",bg:"#34C98A",lat:QK.home.lat,lng:QK.home.lng});
     if(QK.work) rows.push({name:"Work",label:"Saved place",icon:"💼",bg:"#5B9CF6",lat:QK.work.lat,lng:QK.work.lng});
     (QK.favorites||[]).slice(0,5).forEach(f=>rows.push({name:f.name,label:"Favorite",icon:"⭐",bg:"#FF9F0A",lat:f.lat,lng:f.lng}));
-    (QK.recents||[]).slice(0,8).forEach(r=>rows.push({name:r.name,label:"Recent",icon:"🕘",bg:"#6B7280",lat:r.lat,lng:r.lng}));
+    (QK.recents||[]).slice(0,8).forEach(r=>rows.push({name:r.name,label:"Recent",icon:"🕘",bg:"#6B7280",lat:r.lat,lng:r.lng,_recent:true}));
     if(!rows.length){ list.innerHTML='<p class="sub" style="padding:18px 12px">Start typing a place or address.</p>'; return; }
     rows.forEach(r=>{
       const d=document.createElement("div"); d.className="sp-row";
       d.innerHTML='<span class="sp-ic" style="background:'+r.bg+'">'+r.icon+'</span><span class="sp-tx"><b>'+r.name+'</b><small>'+r.label+'</small></span>';
       d.onclick=()=>spPick(r);
+      /* Recents are a convenience, and a convenience you cannot edit becomes clutter — one
+         mistyped search sits at the top of the list for weeks. A recent gets an × right here on
+         the row, where the driver is already looking, rather than buried in Settings. Saved
+         places and Home/Work deliberately do NOT get one: those are deletable where they were
+         created, and an × next to Home is a thing to hit by accident. */
+      if(r._recent){
+        const x=document.createElement("button");
+        x.className="sp-del"; x.type="button";
+        x.setAttribute("aria-label","Remove "+r.name+" from recents");
+        x.textContent="✕";
+        x.onclick=(ev)=>{
+          ev.stopPropagation();                       // don't navigate to the thing being deleted
+          removeRecent(r);
+          spRender([]);                               // repaint the empty state without it
+          try{ toast("Removed “"+r.name+"” from recents"); }catch(e){}
+        };
+        d.appendChild(x);
+      }
       list.appendChild(d);
     });
+    if((QK.recents||[]).length>1){
+      const clr=document.createElement("button");
+      clr.className="sp-clearall"; clr.type="button"; clr.textContent="Clear all recents";
+      clr.onclick=()=>{
+        QK.recents=[]; try{ saveQK(); }catch(e){}
+        spRender([]);
+        try{ toast("Recents cleared"); }catch(e){}
+      };
+      list.appendChild(clr);
+    }
     return;
   }
   if(note){ const n=document.createElement("p"); n.className="sub"; n.style.padding="14px 12px"; n.textContent=note; list.appendChild(n); }
