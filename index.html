@@ -1520,7 +1520,10 @@
       <button class="btn orange" id="tourDrive" style="flex:1">Start driving &#8594;</button>
     </div>
   </div>
-  <div id="tourHint" style="position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(255,255,255,.85);font-size:10px;font-family:var(--tech,monospace);pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.6);transition:opacity .6s">DRAG TO LOOK &middot; PINCH TO ZOOM</div>
+  <!-- The control bar grew a row when it started wrapping, so a hint pinned 96px from the
+       bottom now sits behind the buttons. Lift it clear of the whole bar rather than guessing a
+       new fixed offset — the bar's height changes with the phone. -->
+  <div id="tourHint" style="position:absolute;bottom:calc(178px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;color:rgba(255,255,255,.85);font-size:10px;font-family:var(--tech,monospace);pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.6);transition:opacity .6s">DRAG TO LOOK &middot; PINCH TO ZOOM</div>
 </div>
 
 <div id="relock" style="position:fixed;top:calc(var(--hdrH,190px) + 4px);left:50%;transform:translateX(-50%);z-index:997;background:var(--panel-solid);border:1px solid var(--line);border-radius:20px;padding:7px 14px;font-size:12px;display:none;box-shadow:0 6px 18px rgba(0,0,0,.4);cursor:pointer">🧲 Free roam — tap to lock onto GPS</div>

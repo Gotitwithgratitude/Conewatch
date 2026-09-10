@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v264";
+const APP_VERSION="v265";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -247,9 +247,11 @@ function rasterStyle(dark){
      lit road network in the dark instead of a daylight map wearing orange. Same keyless Esri
      source family — no new provider, no key, and it reverts the instant the season ends. */
   var _hw=false; try{ _hw=(typeof seasonActive==="function")&&seasonActive(); }catch(e){}
+  /* The seasonal dark-gray canvas is Esri-only by design; everything else follows whichever
+     provider the probe has settled on. */
   const url = _hw
-    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"+TILE_CB
+    : baseTileURL(dark);
   let paint = dark
     ? {"raster-brightness-max":0.42,"raster-brightness-min":0.02,"raster-saturation":-0.35,"raster-contrast":0.12}
     : {};
@@ -309,6 +311,18 @@ function _settleStat(id, ms){
    Bumping this string changes the URL, which the cache has no entry for. Bump it again if
    poisoned tiles ever reappear. */
 var TILE_CB = "?cw=3";
+/* Which basemap provider to draw. Esri is the default for its look; CARTO is the fallback when
+   the probe finds Esri refusing tiles in this area. Persisted, because a driver who has hit the
+   gap once will hit it again tomorrow in the same place. */
+var BASE_PROVIDER = (function(){ try{ return localStorage.getItem("cw_baseProvider")||"esri"; }catch(e){ return "esri"; } })();
+function baseTileURL(dark){
+  if(BASE_PROVIDER==="carto"){
+    /* Keyless CARTO raster. Complete global coverage, and it already matches the app's dark
+       and light themes without the luminance filter doing all the work. */
+    return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+"/{z}/{x}/{y}.png";
+  }
+  return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
+}
 
 /* v263 — why the v262 cache-buster did not work.
    There is a SERVICE WORKER with its own tile cache ("cw-tiles-v2"), and the app precaches
@@ -356,6 +370,7 @@ var BASE_MINZ = (function(){
 })();
 var _probeTxt = "basemap  not probed yet";
 var _probeRan = false;
+var _searchTxt = "";
 function _tileXY(lat,lng,z){
   var n=Math.pow(2,z);
   var x=Math.floor((lng+180)/360*n);
@@ -364,81 +379,79 @@ function _tileXY(lat,lng,z){
   return [Math.max(0,Math.min(n-1,x)), Math.max(0,Math.min(n-1,y))];
 }
 async function probeBasemapFloor(force){
-  /* v260 — why v259's probe reported "not probed yet": eleven awaited fetches ran SERIALLY with
-     no timeout. One slow or hanging request and the loop never reached the line that writes the
-     result, so the panel showed the initial string forever. Now: all requests in flight at once,
-     each with its own deadline, status written before AND after so it can never go silent.
-     It also probes BOTH candidate services, because I still do not know which one is painting
-     the words and the point of this is to stop me guessing. */
+  /* v265 — the probe was asking the wrong question, and that is why it kept saying everything
+     was fine while the map was covered in error tiles.
+     It tested ONE tile per zoom: the one containing the driver. But the failures are not spread
+     evenly across a zoom level — they are specific x/y tiles, in specific places, at otherwise
+     working zooms. Downtown Detroit returns a real tile at z8 while a tile two columns north
+     returns "Zoom Level Not Supported" at the same z8. Testing the centre could therefore never
+     see the problem, no matter how carefully it measured.
+     So: sample a GRID across the viewport at the zoom the driver is actually looking at, and
+     judge coverage rather than a floor. If any meaningful share of the visible tiles come back
+     as refusals, this provider does not cover this area properly and we switch to one that
+     does. Esri World_Street_Map is a legacy service with genuine gaps in its cache; CARTO's
+     raster basemap is complete, and the app already knows how to draw it. */
   try{
     _probeTxt="basemap  probing…";
     if(!navigator.onLine){ _probeTxt="basemap  offline — not probed"; return; }
     var done=0; try{ done=parseInt(localStorage.getItem("cw_baseMinzAt"),10)||0; }catch(e){}
-    if(!force && Date.now()-done < 7*864e5){ _probeTxt="basemap  floor z"+BASE_MINZ+" (cached)"; return; }
-    var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
+    if(!force && Date.now()-done < 3*864e5){ _probeTxt="basemap  "+BASE_PROVIDER+" (cached)"; return; }
 
-    function grab(base,z){
-      var xy=_tileXY(lat,lng,z);
-      var u=base+"/"+z+"/"+xy[1]+"/"+xy[0];
+    var z = Math.max(3, Math.min(14, Math.round((map&&map.getZoom&&map.getZoom())||9)));
+    var lat=(S.pos&&S.pos.lat)||42.331, lng=(S.pos&&S.pos.lng)||-83.045;
+    var c=_tileXY(lat,lng,z), n=Math.pow(2,z);
+
+    /* A 3x3 block around the driver at the live zoom — the tiles actually on screen. */
+    var cells=[];
+    for(var dx=-1; dx<=1; dx++) for(var dy=-1; dy<=1; dy++){
+      var x=c[0]+dx, y=c[1]+dy;
+      if(x<0||y<0||x>=n||y>=n) continue;
+      cells.push([x,y]);
+    }
+
+    function grab(base,x,y){
+      var u=base+"/"+z+"/"+y+"/"+x+TILE_CB;
       return Promise.race([
         fetch(u,{cache:"no-store"}).then(function(r){
-          if(!r.ok) return {z:z,len:-1,code:r.status};
-          return r.arrayBuffer().then(function(b){ return {z:z,len:b.byteLength}; });
-        }).catch(function(e){ return {z:z,len:-2}; }),          // -2 = blocked/CORS/network
-        new Promise(function(res){ setTimeout(function(){ res({z:z,len:-3}); },6000); })  // -3 = timeout
+          if(!r.ok) return -1;
+          return r.arrayBuffer().then(function(b){ return b.byteLength; });
+        }).catch(function(){ return -2; }),
+        new Promise(function(res){ setTimeout(function(){ res(-3); },6000); })
       ]);
     }
     async function survey(base){
-      var zs=[]; for(var z=0; z<=10; z++) zs.push(z);
-      /* v262: firing all 11 at once — 22 across both services — got us rate-limited by Esri and
-         the survey came back mostly "t/o", from which a bogus floor of z2 was then derived and
-         APPLIED. An instrument that changes the thing it measures is worse than none. Three at
-         a time, with a breath between batches. */
-      var res=[];
-      for(var b=0; b<zs.length; b+=3){
-        var batch=await Promise.all(zs.slice(b,b+3).map(function(z){ return grab(base,z); }));
-        res=res.concat(batch);
-        await new Promise(function(r){ setTimeout(r,220); });
+      var lens=[];
+      for(var i=0;i<cells.length;i+=3){
+        var batch=await Promise.all(cells.slice(i,i+3).map(function(p){ return grab(base,p[0],p[1]); }));
+        lens=lens.concat(batch);
+        await new Promise(function(r){ setTimeout(r,180); });
       }
-      var lens={}; res.forEach(function(r){ lens[r.z]=r.len; });
-      var count={};
-      res.forEach(function(r){ if(r.len>0) count[r.len]=(count[r.len]||0)+1; });
-      var err={}; Object.keys(count).forEach(function(L){ if(count[L]>=2) err[L]=true; });
-      var floor=0, any=false;
-      for(var i=0;i<zs.length;i++){
-        var z2=zs[i];
-        if(lens[z2]>0 && !err[lens[z2]]){ floor=z2; any=true; break; }
-        floor=z2+1;
-      }
-      if(!any) floor=0;                                       // inconclusive — change nothing
-      /* Only trust a CLEAN survey. Any timeout or network failure means we measured our own
-         rate limit, not Esri's coverage, and must not act on it. */
-      var clean=zs.every(function(z){ return lens[z]>0; });
-      if(!clean) any=false;
-      var map10=zs.map(function(z){
-        var L=lens[z];
-        return z+":"+(L===-2?"net":L===-3?"t/o":L<0?("h"+(L===-1?"?":"")):(err[L]?"X":"ok"));
-      }).join(" ");
-      return {floor:floor, line:map10+(clean?"":"  [dirty — ignored]"), any:any};
+      var clean=lens.every(function(v){ return v>0; });
+      /* An error card is a flat box with one line of text — a couple of KB. A real street tile
+         at any zoom we request is tens of KB. Same threshold the service worker uses. */
+      var bad=lens.filter(function(v){ return v>0 && v<4096; }).length;
+      var good=lens.filter(function(v){ return v>=4096; }).length;
+      return {bad:bad, good:good, clean:clean, n:lens.length};
     }
 
     var STREET="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile";
-    var IMAGERY="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile";
     var a=await survey(STREET);
-    var b=await survey(IMAGERY);
-    _probeTxt="basemap  street floor z"+a.floor+"\n         "+a.line+
-              "\nimagery  floor z"+b.floor+"\n         "+b.line;
+    _probeTxt="basemap  z"+z+"  "+a.good+" ok / "+a.bad+" refused of "+a.n+
+              (a.clean?"":"  [network noise]");
     try{ localStorage.setItem("cw_baseMinzAt",String(Date.now())); }catch(e){}
-    /* Apply the street floor to the basemap, and the imagery floor to the sat layer — whichever
-       of the two is the culprit, it gets a floor it actually supports. */
-    if(a.any && a.floor!==BASE_MINZ){
-      BASE_MINZ=a.floor;
-      try{ localStorage.setItem("cw_baseMinz",String(a.floor)); }catch(e){}
-      try{ applyTheme(S.theme||"dark"); }catch(e){}
-    }
-    if(b.any && b.floor>SAT_MINZ){
-      SAT_MINZ=b.floor;
-      try{ if(map.getLayer("esri-sat")) map.setLayerZoomRange("esri-sat",SAT_MINZ,24); }catch(e){}
+
+    if(a.clean && a.bad>0){
+      /* Esri is refusing tiles this driver can see. Switch providers rather than keep painting
+         the refusals — a basemap with gaps is not a basemap. */
+      if(BASE_PROVIDER!=="carto"){
+        BASE_PROVIDER="carto";
+        try{ localStorage.setItem("cw_baseProvider","carto"); }catch(e){}
+        _probeTxt+="\n         switched to CARTO";
+        try{ applyTheme(S.theme||"dark"); }catch(e){}
+        try{ toast("Map switched to a provider with full coverage here"); }catch(e){}
+      }
+    } else if(a.clean && a.bad===0 && BASE_PROVIDER==="carto"){
+      _probeTxt+="\n         Esri healthy again (staying on CARTO)";
     }
   }catch(e){ _probeTxt="basemap  probe threw: "+((e&&e.message)||"?"); }
 }
@@ -457,7 +470,7 @@ function rasterStyleObj(dark){
   // ONE source for both themes: Esri's street map has tiles all the way to nav zoom (17-19).
   // The dark canvas basemap tops out ~z16, which produced "Map data not yet available" while driving.
   // Night mode is rendered by darkening these tiles instead of swapping to a shallower source.
-  const url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
+  const url=baseTileURL(dark);
   /* Dark mode used to knock 35% of the saturation out of the tiles. That is what made parks,
      water and road classes collapse into the same grey — next to Apple Maps it reads as a dead
      map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
@@ -1995,6 +2008,11 @@ function _baseTileTpl(){
     if(ck){ var base=(S.theme==="dark")?"dark_all":"voyager";
       return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+base+"/{z}/{x}/{y}.png?key="+ck, yx:false}; }
   }catch(e){}
+  /* Precache the provider the map is actually drawing. Warming Esri tiles while the map renders
+     CARTO would fill the cache with bytes nothing ever reads, and leave the dead zone uncovered
+     — which is the one thing this feature exists to prevent. */
+  if(BASE_PROVIDER==="carto")
+    return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+((S.theme==="dark")?"dark_all":"voyager")+"/{z}/{x}/{y}.png", yx:false};
   return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB, yx:true};
 }
 function corridorTileURLs(coords){
@@ -6546,6 +6564,7 @@ try{
                    /* Tools trail: long-press LIVE after tapping a tool row and this says whether
                       the sheet actually opened, so the next report is evidence not inference. */
                    ((typeof _probeTxt!=="undefined") ? ("\n"+_probeTxt) : "")+
+                   ((typeof _searchTxt!=="undefined" && _searchTxt) ? ("\n"+_searchTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
                    "\ndecl    "+(_declNative?"OS true north":
@@ -7291,11 +7310,22 @@ async function placeCandidates(q){
   var typedPlace=(function(){ try{ var p=parseAddr(q); return !!(p.city||p.state||p.postalcode); }catch(e){ return false; } })();
   function add(rows){ if(rows&&rows.length) pool=pool.concat(rows); }
 
+  /* v265: this list was missing the two POI indexes, and they are almost certainly the ones
+     that find "The Godfrey Hotel Chicago 127" in the typeahead — which is why the Search button
+     kept disagreeing with the suggestions above it. If the goal is that the two can never
+     disagree, this has to query the same sources, not a subset of them. */
+  var _ac=null; try{ _ac=new AbortController(); }catch(e){}
+  var _sig=_ac?_ac.signal:undefined;
+  var counts={photon:0,unbiased:0,fsq:0,overture:0,split:0};
   var jobs=[
-    fetch(_photonURL(q)).then(function(r){return r.json();}).then(function(d){ add(_photonMap(d)); }).catch(function(){}),
+    fetch(_photonURL(q)).then(function(r){return r.json();})
+      .then(function(d){ var m=_photonMap(d); counts.photon=m.length; add(m); }).catch(function(){}),
     /* Unbiased: no lat/lon at all, so a distant named place can actually reach the pool. */
     fetch("https://photon.komoot.io/api/?limit=10&lang=en&q="+encodeURIComponent(q))
-      .then(function(r){return r.json();}).then(function(d){ add(_photonMap(d)); }).catch(function(){})
+      .then(function(r){return r.json();})
+      .then(function(d){ var m=_photonMap(d); counts.unbiased=m.length; add(m); }).catch(function(){}),
+    fsqSuggest(q,_sig).then(function(r){ counts.fsq=(r||[]).length; add(r); }).catch(function(){}),
+    overtureSuggest(q,_sig).then(function(r){ counts.overture=(r||[]).length; add(r); }).catch(function(){})
   ];
   var tk=q.trim().split(/\s+/);
   if(tk.length>=2){
@@ -7303,6 +7333,7 @@ async function placeCandidates(q){
       if(tk.length<=n) return;
       var nm=tk.slice(0,tk.length-n).join(" "), city=tk.slice(-n).join(" ");
       if(nm.length<2 || city.length<3 || GENERIC_WORDS.test(city)) return;
+      counts.split++;
       /* Structured-only — Nominatim rejects any request mixing free-form q with structured
          fields, which is what made the earlier version of this pass return nothing. */
       var u="https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6"+
@@ -7319,6 +7350,9 @@ async function placeCandidates(q){
     });
   }
   await Promise.all(jobs);
+  /* Report what each source returned, so the next time this disagrees with the typeahead we can
+     see WHICH source is missing rather than guessing at the ranking again. */
+  try{ _searchTxt="search   "+Object.keys(counts).map(function(k){return k+":"+counts[k];}).join(" "); }catch(e){}
   if(!pool.length) return [];
   var out=dedupeSuggest(pool).map(function(r){
     var withD=Object.assign({},r,{_d:S.pos?distM(S.pos,r):undefined});
