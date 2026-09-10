@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v270";
+const APP_VERSION="v271";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -254,6 +254,17 @@ function rasterStyle(dark){
     : baseTileURL(dark);
   /* CARTO ships proper dark and light styles, so the filter that was compensating for Esri's
      daylight cartography would now crush an already-dark basemap. Leave CARTO nearly alone. */
+  if(BASE_PROVIDER==="osm" && !_hw){
+    /* Same filtered treatment the Esri basemap had — dark mode darkens luminance rather than
+       killing saturation, which is what keeps road colours readable at night. */
+    return {version:8,
+      sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:19,
+        attribution:"© OpenStreetMap contributors"}},
+      layers:[{id:"bg",type:"background",paint:{"background-color":dark?"#0d1013":"#eae7e0"}},
+              {id:"basemap",type:"raster",source:"basemap",paint:dark
+                ? {"raster-brightness-max":0.55,"raster-saturation":-0.15,"raster-contrast":0.12}
+                : {"raster-brightness-max":1,"raster-saturation":0,"raster-contrast":0}}]};
+  }
   if(BASE_PROVIDER==="carto" && !_hw){
     return {version:8,sources:{basemap:{type:"raster",tiles:[url],tileSize:256,minzoom:0,maxzoom:20,
       attribution:"© OpenStreetMap © CARTO"}},
@@ -344,15 +355,31 @@ var BASE_PROVIDER = (function(){
        stamped "API KEY REQUIRED", which is worse than Esri's patchy coverage because it fails
        everywhere instead of somewhere. Esri is the default again. Anyone who supplies a CARTO
        key in Settings still gets CARTO through the existing keyed path. */
-    if(localStorage.getItem("cw_baseMigrated")!=="269"){
-      localStorage.setItem("cw_baseProvider","esri");
-      localStorage.setItem("cw_baseMigrated","269");
-      return "esri";
+    if(localStorage.getItem("cw_baseMigrated")!=="271"){
+      localStorage.setItem("cw_baseProvider","osm");
+      localStorage.setItem("cw_baseMigrated","271");
+      return "osm";
     }
-    return localStorage.getItem("cw_baseProvider")||"esri";
-  }catch(e){ return "esri"; }
+    return localStorage.getItem("cw_baseProvider")||"osm";
+  }catch(e){ return "osm"; }
 })();
 function baseTileURL(dark){
+  if(BASE_PROVIDER==="osm"){
+    /* v271 — the diagnosis, settled.
+       The v268 build swapped the basemap to CARTO and the wallpaper vanished completely; only
+       CARTO's own "API KEY REQUIRED" watermark appeared. That rules out every overlay theory I
+       had — the refusals come from the BASEMAP source. What made them look like an overlay is
+       MapLibre stretching a good parent tile underneath a refused child, so you see streets
+       through the grey box.
+       Esri's World_Street_Map is a legacy ArcGIS service that genuinely lacks tiles at some
+       z/x/y, answers with a 200 OK error image, and cannot be detected client-side. CARTO now
+       needs a key. So use OpenStreetMap's standard raster tiles: keyless, complete worldwide
+       coverage, and no error-image behaviour. Light-only, which is fine — the dark theme has
+       always been a filter over a light basemap anyway. */
+    return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+  }
+  if(BASE_PROVIDER==="osm")
+    return {u:"https://tile.openstreetmap.org/{z}/{x}/{y}.png", yx:false};
   if(BASE_PROVIDER==="carto"){
     /* Keyless CARTO raster. Complete global coverage, and it already matches the app's dark
        and light themes without the luminance filter doing all the work. */
@@ -553,11 +580,10 @@ async function probeBasemapFloor(force){
          the refusals — a basemap with gaps is not a basemap. */
       /* Only auto-switch if a CARTO key exists, otherwise we swap a partly-broken map for a
          completely broken one. */
-      var _ck=""; try{ _ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim(); }catch(e){}
-      if(BASE_PROVIDER!=="carto" && _ck){
-        BASE_PROVIDER="carto";
-        try{ localStorage.setItem("cw_baseProvider","carto"); }catch(e){}
-        _probeTxt+="\n         switched to CARTO";
+      if(BASE_PROVIDER!=="osm"){
+        BASE_PROVIDER="osm";
+        try{ localStorage.setItem("cw_baseProvider","osm"); }catch(e){}
+        _probeTxt+="\n         switched to OSM";
         try{ applyTheme(S.theme||"dark"); }catch(e){}
         try{ toast("Map switched to a provider with full coverage here"); }catch(e){}
       }

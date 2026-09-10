@@ -15,7 +15,7 @@ const CACHE = "conewatch-cache-v2";
    Once cached they became permanent — the map reads the cache, so the wallpaper survived every
    app release, every version bump and every zoom-range fix. Renaming the cache is what actually
    removes them, because activate() deletes any cache that is not the current pair. */
-const TILES = "conewatch-tiles-v3";
+const TILES = "conewatch-tiles-v4";
 const TILE_CAP = 1400;                 // ~50-90MB of 256px tiles; trimmed oldest-first
 const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/apple-touch-icon.png","/icon-512.png"];
 /* The POI index is same-origin and immutable, so it falls into the cache-first branch below with
@@ -24,7 +24,10 @@ const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/
 
 /* Only these hosts serve map tiles. Everything else cross-origin is live data and must not be
    served from cache — a cached hazard or a cached route would be worse than no answer at all. */
-const TILE_HOSTS = ["server.arcgisonline.com","api.maptiler.com","basemaps.cartocdn.com"];
+/* tile.openstreetmap.org added: it is the default basemap now, and without it here every tile
+   would bypass the offline cache entirely — which would silently break the dead-zone coverage
+   that is the app's strongest feature. */
+const TILE_HOSTS = ["server.arcgisonline.com","api.maptiler.com","basemaps.cartocdn.com","tile.openstreetmap.org"];
 function isTile(url){ return TILE_HOSTS.indexOf(url.hostname) !== -1; }
 
 /* THE ROOT CAUSE, and the guard against it happening again.
