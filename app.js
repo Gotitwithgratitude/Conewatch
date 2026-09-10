@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v265";
+const APP_VERSION="v266";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -334,10 +334,39 @@ function baseTileURL(dark){
    purge version and drops every ConeWatch tile cache outright. The cost is re-downloading
    tiles the driver has already seen; the benefit is that a corrupted cache can no longer
    outlive any number of releases. */
+/* What the app can see about the layer that is actually serving tiles. After several rounds of
+   "the network says fine but the screen says otherwise", this reports which caches exist, how
+   many entries each holds, and whether a service worker controls the page — so a stale worker,
+   a stale cache and a live failure stop looking identical from a screenshot. */
+var _swTxt="sw       checking…";
+(async function reportSW(){
+  try{
+    var parts=[];
+    if("caches" in window){
+      var names=await caches.keys();
+      for(var i=0;i<names.length;i++){
+        try{ var c=await caches.open(names[i]); var k=await c.keys(); parts.push(names[i]+":"+k.length); }
+        catch(e){ parts.push(names[i]+":?"); }
+      }
+    }
+    var ctl=(navigator.serviceWorker && navigator.serviceWorker.controller)?"controlled":"none";
+    _swTxt="sw       "+ctl+(parts.length?("\n         "+parts.join("  ")):"  (no caches)");
+    /* Re-check sw.js and promote a waiting worker immediately. Without this a fixed worker can
+       sit idle for days, because the default is to wait until every tab is closed. */
+    if(navigator.serviceWorker){
+      var reg=await navigator.serviceWorker.getRegistration();
+      if(reg){
+        try{ await reg.update(); }catch(e){}
+        if(reg.waiting) reg.waiting.postMessage("skipWaiting");
+      }
+    }
+  }catch(e){ _swTxt="sw       error: "+((e&&e.message)||"?"); }
+})();
+
 (async function purgePoisonedTiles(){
   try{
     if(!("caches" in window)) return;
-    if(localStorage.getItem("cw_tilePurge")==="4") return;
+    if(localStorage.getItem("cw_tilePurge")==="5") return;
     var names=await caches.keys();
     for(var i=0;i<names.length;i++){
       /* v264: this matched /^cw-tiles/ and the real cache is called "conewatch-tiles-v2", so it
@@ -352,7 +381,7 @@ function baseTileURL(dark){
            message was silently dropped. Send both; sw.js now accepts either. */
         navigator.serviceWorker.controller.postMessage({type:"cw-clear-tiles"});
     }catch(e){}
-    localStorage.setItem("cw_tilePurge","4");
+    localStorage.setItem("cw_tilePurge","5");
     try{ console.log("ConeWatch: purged",names.filter(function(n){return /tiles/i.test(n);}).length,"tile cache(s)"); }catch(e){}
   }catch(e){}
 })();
@@ -3204,6 +3233,14 @@ try{ _sigCacheLoad(); }catch(e){}
 /* How many signals a candidate route actually passes through. This is the honest version of
    "avoid traffic lights": we can't know their timing, but we can count them, and a route with
    four lights genuinely drives differently from one with sixteen. */
+/* "323 min" makes a driver do arithmetic to understand their own trip. Past an hour, say hours.
+   The summary above the picker already reads "5h 23", so this also makes the two agree. */
+function fmtDur(mins){
+  var m=Math.max(0,Math.round(mins||0));
+  if(m<60) return m+" min";
+  var h=Math.floor(m/60), r=m%60;
+  return r ? (h+"h "+r) : (h+"h");
+}
 function routeSignalCount(rt){
   try{
     var co=(rt.geometry&&rt.geometry.coordinates)||[];
@@ -3219,7 +3256,37 @@ function routeSignalCount(rt){
         if(distM({lat:co[k][1],lng:co[k][0]},p)<38){ n++; break; }
       }
     }
-    return n;
+    /* COVERAGE. Signals are only fetched where the app has actually looked — the viewport and
+       the route corridor. On a 285-mile route to Chicago that means Detroit and little else, so
+       "6 lights" was not wrong so much as a count of the fraction we happen to know about,
+       presented as if it were the whole trip. Work out how much of the route falls inside the
+       area we have signal data for, and if a real part of it does not, say the number is a
+       floor rather than a total. A driver can act on "at least 6"; they cannot act on a number
+       that is silently short. */
+    var bb=_sigBBox();
+    if(!bb) return {n:n,partial:true};
+    var inside=0, checked=0;
+    for(var q=0;q<co.length;q+=Math.max(1,Math.floor(co.length/40))){
+      checked++;
+      var la=co[q][1], ln=co[q][0];
+      if(la>=bb.s && la<=bb.n && ln>=bb.w && ln<=bb.e) inside++;
+    }
+    return {n:n, partial: checked>0 && (inside/checked)<0.9};
+  }catch(e){ return null; }
+}
+/* The bounding box of everything we have signal data for. Cheap: the cluster list is already
+   built, so this is one pass over points we have anyway. */
+function _sigBBox(){
+  try{
+    var cl=_sigClusters(); if(!cl.length) return null;
+    var n=-90,s2=90,e=-180,w=180;
+    for(var i=0;i<cl.length;i++){
+      var c=cl[i].geometry.coordinates;
+      if(c[1]>n)n=c[1]; if(c[1]<s2)s2=c[1];
+      if(c[0]>e)e=c[0]; if(c[0]<w)w=c[0];
+    }
+    /* Pad by roughly a kilometre so a route hugging the edge is not called uncovered. */
+    return {n:n+0.01, s:s2-0.01, e:e+0.01, w:w-0.01};
   }catch(e){ return null; }
 }
 /* Fetch signals across the whole route corridor once, so the count on the picker reflects the
@@ -3373,8 +3440,13 @@ function renderRouteAlts(){
     // Signal count is omitted entirely when we haven't fetched the corridor yet — showing
     // "0 lights" for "we don't know" would be worse than showing nothing.
     var sig=routeSignalCount(rt);
-    var sigTxt=(sig===null)?"":(" · "+sig+" light"+(sig===1?"":"s"));
-    b.innerHTML="<b>"+mins+" min</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
+    var sigTxt="";
+    if(sig && typeof sig==="object"){
+      /* "6+ lights" when we only have data for part of the route — an honest floor beats a
+         confident undercount. */
+      sigTxt=" · "+sig.n+(sig.partial?"+":"")+" light"+(sig.n===1&&!sig.partial?"":"s");
+    }
+    b.innerHTML="<b>"+fmtDur(mins)+"</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
       "</small><br><small style=\"opacity:.75\">"+(note==="clear"?"\u2713 clear":"\u26A0 "+note)+sigTxt+"</small>";
     b.onclick=function(){ selectRouteAlt(i); renderRouteAlts(); };
     box.appendChild(b);
@@ -6565,6 +6637,7 @@ try{
                       the sheet actually opened, so the next report is evidence not inference. */
                    ((typeof _probeTxt!=="undefined") ? ("\n"+_probeTxt) : "")+
                    ((typeof _searchTxt!=="undefined" && _searchTxt) ? ("\n"+_searchTxt) : "")+
+                   ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
                    "\ndecl    "+(_declNative?"OS true north":

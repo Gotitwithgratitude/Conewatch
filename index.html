@@ -428,7 +428,8 @@
   /* 168px was sized for a small dial floating over the map. In its own sheet the compass has
      most of a screen to itself and was using a third of it, which is also why the bearing
      readout crowded the rose. Scale to the viewport with a sane floor and ceiling. */
-  #compass{position:relative;width:min(78vw,300px);height:min(78vw,300px);border-radius:50%;
+  #compass{position:relative;width:min(72vw,280px);height:min(72vw,280px);border-radius:50%;
+    margin-bottom:34px;
     background:radial-gradient(circle at 50% 34%, rgba(30,44,48,.92), rgba(10,14,17,.94));
     border:1px solid rgba(120,240,210,.22);cursor:pointer;
     display:flex;align-items:center;justify-content:center;
@@ -459,7 +460,11 @@
      the tick ring — the overlap you saw. Anchor it to the CENTRE of the dial instead, where the
      rose is empty by construction, and scale the offset with the dial so it stays clear at any
      size. */
-  #compass small{position:absolute;top:62%;left:0;right:0;text-align:center;
+  /* v266: still overlapping. Anchoring inside the dial was the mistake — a rose has ticks, four
+     cardinals and a full-length needle, so there is no empty spot at any radius. The readout
+     lives BELOW the dial now, where the panel already had space, and the duplicate line under
+     it is gone. Kept in the DOM for anything that reads it. */
+  #compass small{position:absolute;left:0;right:0;bottom:-30px;text-align:center;
     font-family:var(--tech);font-size:11px;letter-spacing:.6px;
     color:rgba(180,255,238,.82);text-shadow:0 0 6px rgba(90,240,200,.55);pointer-events:none}
   #compass.hup{border-color:rgba(140,255,220,.55);
