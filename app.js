@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v271";
+const APP_VERSION="v274";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -355,12 +355,17 @@ var BASE_PROVIDER = (function(){
        stamped "API KEY REQUIRED", which is worse than Esri's patchy coverage because it fails
        everywhere instead of somewhere. Esri is the default again. Anyone who supplies a CARTO
        key in Settings still gets CARTO through the existing keyed path. */
-    if(localStorage.getItem("cw_baseMigrated")!=="271"){
-      localStorage.setItem("cw_baseProvider","osm");
-      localStorage.setItem("cw_baseMigrated","271");
-      return "osm";
-    }
-    return localStorage.getItem("cw_baseProvider")||"osm";
+    /* v273 — the migration flag was the wrong mechanism. It only flips a device ONCE, and if
+       anything else wrote cw_baseProvider afterwards — the probe's auto-switch, an older build
+       still in the service worker cache, a settings write — the device quietly went back to
+       Esri and the flag said the job was done. Your debug line shows exactly that: v271 running,
+       but ArcGIS text on screen.
+       Esri is now refused outright rather than migrated away from. It is the one provider we
+       have proven serves error images, and there is no reason to let a stored value reinstate
+       it. CARTO stays available for anyone with a key. */
+    var p=localStorage.getItem("cw_baseProvider")||"osm";
+    if(p==="esri"){ p="osm"; try{ localStorage.setItem("cw_baseProvider","osm"); }catch(e){} }
+    return p;
   }catch(e){ return "osm"; }
 })();
 function baseTileURL(dark){
@@ -390,7 +395,10 @@ function baseTileURL(dark){
     return "https://a.basemaps.cartocdn.com/rastertiles/"+(dark?"dark_all":"voyager")+
            "/{z}/{x}/{y}@2x.png"+(ck?("?key="+ck):"");
   }
-  return "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB;
+  /* Belt and braces: even if BASE_PROVIDER is somehow set to esri by code I have not found,
+     this returns OSM. After two weeks, the cost of a wrong basemap far exceeds the cost of
+     losing a provider option. */
+  return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 }
 
 /* v263 — why the v262 cache-buster did not work.
@@ -435,7 +443,12 @@ var _swTxt="sw       checking…";
 (async function purgePoisonedTiles(){
   try{
     if(!("caches" in window)) return;
-    if(localStorage.getItem("cw_tilePurge")==="5") return;
+    /* v274: purge again. tiles-v4 was created by v271 but populated while the provider switch
+       had not yet taken on this device, so it can hold Esri error images under URLs the map is
+       still asking for. The service worker is cache-first for tiles, which means it answers
+       before the network is ever consulted — and that is why every network-level fix I made
+       looked correct and changed nothing on screen. */
+    if(localStorage.getItem("cw_tilePurge")==="6") return;
     var names=await caches.keys();
     for(var i=0;i<names.length;i++){
       /* v264: this matched /^cw-tiles/ and the real cache is called "conewatch-tiles-v2", so it
@@ -450,7 +463,7 @@ var _swTxt="sw       checking…";
            message was silently dropped. Send both; sw.js now accepts either. */
         navigator.serviceWorker.controller.postMessage({type:"cw-clear-tiles"});
     }catch(e){}
-    localStorage.setItem("cw_tilePurge","5");
+    localStorage.setItem("cw_tilePurge","6");
     try{ console.log("ConeWatch: purged",names.filter(function(n){return /tiles/i.test(n);}).length,"tile cache(s)"); }catch(e){}
   }catch(e){}
 })();
@@ -480,7 +493,15 @@ function _rasterTxt(){
     return "raster   "+ls.map(function(l){
       var vis="?"; try{ vis=map.getLayoutProperty(l.id,"visibility")||"visible"; }catch(e){}
       var z=(l.minzoom!==undefined?l.minzoom:0)+"-"+(l.maxzoom!==undefined?l.maxzoom:24);
-      return l.id+"["+vis.charAt(0)+" z"+z+"]";
+      /* The layer's zoom range was never the useful part. WHICH HOST it pulls from is — that is
+         the one fact that separates "the provider switch worked" from "it did not". */
+      var host="";
+      try{
+        var src=map.getStyle().sources[l.source];
+        var u=(src&&src.tiles&&src.tiles[0])||"";
+        host=u.replace(/^https?:\/\//,"").split("/")[0].replace(/^(a|b|c|d)\./,"");
+      }catch(e){}
+      return l.id+"["+vis.charAt(0)+" z"+z+(host?(" "+host):"")+"]";
     }).join(" ");
   }catch(e){ return "raster   err"; }
 }
@@ -656,7 +677,15 @@ function rasterStyleObj(dark){
      offline, "Zoom Level Not Supported" wallpaper on two devices, and slow rendering — Esri
      serves error PNGs with a 200 status, so MapLibre cannot tell a refusal from a tile and
      paints it. A basemap that is reliably correct beats one that is occasionally sharper. */
-  var _ts = 256; void _dpr; void _vw; void _off;
+  /* v272 — the iPad detail reframes this. A tablet viewport asks for several times a phone's
+     tiles at once, and that is exactly where "Zoom Level Not Supported" first appeared and is
+     still worst. It is a THROTTLE response, not a coverage gap: the provider refuses a burst
+     and answers with an error image at 200 OK, which nothing downstream can detect.
+     Declaring 512 for a 256px tile source makes MapLibre request one zoom level SHALLOWER, so
+     one tile covers four times the area and the request count drops by roughly 4x. The map is
+     slightly coarser and entirely correct — which is the right trade on a big screen, and the
+     exact inverse of the 128px mistake I made in v240 that started this. Phones keep 256. */
+  var _ts = (_vw>=820) ? 512 : 256; void _dpr; void _off;
   return {version:8,
     /* minzoom comes from the probe above rather than an assumption. At 0 (the default until
        the probe runs) behaviour is exactly as before. */
@@ -670,7 +699,7 @@ function rasterStyleObj(dark){
 var _tsLast=null, _tsT=null;
 function _tileSizeNow(){
   var d=(window.devicePixelRatio||1), w=(window.innerWidth||400), off=(navigator.onLine===false);
-  void d; void w; void off; return 256;
+  void d; void off; return (w>=820) ? 512 : 256;
 }
 function _restyleIfTileSizeChanged(){
   clearTimeout(_tsT);

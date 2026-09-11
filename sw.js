@@ -30,6 +30,15 @@ const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/
 const TILE_HOSTS = ["server.arcgisonline.com","api.maptiler.com","basemaps.cartocdn.com","tile.openstreetmap.org"];
 function isTile(url){ return TILE_HOSTS.indexOf(url.hostname) !== -1; }
 
+/* World_Street_Map is retired from this app: it serves "Zoom Level Not Supported" as a 200 OK
+   image, which is indistinguishable from a real tile and, once cached here, outlives every
+   release because this worker answers before the network. Never serve it from cache and never
+   store it, so a stale entry cannot resurrect the wallpaper. World_Imagery is untouched — the
+   satellite layer still needs it. */
+function isRetiredTile(url){
+  return url.hostname === "server.arcgisonline.com" && /World_Street_Map/.test(url.pathname);
+}
+
 /* THE ROOT CAUSE, and the guard against it happening again.
    ArcGIS answers a tile it will not serve with an error IMAGE — "Zoom Level Not Supported" —
    at HTTP 200, with content-type image/png. Status, type and content-type all look correct, so
@@ -92,6 +101,7 @@ async function precacheTiles(urls){
     while (i < urls.length){
       const u = urls[i++];
       try{
+        try{ if (isRetiredTile(new URL(u))) continue; }catch(err){}   // never warm a retired provider
         if (await c.match(u)) { ok++; continue; }          // already have it
         /* CORS, not no-cors. An opaque response hides its status code, so a 404 page, a
            rate-limit body and a real tile are indistinguishable — and caching one poisons that
@@ -144,6 +154,17 @@ self.addEventListener("fetch", (e) => {
 
   // map tiles → cache-first, fill on miss. This is what carries a drive through a dead zone.
   if (url.origin !== self.location.origin && isTile(url)) {
+    /* Retired provider: straight to the network, never cached, never served from cache. */
+    if (isRetiredTile(url)) {
+      e.respondWith((async () => {
+        try{
+          const c = await caches.open(TILES);
+          await c.delete(req);                 // evict any poisoned entry as we encounter it
+        }catch(err){}
+        return fetch(req);
+      })());
+      return;
+    }
     e.respondWith((async () => {
       const c = await caches.open(TILES);
       const hit = await c.match(req);
