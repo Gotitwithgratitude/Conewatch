@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v274";
+const APP_VERSION="v275";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -504,13 +504,6 @@ function _rasterTxt(){
       return l.id+"["+vis.charAt(0)+" z"+z+(host?(" "+host):"")+"]";
     }).join(" ");
   }catch(e){ return "raster   err"; }
-}
-function _tileXY(lat,lng,z){
-  var n=Math.pow(2,z);
-  var x=Math.floor((lng+180)/360*n);
-  var r=lat*Math.PI/180;
-  var y=Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n);
-  return [Math.max(0,Math.min(n-1,x)), Math.max(0,Math.min(n-1,y))];
 }
 async function probeBasemapFloor(force){
   /* v265 — the probe was asking the wrong question, and that is why it kept saying everything
@@ -2175,10 +2168,16 @@ function renderRouteOpts(){
       service worker, so the drive still renders through a dead zone.
    2. Persist the route line and its steps, so a reload mid-drive doesn't lose them.
    3. Don't spam an offline driver with reroute failures. */
+/* Single definition. There were two of these — the probe's (clamped to the grid) and this one
+   (unclamped) — and since this appears later in the file it silently replaced the other for
+   BOTH callers, exactly like the fmtDur collision. An unclamped tile index near a pole or the
+   date line requests a tile that cannot exist, which a provider answers with an error image.
+   One function, clamped, used by everyone. */
 function _tileXY(lat,lng,z){
   var n=Math.pow(2,z), la=lat*Math.PI/180;
-  return [ Math.floor((lng+180)/360*n),
-           Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n) ];
+  var x=Math.floor((lng+180)/360*n);
+  var y=Math.floor((1-Math.log(Math.tan(la)+1/Math.cos(la))/Math.PI)/2*n);
+  return [Math.max(0,Math.min(n-1,x)), Math.max(0,Math.min(n-1,y))];
 }
 /* Mirrors whatever basemap is actually in use — caching Esri tiles while the map draws CARTO
    would warm the wrong cache and look like the feature simply didn't work. */
@@ -3385,8 +3384,15 @@ try{ _sigCacheLoad(); }catch(e){}
    "avoid traffic lights": we can't know their timing, but we can count them, and a route with
    four lights genuinely drives differently from one with sixteen. */
 /* "323 min" makes a driver do arithmetic to understand their own trip. Past an hour, say hours.
-   The summary above the picker already reads "5h 23", so this also makes the two agree. */
-function fmtDur(mins){
+   The summary above the picker already reads "5h 23", so this also makes the two agree.
+
+   NAMED fmtMins, not fmtDur. There is already a fmtDur in this file that takes SECONDS, and
+   when I added a second one taking MINUTES the later definition silently replaced it for every
+   caller — so the nav strip, the route meta line and the ETA pill all began formatting seconds
+   as minutes. That is the "23h 30" on an 18-mile trip: 1,410 seconds rendered as 1,410 minutes.
+   A duplicate function name is a silent, total override in JavaScript; the units belong in the
+   name so this cannot happen again. */
+function fmtMins(mins){
   var m=Math.max(0,Math.round(mins||0));
   if(m<60) return m+" min";
   var h=Math.floor(m/60), r=m%60;
@@ -3597,7 +3603,7 @@ function renderRouteAlts(){
          confident undercount. */
       sigTxt=" · "+sig.n+(sig.partial?"+":"")+" light"+(sig.n===1&&!sig.partial?"":"s");
     }
-    b.innerHTML="<b>"+fmtDur(mins)+"</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
+    b.innerHTML="<b>"+fmtMins(mins)+"</b><br><small>"+routeAltName(rt)+" · "+dv.toFixed(1)+(km?"km":"mi")+
       "</small><br><small style=\"opacity:.75\">"+(note==="clear"?"\u2713 clear":"\u26A0 "+note)+sigTxt+"</small>";
     b.onclick=function(){ selectRouteAlt(i); renderRouteAlts(); };
     box.appendChild(b);
