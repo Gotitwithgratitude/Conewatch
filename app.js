@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v275";
+const APP_VERSION="v276";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -448,7 +448,7 @@ var _swTxt="sw       checking…";
        still asking for. The service worker is cache-first for tiles, which means it answers
        before the network is ever consulted — and that is why every network-level fix I made
        looked correct and changed nothing on screen. */
-    if(localStorage.getItem("cw_tilePurge")==="6") return;
+    if(localStorage.getItem("cw_tilePurge")==="7") return;
     var names=await caches.keys();
     for(var i=0;i<names.length;i++){
       /* v264: this matched /^cw-tiles/ and the real cache is called "conewatch-tiles-v2", so it
@@ -463,7 +463,7 @@ var _swTxt="sw       checking…";
            message was silently dropped. Send both; sw.js now accepts either. */
         navigator.serviceWorker.controller.postMessage({type:"cw-clear-tiles"});
     }catch(e){}
-    localStorage.setItem("cw_tilePurge","6");
+    localStorage.setItem("cw_tilePurge","7");
     try{ console.log("ConeWatch: purged",names.filter(function(n){return /tiles/i.test(n);}).length,"tile cache(s)"); }catch(e){}
   }catch(e){}
 })();
@@ -627,9 +627,15 @@ function rasterStyleObj(dark){
      map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
      brightness down, saturation slightly UP to hold colour through the darkening, contrast up
      so road hierarchy survives it. */
+  /* v276 — "brighter and more alive, like Apple Maps" (Kobi, side-by-side screenshots). Raster
+     paint filters are the only safe lever here — swapping tile providers is what caused the
+     whole "Zoom Level Not Supported" saga above, so brightness/colour stay a filter over the
+     same OSM source rather than a new host. Saturation and contrast both up a notch in both
+     themes; dark mode's brightness ceiling raised slightly so it doesn't read as dimmer than
+     the light theme next to it. */
   let paint = dark
-    ? {"raster-brightness-max":0.52,"raster-brightness-min":0.02,"raster-saturation":0.18,"raster-contrast":0.28,"raster-opacity":1}
-    : {"raster-saturation":0.10,"raster-contrast":0.10,"raster-opacity":1};
+    ? {"raster-brightness-max":0.60,"raster-brightness-min":0.02,"raster-saturation":0.30,"raster-contrast":0.32,"raster-opacity":1}
+    : {"raster-saturation":0.22,"raster-contrast":0.15,"raster-opacity":1};
   let bgc = dark?"#0E1013":"#EAE6DF";
   /* THIS is the function styleFor() actually calls. Every seasonal treatment I wrote before
      went into rasterStyle() instead — a dead twin — which is why none of it ever appeared.
@@ -3242,37 +3248,24 @@ function _sigData(){
    SIGN meaning "signalised intersection", not a claim about the current phase. Lighting only one
    would read as live state we do not have. */
 function _signalIcon(){
-  /* Proportions matched to Apple's: a stubbier housing (5:7, not the 5:11 tower v230 shipped),
-     a generous corner radius so it reads as a rounded capsule rather than a bar, and small
-     evenly-spaced lamps with real gaps between them. v230's lamps were oversized, crowded and
-     wrapped in an alpha halo, which at map scale merged into one smear. No halo now — at 12px
-     on screen, crispness IS the detail. */
+  /* v276 — flattened per Kobi's DoorDash comparison: a single flat amber dot with a thin white
+     ring reads instantly at a glance while driving, where the old skeuomorphic 3-lamp housing
+     (dark box + red/amber/green lamps) took a beat longer to parse and looked busy next to
+     DoorDash's simple flat pins. Same canvas/addImage plumbing as before, just a simpler draw. */
   var r=Math.min(4,Math.max(2,Math.ceil(window.devicePixelRatio||2)));
   var SS=2;                                         // supersample, then let the GPU downfilter
-  var w=21, h=29;                                   // logical size
+  var w=18, h=18;                                   // logical size — a dot, not a tower
   var c=document.createElement("canvas"); c.width=w*r*SS; c.height=h*r*SS;
   var x=c.getContext("2d"); x.scale(r*SS,r*SS);
   x.imageSmoothingEnabled=true; x.imageSmoothingQuality="high";
-  function rrect(a,b,ww,hh,rad){
-    x.beginPath();
-    x.moveTo(a+rad,b);
-    x.arcTo(a+ww,b,a+ww,b+hh,rad); x.arcTo(a+ww,b+hh,a,b+hh,rad);
-    x.arcTo(a,b+hh,a,b,rad);       x.arcTo(a,b,a+ww,b,rad);
-    x.closePath();
-  }
-  // soft drop shadow lifts it off the road surface the way Apple's does
+  var cx=w/2, cy=h/2, rad=7.4;
+  // soft drop shadow lifts it off the road surface
   x.save();
-  x.shadowColor="rgba(0,0,0,.45)"; x.shadowBlur=2.2; x.shadowOffsetY=.7;
-  x.fillStyle="#F2F2F0"; rrect(1.2,1.2,w-2.4,h-2.4,7.2); x.fill();       // white rim, warm not pure
+  x.shadowColor="rgba(0,0,0,.4)"; x.shadowBlur=2; x.shadowOffsetY=.6;
+  x.beginPath(); x.arc(cx,cy,rad,0,Math.PI*2); x.fillStyle="#F5A623"; x.fill();  // flat amber fill
   x.restore();
-  x.fillStyle="#1C1C1E"; rrect(3.6,3.6,w-7.2,h-7.2,5.2); x.fill();       // dark housing
-  // three lamps, evenly spaced with breathing room top and bottom
-  var lamps=[["#F0483E",9.1],["#F5A623",14.5],["#39B54A",19.9]];
-  lamps.forEach(function(L){
-    x.beginPath(); x.arc(w/2,L[1],2.35,0,Math.PI*2);
-    x.fillStyle=L[0]; x.fill();
-  });
-  // downsample the supersampled render so the curves land smooth at map size
+  x.lineWidth=1.6; x.strokeStyle="#FFFFFF"; x.beginPath(); x.arc(cx,cy,rad-0.8,0,Math.PI*2); x.stroke();
+  // downsample the supersampled render so the curve lands smooth at map size
   var out=document.createElement("canvas"); out.width=w*r; out.height=h*r;
   var ox=out.getContext("2d");
   ox.imageSmoothingEnabled=true; ox.imageSmoothingQuality="high";

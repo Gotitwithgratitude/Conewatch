@@ -217,6 +217,147 @@
     }
   }catch(e){}
 
+  /* ---- 5. stop signs — same pipeline as app.js's traffic-signal layer, kept here so the
+     patch stays the one safe place to add a map layer without touching the 9000-line core file.
+     Reuses app.js's globals (they're plain top-level `var`/`function`, so classic-script loading
+     puts them on window): _bboxKey, S, map, SIG_MINZ, overpassFetch. Degrades to no-op if any
+     of those aren't there yet. */
+  (function(){
+    if(typeof map==="undefined" || typeof S==="undefined") return;
+    var _stopFeat={}, _stopDone=[], _stopT=null, _stopBusy=false;
+    var STOP_MINZ = (typeof SIG_MINZ!=="undefined") ? SIG_MINZ : 15;
+
+    function _stopCacheLoad(){
+      try{
+        var raw=localStorage.getItem("cw_stopsigns"); if(!raw) return;
+        var c=JSON.parse(raw); if(!c||!c.f) return;
+        c.f.forEach(function(p){ _stopFeat[p[0]]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[p[1],p[2]]}}; });
+      }catch(e){}
+    }
+    function _stopCacheSave(){
+      try{
+        var f=[]; for(var id in _stopFeat){ var c=_stopFeat[id].geometry.coordinates; f.push([id,+c[0].toFixed(5),+c[1].toFixed(5)]); }
+        if(f.length>4000) f=f.slice(-4000);
+        localStorage.setItem("cw_stopsigns", JSON.stringify({f:f}));
+      }catch(e){}
+    }
+    function _stopData(){ return {type:"FeatureCollection",features:Object.keys(_stopFeat).map(function(k){return _stopFeat[k];})}; }
+    function _stopPush(els){
+      var n=0;
+      (els||[]).forEach(function(e){
+        var lat=e.lat, lng=e.lon;
+        if(!isFinite(lat)||!isFinite(lng)) return;
+        var id="p"+e.id;
+        if(_stopFeat[id]) return;
+        _stopFeat[id]={type:"Feature",properties:{},geometry:{type:"Point",coordinates:[lng,lat]}};
+        n++;
+      });
+      if(n){ try{ if(map.getSource("stopsigns")) map.getSource("stopsigns").setData(_stopData()); }catch(e){} _stopCacheSave(); }
+      return n;
+    }
+    // flat red octagon, matching the flattened signal dot's simplicity
+    function _stopIcon(){
+      var r=Math.min(4,Math.max(2,Math.ceil(window.devicePixelRatio||2)));
+      var SS=2, w=16, h=16;
+      var c=document.createElement("canvas"); c.width=w*r*SS; c.height=h*r*SS;
+      var x=c.getContext("2d"); x.scale(r*SS,r*SS);
+      x.imageSmoothingEnabled=true; x.imageSmoothingQuality="high";
+      var cx=w/2, cy=h/2, rad=6.6, sides=8;
+      x.save(); x.shadowColor="rgba(0,0,0,.4)"; x.shadowBlur=2; x.shadowOffsetY=.6;
+      x.beginPath();
+      for(var i=0;i<sides;i++){
+        var a=(Math.PI/8)+i*(Math.PI*2/sides);
+        var px=cx+rad*Math.cos(a), py=cy+rad*Math.sin(a);
+        i===0 ? x.moveTo(px,py) : x.lineTo(px,py);
+      }
+      x.closePath(); x.fillStyle="#D0342C"; x.fill(); x.restore();
+      x.lineWidth=1.4; x.strokeStyle="#FFFFFF"; x.stroke();
+      var out=document.createElement("canvas"); out.width=w*r; out.height=h*r;
+      var ox=out.getContext("2d"); ox.imageSmoothingEnabled=true; ox.imageSmoothingQuality="high";
+      ox.drawImage(c,0,0,out.width,out.height);
+      return {canvas:out,w:w*r,h:h*r,ratio:r};
+    }
+    function _addStopImage(){
+      try{
+        if(map.hasImage&&map.hasImage("cw-stopsign")) return true;
+        var ic=_stopIcon();
+        var d=ic.canvas.getContext("2d").getImageData(0,0,ic.w,ic.h);
+        map.addImage("cw-stopsign",{width:ic.w,height:ic.h,data:new Uint8Array(d.data.buffer)},{pixelRatio:ic.ratio});
+        return true;
+      }catch(e){ return false; }
+    }
+    function ensureStopLayer(){
+      try{
+        if(!S.mapReady||!map) return;
+        if(!map.getSource("stopsigns")) map.addSource("stopsigns",{type:"geojson",data:_stopData()});
+        var hasImg=_addStopImage();
+        if(!map.getLayer("stopsign-dots")){
+          var before = map.getLayer("route-casing") ? "route-casing" : undefined;
+          if(hasImg){
+            map.addLayer({id:"stopsign-dots",type:"symbol",source:"stopsigns",minzoom:STOP_MINZ,
+              layout:{"icon-image":"cw-stopsign",
+                "icon-size":["interpolate",["linear"],["zoom"],15,.3,17,.5,19,.7],
+                "icon-anchor":"center",
+                "icon-allow-overlap":["step",["zoom"],false,17,true],
+                "icon-ignore-placement":["step",["zoom"],false,17,true],
+                "icon-pitch-alignment":"viewport","icon-rotation-alignment":"viewport"},
+              paint:{"icon-opacity":["interpolate",["linear"],["zoom"],15,.7,16.5,1]}
+            }, before);
+          } else {
+            map.addLayer({id:"stopsign-dots",type:"circle",source:"stopsigns",minzoom:STOP_MINZ,
+              paint:{"circle-radius":["interpolate",["linear"],["zoom"],15,2.4,19,6],
+                     "circle-color":"#D0342C","circle-stroke-width":1,"circle-stroke-color":"#fff"}}, before);
+          }
+        }
+        applyStopVis();
+      }catch(e){}
+    }
+    function applyStopVis(){
+      try{ if(map.getLayer("stopsign-dots")) map.setLayoutProperty("stopsign-dots","visibility",(S.mapMode||"full")==="full"?"visible":"none"); }catch(e){}
+    }
+    async function fetchStopSigns(bbox){
+      if(typeof overpassFetch!=="function") return 0;
+      var key=(typeof _bboxKey==="function") ? _bboxKey(bbox) : bbox.join(",");
+      if(_stopDone.indexOf(key)>-1) return 0;
+      _stopDone.push(key); if(_stopDone.length>60) _stopDone.shift();
+      var q="[out:json][timeout:18];node["+'"highway"="stop"'+"]("+bbox.join(",")+");out skel;";
+      try{ var d=await overpassFetch(q); return _stopPush(d&&d.elements); }
+      catch(e){ var i=_stopDone.indexOf(key); if(i>-1) _stopDone.splice(i,1); return 0; }
+    }
+    async function runStopFetch(){
+      try{
+        if(!S.mapReady||!map) return;
+        if((S.mapMode||"full")!=="full") return;
+        if(map.getZoom()<STOP_MINZ) return;
+        if(!navigator.onLine||document.hidden) return;
+        if(_stopBusy) return;
+        var b=map.getBounds(); var pad=0.004;
+        var bbox=[b.getSouth()-pad,b.getWest()-pad,b.getNorth()+pad,b.getEast()+pad];
+        _stopBusy=true;
+        try{ await fetchStopSigns(bbox); } finally { _stopBusy=false; }
+      }catch(e){ _stopBusy=false; }
+    }
+    function scheduleStopFetch(){ if(_stopT) clearTimeout(_stopT); _stopT=setTimeout(runStopFetch, 700); }
+
+    try{ _stopCacheLoad(); }catch(e){}
+    setInterval(function(){ try{ if(!document.hidden) runStopFetch(); }catch(e){} }, 11000);
+
+    // piggyback on the exact same triggers app.js already uses for the signal layer, so stop
+    // signs load, redraw and hide/show in lockstep with signals without touching app.js at all.
+    if(typeof ensureSignalLayer==="function"){
+      var _origEnsure=ensureSignalLayer;
+      ensureSignalLayer=function(){ _origEnsure(); try{ ensureStopLayer(); }catch(e){} };
+    }
+    if(typeof scheduleSignalFetch==="function"){
+      var _origSchedule=scheduleSignalFetch;
+      scheduleSignalFetch=function(){ _origSchedule(); try{ scheduleStopFetch(); }catch(e){} };
+    }
+    if(typeof applySignalVis==="function"){
+      var _origVis=applySignalVis;
+      applySignalVis=function(){ _origVis(); try{ applyStopVis(); }catch(e){} };
+    }
+  })();
+
   try{ console.log("ConeWatch discovery patch active"); }catch(e){}
   try{
     // reflect the REAL build version from app.js — never hardcode (was stamping a stale number over the badge)
