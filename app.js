@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v277";
+const APP_VERSION="v278";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -864,6 +864,25 @@ function sweepHazards(){ const now=Date.now(); for(let i=S.hazards.length-1;i>=0
 setInterval(sweepHazards,60000);
 
 let mapStyleTheme="dark";
+/* v278 — the v277 fix was correct (confirmed: Kobi's own debug panel now shows no esri-sat
+   layer in the style at all) but the wallpaper still appeared, worse than before. That means
+   satellite wasn't the whole story, or wasn't this device's story. Rather than guess a third
+   time, this counts every actual network request MapLibre makes by hostname, so the debug
+   panel can state a FACT — "N requests went to arcgisonline.com" — instead of another theory.
+   transformRequest is called for every tile/resource the map fetches, tile or otherwise. */
+var _cwHostCounts = {};
+function _cwTrackReq(url){
+  try{ var h=new URL(url).hostname; _cwHostCounts[h]=(_cwHostCounts[h]||0)+1; }catch(e){}
+}
+function _cwReqTxt(){
+  try{
+    var keys=Object.keys(_cwHostCounts);
+    if(!keys.length) return "netreq  none yet";
+    var arc=_cwHostCounts["server.arcgisonline.com"]||0;
+    return "netreq  "+keys.map(function(k){ return k.replace(/^(tile|api|server)\./,"")+":"+_cwHostCounts[k]; }).join(" ")+
+           (arc>0 ? "  ⚠ ARCGIS HIT" : "");
+  }catch(e){ return "netreq  err"; }
+}
 (async function boot(){
   S.themeNow=isDayNow()?"light":"dark";
   document.documentElement.dataset.theme=S.themeNow;
@@ -874,6 +893,9 @@ let mapStyleTheme="dark";
      A bigger cache keeps recent tiles in memory, no fade removes the "loading" shimmer that
      reads as lag, and not re-validating expired tiles stops needless refetches mid-drive. */
   map=new maplibregl.Map({ container:"map", style, center:[-83.0790,42.3316], zoom:14.5, pitch:0, bearing:0,
+    /* v278 — logs every request's hostname (see _cwReqTxt above). Doesn't alter the request,
+       just observes it, so this can't change map behavior — only what the debug panel can see. */
+    transformRequest:function(url,resourceType){ try{ _cwTrackReq(url); }catch(e){} return {url:url}; },
     /* fadeDuration:0 was my mistake in v164 — I set it to remove what looked like loading
        shimmer, but without a cross-fade tiles pop in as hard-edged rectangles, which is the
        blocky patchwork that appears when panning or pitching. A short fade blends them and
@@ -6110,7 +6132,10 @@ function openSat(lat,lng,name){
   $("satPreview").style.display="block";
   if(satMapObj){satMapObj.remove();satMapObj=null;}
   satMapObj=new maplibregl.Map({container:"satMap",
-    style:{version:8,sources:{esri:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,maxzoom:19,attribution:satMeta().attr}},layers:[{id:"bg",type:"background",paint:{"background-color":"#0c1622"}},{id:"s",type:"raster",source:"esri"}]},
+    // v278 — minzoom floor added for consistency with the main map's SAT_MINZ guard. This
+    // preview opens at a fixed 17.6 so it was never the z8-11 regional-gap risk, but there's
+    // no reason to leave it as the one Esri source in the app with no floor at all.
+    style:{version:8,sources:{esri:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,minzoom:SAT_MINZ,maxzoom:19,attribution:satMeta().attr}},layers:[{id:"bg",type:"background",paint:{"background-color":"#0c1622"}},{id:"s",type:"raster",source:"esri",minzoom:SAT_MINZ}]},
     center:[lng,lat],zoom:17.6,pitch:62,bearing:0,maxPitch:85,attributionControl:true});
   // highlight beacon so the exact building is unmistakable
   if(satPin){try{satPin.remove();}catch(e){}satPin=null;}
@@ -6268,11 +6293,15 @@ function openDriveTour(){
   if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;}
   tourPuck=null; tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[];
   tourMap=new maplibregl.Map({container:"driveMap",
+    // v278 — this was the one Esri source in the app with NO minzoom floor at all, and
+    // _openZoom can be as low as 13.2 for a long route — inside the same regional coverage
+    // band that produced the z8-9 wallpaper on the main map. Same SAT_MINZ floor as everywhere
+    // else now applies here too.
     style:{version:8,
       sources:{
-        sat:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,maxzoom:19,attribution:satMeta().attr}
+        sat:{type:"raster",tiles:satTiles(),tileSize:satMeta().size,minzoom:SAT_MINZ,maxzoom:19,attribution:satMeta().attr}
       },
-      layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat","paint":{"raster-fade-duration":140}}]},
+      layers:[{id:"bg",type:"background",paint:{"background-color":"#bfe0ff"}},{id:"sat",type:"raster",source:"sat",minzoom:SAT_MINZ,"paint":{"raster-fade-duration":140}}]},
     /* Was 85° pitch with terrain on satellite tiles — at that angle the horizon runs on
        almost forever, so MapLibre requests a huge tile set every frame and the DEM gets
        overzoomed past its z14 limit as well. 80° looks near-identical from the driver's
@@ -6831,6 +6860,7 @@ try{
                    ((typeof _probeTxt!=="undefined") ? ("\n"+_probeTxt) : "")+
                    ((typeof _searchTxt!=="undefined" && _searchTxt) ? ("\n"+_searchTxt) : "")+
                    ((typeof _rasterTxt==="function") ? ("\n"+_rasterTxt()) : "")+
+                   ((typeof _cwReqTxt==="function") ? ("\n"+_cwReqTxt()) : "")+
                    ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
