@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v283";
+const APP_VERSION="v284";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -706,15 +706,18 @@ function rasterStyleObj(dark){
      map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
      brightness down, saturation slightly UP to hold colour through the darkening, contrast up
      so road hierarchy survives it. */
-  /* v276 — "brighter and more alive, like Apple Maps" (Kobi, side-by-side screenshots). Raster
-     paint filters are the only safe lever here — swapping tile providers is what caused the
-     whole "Zoom Level Not Supported" saga above, so brightness/colour stay a filter over the
-     same OSM source rather than a new host. Saturation and contrast both up a notch in both
-     themes; dark mode's brightness ceiling raised slightly so it doesn't read as dimmer than
-     the light theme next to it. */
+  /* v284 — "ours looks dead." Pushed considerably harder than v276's cautious bump, which was
+     too timid to read as a change at all. Light especially: OSM's default style is pastel by
+     design (built for legibility on a desktop, not for punch on a phone in a moving car), so it
+     needs a big saturation lift before it stops looking washed out next to Apple's.
+     This is the CEILING for a raster basemap though, and worth being honest about: filters can
+     only push pixels OSM already baked. They can't recolor water separately from parks, or
+     darken land while keeping road colour saturated — which is exactly how Apple gets a dark
+     map that still feels vivid. Going past this trades legibility for punch. The real fix is
+     vector tiles (see note at styleFor). */
   let paint = dark
-    ? {"raster-brightness-max":0.60,"raster-brightness-min":0.02,"raster-saturation":0.30,"raster-contrast":0.32,"raster-opacity":1}
-    : {"raster-saturation":0.22,"raster-contrast":0.15,"raster-opacity":1};
+    ? {"raster-brightness-max":0.62,"raster-brightness-min":0.03,"raster-saturation":0.52,"raster-contrast":0.42,"raster-opacity":1}
+    : {"raster-saturation":0.48,"raster-contrast":0.30,"raster-brightness-min":0.04,"raster-opacity":1};
   let bgc = dark?"#0E1013":"#EAE6DF";
   /* THIS is the function styleFor() actually calls. Every seasonal treatment I wrote before
      went into rasterStyle() instead — a dead twin — which is why none of it ever appeared.
@@ -1281,6 +1284,13 @@ function stopSmooth(){ if(_dr.raf){ cancelAnimationFrame(_dr.raf); _dr.raf=null;
 
 function initUserMarker(){
   const el=document.createElement("div"); el.id="meArrow";
+  /* v284 — Apple-style heading cone. The marker already rotates to S.course (setRotation below,
+     with rotationAlignment:"map"), so a child element inherits that rotation for free — the
+     beam always points where the arrow points, no extra math and no second compass read.
+     Child rather than a ::before, because ::before with z-index:-1 would paint behind the
+     puck's own white background and disappear. Children paint above the parent background and
+     below ::after, so the beam sits under the arrowhead exactly like Apple's. */
+  el.innerHTML='<i class="me-beam"></i>';
   meMarker=new maplibregl.Marker({element:el,rotationAlignment:"map",pitchAlignment:"map"}).setLngLat([-83.0790,42.3316]);
 }
 

@@ -823,6 +823,24 @@
      a drag. A hard-edged ring reads the same at 27px against the map but costs no blur pass. */
   .hz{display:flex;align-items:center;justify-content:center;width:27px;height:27px;border-radius:50%;border:2px solid #141619;font-size:13px;box-shadow:0 0 0 1px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);cursor:pointer;backface-visibility:hidden}
   #meArrow{width:36px;height:36px;border-radius:50%;background:#fff;box-shadow:0 3px 12px rgba(0,0,0,.4),0 0 0 6px rgba(255,255,255,.22);position:relative;transform-origin:50% 50%}
+  /* ═══════════ v284: heading cone ═══════════
+     The wedge of light Apple projects ahead of the blue dot. Inherits the marker's rotation, so
+     it always points where the puck points. clip-path makes the wedge (a CSS border-triangle
+     can't take a gradient), and the radial fade means it reads as "roughly this way" rather
+     than a hard-edged claim of precision the compass can't back up. */
+  .me-beam{position:absolute;left:50%;top:50%;width:132px;height:132px;
+    transform:translate(-50%,-50%);pointer-events:none;
+    clip-path:polygon(50% 50%, 14% 0%, 86% 0%);
+    background:radial-gradient(circle at 50% 50%,
+      rgba(90,170,255,.50) 0%, rgba(90,170,255,.26) 40%, rgba(90,170,255,0) 70%);
+    animation:beamBreathe 3.2s ease-in-out infinite}
+  [data-theme="light"] .me-beam{background:radial-gradient(circle at 50% 50%,
+      rgba(29,110,242,.42) 0%, rgba(29,110,242,.20) 40%, rgba(29,110,242,0) 70%)}
+  @keyframes beamBreathe{0%,100%{opacity:.9}50%{opacity:.62}}
+  @media (prefers-reduced-motion:reduce){.me-beam{animation:none}}
+  /* while navigating the route line already says where you're going — a big cone on top of it
+     is noise, so shrink it to a hint */
+  body.driving .me-beam{width:84px;height:84px;animation:none;opacity:.55}
   #meArrow::after{content:"";position:absolute;left:50%;top:7px;transform:translateX(-50%);border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:17px solid #1B3B6F}
   .stopdot{width:20px;height:20px;border-radius:50%;background:var(--purple);border:2px solid #141619;color:#141619;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center}
   .dest-flag{font-size:24px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
