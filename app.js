@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v279";
+const APP_VERSION="v280";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -506,6 +506,25 @@ function _rasterTxt(){
   }catch(e){ return "raster   err"; }
 }
 async function probeBasemapFloor(force){
+  /* v280 — RETIRED. Kobi reported the wallpaper appearing a beat AFTER the app finished loading
+     — not immediately with the first tiles. That's the exact timing signature of this probe:
+     it's forced on every debug-panel open (line ~6870) and also fires automatically 1.5-4s
+     after load, and it does REAL, live, uncached fetches straight to
+     server.arcgisonline.com/.../World_Street_Map/... — the exact retired service that returns
+     "Zoom Level Not Supported" — at the CURRENT viewport zoom, which is exactly the z8-9
+     regional band every screenshot showed it in.
+     Nothing in this function's own code paints that response to the screen — it only measures
+     byte lengths into a debug string — so it may not be the whole mechanism. But its entire
+     original PURPOSE is already dead: it exists to auto-switch BASE_PROVIDER away from Esri,
+     and BASE_PROVIDER can only ever be "osm" now (see the note above this function) — the one
+     branch that would do anything (`BASE_PROVIDER!=="osm"`) can never fire. So this was hitting
+     a known-bad server, live, for a decision that never executes. No reason to keep it running
+     regardless of whether it turns out to be the whole story — removing it can only help.
+     _probeTxt now just says so, rather than silently vanishing from the debug panel. */
+  _probeTxt="basemap  probe retired (osm-only build; see comment)";
+  return;
+}
+async function _probeBasemapFloor_RETIRED(force){
   /* v265 — the probe was asking the wrong question, and that is why it kept saying everything
      was fine while the map was covered in error tiles.
      It tested ONE tile per zoom: the one containing the driver. But the failures are not spread
@@ -2244,6 +2263,13 @@ function _baseTileTpl(){
      — which is the one thing this feature exists to prevent. */
   if(BASE_PROVIDER==="carto")
     return {u:"https://a.basemaps.cartocdn.com/rastertiles/"+((S.theme==="dark")?"dark_all":"voyager")+"/{z}/{x}/{y}@2x.png", yx:false};
+  /* v280 — this had no branch for "osm" at all and fell straight through to the retired Esri
+     World_Street_Map URL below, which the service worker's isRetiredTile() guard then silently
+     discards every single one of. Corridor and around-me pre-caching have been a complete
+     no-op this whole time — building lists of URLs that get thrown away on arrival, which is
+     also why offline coverage never actually got better no matter how many times this ran. */
+  if(BASE_PROVIDER==="osm")
+    return {u:"https://tile.openstreetmap.org/{z}/{x}/{y}.png", yx:false};
   return {u:"https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}"+TILE_CB, yx:true};
 }
 function corridorTileURLs(coords){
@@ -8307,7 +8333,16 @@ async function downloadOfflineArea(){
   const ck=(CW_CONFIG&&CW_CONFIG.cartoKey||"").trim();
   const subs=["a","b","c","d"];
   const lat=S.pos.lat,lon=S.pos.lng;
-  const cache=await caches.open("cw-tiles-v3");
+  /* v280 — two bugs fixed together, both real regardless of whether either explained the
+     wallpaper:
+     1) The no-key fallback below was hardcoded to the retired Esri World_Street_Map endpoint —
+        this whole feature has been burning bandwidth fetching from a known-bad host.
+     2) It cached into "cw-tiles-v3", a cache the live map NEVER reads (only sw.js's
+        "conewatch-tiles-v5" feeds the actual basemap). So even on a successful fetch, tapping
+        "Download this area for offline" did nothing useful — the tiles it saved were unreachable
+        by the app. Writing into the real TILES cache with the exact same URL format the live
+        basemap requests means a downloaded tile can actually be served back on a cache hit. */
+  const cache=await caches.open("conewatch-tiles-v5");
   let total=0,okc=0;const jobs=[];
   for(let z=11;z<=17;z++){
     const [cx,cy]=tileXY(lat,lon,z);
@@ -8316,7 +8351,7 @@ async function downloadOfflineArea(){
       const n=Math.pow(2,z); if(x<0||y<0||x>=n||y>=n)continue;
       const url= ck
         ? `https://${subs[(x+y)%4]}.basemaps.cartocdn.com/rastertiles/${dark?"dark_all":"voyager"}/${z}/${x}/${y}.png?key=${ck}`
-        : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/${z}/${y}/${x}`+TILE_CB;
+        : `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
       total++;
       jobs.push(fetch(url,{mode:"cors"}).then(res=>{if(res.ok){okc++;return cache.put(url,res.clone());}}).catch(()=>{}));
       if(jobs.length>=60){await Promise.all(jobs);jobs.length=0;$("dlOffline").querySelector("small").textContent=`Downloading… ${okc} tiles`;}
