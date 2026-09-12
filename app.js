@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v276";
+const APP_VERSION="v277";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1036,7 +1036,27 @@ function addMapLayers(){
   if(S.route){ try{ map.getSource("route").setData({type:"Feature",geometry:S.route.geometry}); }catch{} }
   // road-quality heatmap is on by default now — this is a pothole app first
   try{ if(S.heatOn){ ensureHeatLayer(); refreshHeat(); map.setLayoutProperty("rough-heat","visibility","visible"); } }catch(e){}
-  ensureSat();
+  /* v277 — THE ACTUAL root cause of "Zoom Level Not Supported" surviving 17+ builds.
+     This ran unconditionally on every style load (every theme swap, every resize/online/offline
+     restyle, every initial load) regardless of S.sat, so ensureSat() was adding the Esri
+     World_Imagery source + "esri-sat" layer to the map EVERY TIME — hidden via
+     visibility:"none", but present. Every fix so far assumed "hidden" meant "inert." It does
+     not: MapLibre/Mapbox GL only skip RENDERING a layer with visibility:none — the source
+     still loads tiles for it, because tile coverage is computed from which sources a layer
+     USES, not whether that layer is currently visible. That is documented Mapbox/MapLibre
+     behavior, not a bug in this app, but nothing here knew to route around it.
+     So a hidden Esri World_Imagery source was quietly requesting tiles the whole time
+     satellite was "off" — at any zoom >= SAT_MINZ (10). World_Imagery is well known for
+     patchy regional-zoom mosaic coverage (great at world-view, great at close/city-detail,
+     spotty in between) — which is exactly the z8-11 band Kobi's screenshots showed the
+     wallpaper in, and exactly why it never showed at whole-continent or block-level zoom.
+     Once one of those regional tiles came back as ArcGIS's "Zoom Level Not Supported" 200 OK
+     image, sw.js's size check (>=4KB) let it through as a "real" tile — the watermark card is
+     apparently larger than the 4KB flat-box assumption that check was written for — and it got
+     cached forever, all while satellite was never even turned on.
+     Fix: only ever create the Esri source/layer when the driver has actually asked for
+     satellite. Mirrors the already-correct pattern in ensureRouteLayers() below. */
+  try{ if(S.sat) ensureSat(); else pruneSat(); }catch(e){}
 }
 let styleSwapping=false;
 function swapMapStyle(theme,force){
@@ -6018,6 +6038,9 @@ function satMeta(){ const k=(S.satKey||"").trim(); return k?{size:512,attr:"© M
 let _satProv=null;
 function ensureSat(){
   try{
+    // v277 — hardened at the source, not just the call sites: no caller, present or future,
+    // can accidentally stand up the Esri/MapTiler source while satellite is off.
+    if(!S.sat){ pruneSat(); return; }
     const prov=(S.satKey&&S.satKey.trim())?"maptiler":"esri";
     if(map.getSource("esri") && prov!==_satProv){        // provider changed → rebuild source
       if(map.getLayer("esri-sat"))map.removeLayer("esri-sat");
@@ -6073,7 +6096,10 @@ $("satKeySave").onclick=()=>{
   // force the sat source to rebuild with the new provider on next toggle/view
   try{ if(map.getLayer("esri-sat"))map.removeLayer("esri-sat"); if(map.getSource("esri"))map.removeSource("esri"); _satProv=null; }catch(e){}
   if(satMapObj){ try{satMapObj.remove();}catch(e){} satMapObj=null; if($("satPreview").style.display==="block"&&S.dest)openSat(S.dest.lat,S.dest.lng,S.destName); }
-  ensureSat();
+  // v277 — same fix as addMapLayers(): don't build the satellite source at all unless the
+  // driver has satellite actually toggled on. Saving a key in Settings shouldn't silently
+  // start a hidden Esri/MapTiler source loading tiles nobody is looking at.
+  if(S.sat) ensureSat();
   toast(S.satKey?"🛰 HD satellite on — tap 🛰 to view":"Cleared — using keyless Esri");
 };
 

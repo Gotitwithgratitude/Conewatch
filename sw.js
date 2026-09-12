@@ -15,7 +15,11 @@ const CACHE = "conewatch-cache-v2";
    Once cached they became permanent — the map reads the cache, so the wallpaper survived every
    app release, every version bump and every zoom-range fix. Renaming the cache is what actually
    removes them, because activate() deletes any cache that is not the current pair. */
-const TILES = "conewatch-tiles-v4";
+/* v5: renamed again rather than relying solely on the app.js-side purge flag. activate() below
+   deletes any cache that isn't this exact name, so any World_Imagery "Zoom Level Not Supported"
+   tiles that got poisoned into v4 before the v277 fix are gone the moment this worker activates
+   — automatically, without depending on localStorage state surviving on the device. */
+const TILES = "conewatch-tiles-v5";
 const TILE_CAP = 1400;                 // ~50-90MB of 256px tiles; trimmed oldest-first
 const PRECACHE = ["/","/index.html","/app.js","/cw-patch.js","/manifest.json","/apple-touch-icon.png","/icon-512.png"];
 /* The POI index is same-origin and immutable, so it falls into the cache-first branch below with
@@ -48,14 +52,25 @@ function isRetiredTile(url){
    The one thing that separates them is size: an error card is a flat box with a line of text and
    compresses to a couple of KB, where a real street or imagery tile at any zoom we request runs
    into tens of KB. Refusing to cache anything under 4KB costs at most one refetch of a genuinely
-   empty tile — over open water, say — and prevents a transient refusal from becoming permanent. */
+   empty tile — over open water, say — and prevents a transient refusal from becoming permanent.
+   v277: raised specifically for arcgisonline.com. World_Imagery's own "Zoom Level Not Supported"
+   watermark (a repeated, anti-aliased text pattern over a semi-transparent card) compresses
+   larger than the flat World_Street_Map version this threshold was originally sized for — big
+   enough, it turns out, to clear 4KB and get cached as if it were real. This was the second half
+   of the app.js v277 fix (which stops the hidden satellite layer from requesting tiles at all
+   while satellite is off); this half protects the case where satellite legitimately IS on and
+   hits the same regional coverage gap. Every real tile this app requests from ArcGIS — street
+   or imagery, any zoom in range — comes back tens of KB; 12KB still can't reject one of those. */
 const MIN_TILE_BYTES = 4096;
-async function isRealTile(res){
+const MIN_TILE_BYTES_ARCGIS = 12288;
+function minTileBytesFor(url){ return url.hostname === "server.arcgisonline.com" ? MIN_TILE_BYTES_ARCGIS : MIN_TILE_BYTES; }
+async function isRealTile(res, url){
   try{
+    const floor = minTileBytesFor(url);
     const cl = parseInt(res.headers.get("content-length") || "", 10);
-    if (isFinite(cl)) return cl >= MIN_TILE_BYTES;
+    if (isFinite(cl)) return cl >= floor;
     const buf = await res.clone().arrayBuffer();     // no content-length → measure it ourselves
-    return buf.byteLength >= MIN_TILE_BYTES;
+    return buf.byteLength >= floor;
   }catch(err){ return false; }                        // cannot verify → do not cache
 }
 
@@ -108,7 +123,7 @@ async function precacheTiles(urls){
            tile forever, which is what was painting garbled fragments over the map. */
         const res = await fetch(u, { mode: "cors", credentials: "omit" });
         if (res && res.ok && (res.headers.get("content-type") || "").indexOf("image") === 0
-            && await isRealTile(res)) {
+            && await isRealTile(res, new URL(u))) {
           await c.put(u, res.clone()); ok++;
         }
       }catch(err){}
@@ -173,7 +188,7 @@ self.addEventListener("fetch", (e) => {
         const res = await fetch(req);
         // only store a response we could verify AND that is big enough to be a real tile
         if (res && res.ok && res.type !== "opaque") {
-          if (await isRealTile(res)) c.put(req, res.clone());
+          if (await isRealTile(res, url)) c.put(req, res.clone());
         }
         return res;
       }catch(err){
