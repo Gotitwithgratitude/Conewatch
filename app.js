@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v286";
+const APP_VERSION="v287";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -5244,6 +5244,11 @@ function radarOff(){
   try{ if(map.getLayer("cw-radar")) map.removeLayer("cw-radar"); }catch(e){}
   try{ if(map.getSource("cw-radar")) map.removeSource("cw-radar"); }catch(e){}
   if(_radarTimer){ clearInterval(_radarTimer); _radarTimer=null; }
+  /* v287 — remove the key HERE, not in toggleRadar(). The thermal-throttle path turns radar off
+     by calling radarOff() directly (device running hot), which left a precipitation key on
+     screen with no radar under it. Tying the key's life to the layer's means every path that
+     kills the radar kills the key too, including any added later. */
+  try{ var _rk=document.getElementById("radarKey"); if(_rk) _rk.remove(); }catch(e){}
 }
 document.addEventListener("visibilitychange",function(){
   if(!document.hidden && S.radarOn){ radarFrame().then(function(p){ if(p&&p!==_radarTs) radarOn(); }); }
@@ -5272,14 +5277,19 @@ async function toggleRadar(){
    Colours match RainViewer's own scale (the /2/ in the tile path selects that palette). */
 function radarLegend(show){
   var el=document.getElementById("radarKey");
-  if(!show){ if(el) el.remove(); return; }
+  /* v287 — belt and braces: the key only ever exists while the radar LAYER is actually on the
+     map. Checking the layer rather than a flag means a failed radarOn(), a style swap that
+     dropped the layer, or any future path can't leave a key floating over a map with no radar. */
+  var live=false; try{ live=!!(map&&map.getLayer&&map.getLayer("cw-radar")); }catch(e){}
+  if(!show || !live){ if(el) el.remove(); return; }
   if(el) return;
   try{ if(localStorage.getItem("cw_radarKeyHid")==="1") return; }catch(e){}
   el=document.createElement("div");
   el.id="radarKey";
-  el.innerHTML='<span class="rk-t">Precipitation</span>'+
-    '<span class="rk-bar"></span>'+
-    '<span class="rk-l"><i>Light</i><i>Heavy</i></span>'+
+  /* v287 — compact single row: swatch, "light → heavy", dismiss. The word "Precipitation" was
+     the widest thing in the old key and the gradient already says what it is. */
+  el.innerHTML='<span class="rk-bar"></span>'+
+    '<span class="rk-l"><i>Light</i><i>→</i><i>Heavy</i></span>'+
     '<button class="rk-x" aria-label="Hide radar key">✕</button>';
   el.querySelector(".rk-x").onclick=function(){
     try{ localStorage.setItem("cw_radarKeyHid","1"); }catch(e){}

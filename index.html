@@ -852,24 +852,25 @@
      it always points where the puck points. clip-path makes the wedge (a CSS border-triangle
      can't take a gradient), and the radial fade means it reads as "roughly this way" rather
      than a hard-edged claim of precision the compass can't back up. */
-  /* ═══════════ v286: radar colour key ═══════════
-     Bottom-left, above the trip badge, only while radar is on. The gradient is RainViewer's own
-     scale so the swatch and the map agree. Dismissible and remembered — once a driver knows
-     blue is drizzle and red is a downpour, the key is clutter. */
-  #radarKey{position:fixed;left:12px;bottom:calc(var(--dockH,150px) + 58px);z-index:996;
-    display:flex;flex-direction:column;gap:4px;padding:8px 30px 8px 10px;border-radius:12px;
+  /* ═══════════ v287: radar colour key ═══════════
+     v286 put this bottom-left at full size, where it landed straight on top of the speed dial
+     and the trip badge — three things stacked in one corner. Moved to the top-left strip just
+     under the header, which is the only genuinely empty area of the map, and cut to about a
+     third of the size: one short row, no heading, hairline text. Big enough to read at a
+     glance, small enough to ignore. */
+  #radarKey{position:fixed;left:12px;top:calc(var(--hdrH,190px) + 10px);z-index:996;
+    display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:9px;
     background:var(--panel-solid);border:1px solid var(--line);
     -webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);
-    box-shadow:var(--hair),0 6px 18px rgba(0,0,0,.34);pointer-events:auto}
-  #radarKey .rk-t{font-family:var(--tech,monospace);font-size:9px;letter-spacing:1.2px;
-    text-transform:uppercase;color:var(--mute)}
-  #radarKey .rk-bar{width:104px;height:7px;border-radius:4px;
+    box-shadow:var(--hair),0 4px 12px rgba(0,0,0,.3);pointer-events:auto}
+  #radarKey .rk-bar{width:56px;height:5px;border-radius:3px;flex:0 0 auto;
     background:linear-gradient(90deg,#4FA8E8 0%,#4FD39B 32%,#F2D14B 58%,#F08A3C 78%,#E0483E 100%)}
-  #radarKey .rk-l{display:flex;justify-content:space-between;width:104px}
-  #radarKey .rk-l i{font-style:normal;font-size:9px;color:var(--mute);letter-spacing:.4px}
-  #radarKey .rk-x{position:absolute;top:4px;right:4px;width:20px;height:20px;border:none;
-    background:transparent;color:var(--mute);font-size:11px;cursor:pointer;line-height:1}
-  body.driving #radarKey{display:none}
+  #radarKey .rk-l{display:flex;align-items:center;gap:4px}
+  #radarKey .rk-l i{font-style:normal;font-family:var(--tech,monospace);font-size:8px;
+    letter-spacing:.6px;text-transform:uppercase;color:var(--mute);white-space:nowrap}
+  #radarKey .rk-x{border:none;background:transparent;color:var(--mute);font-size:10px;
+    cursor:pointer;line-height:1;padding:0 0 0 2px;flex:0 0 auto}
+  body.driving #radarKey,body.cw-minimal #radarKey{display:none}
   .me-beam{position:absolute;left:50%;top:50%;width:132px;height:132px;
     transform:translate(-50%,-50%);pointer-events:none;
     clip-path:polygon(50% 50%, 14% 0%, 86% 0%);
