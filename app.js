@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v285";
+const APP_VERSION="v286";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1171,6 +1171,38 @@ function swapMapStyle(theme,force){
   if(styleSwapping)return;
   // NEVER restyle mid-navigation — setStyle wipes every layer (incl. the route line). Defer until the drive ends.
   if(S.navigating){ S.pendingTheme=theme; return; }
+  /* v286 — INSTANT theme swap.
+     setStyle() tears the entire style down and rebuilds it: every source re-registers, every
+     tile is re-requested, and every layer this app adds (route, hazards, signals, stop signs,
+     heat, 3D) has to be re-created by addMapLayers/ensureRouteLayers afterwards. That is the
+     second-or-two lag on the LIGHT/DARK toggle.
+     But both themes now draw the SAME OpenStreetMap source and differ only in raster paint
+     filters — so there is nothing to rebuild. Setting the paint properties on the existing
+     layer re-renders on the next frame with zero network work. Falls through to the old full
+     swap if anything is missing (different provider, season change, layer not there yet), so
+     this can only ever be faster, never less correct. */
+  try{
+    var _seasonNow=(typeof seasonActive==="function")?seasonActive():false;
+    if(!force && map && map.getLayer && map.getLayer("basemap") && map.getSource("basemap")
+       && _seasonPainted===_seasonNow){
+      var _src=map.getStyle().sources.basemap;
+      var _url=(_src&&_src.tiles&&_src.tiles[0])||"";
+      // only safe when the tile URL for the target theme matches what's already loaded
+      if(_url===baseTileURL(theme!=="light")){
+        var dark=(theme!=="light");
+        var p = dark
+          ? {"raster-brightness-max":0.62,"raster-brightness-min":0.03,"raster-saturation":0.52,"raster-contrast":0.42,"raster-opacity":1}
+          : {"raster-saturation":0.48,"raster-contrast":0.30,"raster-brightness-min":0.04,"raster-brightness-max":1,"raster-opacity":1};
+        Object.keys(p).forEach(function(k){ try{ map.setPaintProperty("basemap",k,p[k]); }catch(e){} });
+        try{ map.setPaintProperty("bg","background-color",dark?"#0E1013":"#EAE6DF"); }catch(e){}
+        try{ map.setSky(dark
+          ? {"sky-color":"#070B14","horizon-color":"#12203A","fog-color":"#0B1120","sky-horizon-blend":.65,"horizon-fog-blend":.5}
+          : {"sky-color":"#87B7E8","horizon-color":"#DCE8F2","fog-color":"#E8EEF4","sky-horizon-blend":.6,"horizon-fog-blend":.4}); }catch(e){}
+        mapStyleTheme=theme;
+        return;                                   // done — no teardown, no refetch, next frame
+      }
+    }
+  }catch(e){}
   styleSwapping=true;
   styleFor(theme).then(st=>{
     // register BEFORE setStyle so the restore can't be missed (this race was killing the route line)
@@ -5230,7 +5262,31 @@ async function toggleRadar(){
     S.radarOn=false; radarOff(); toast("Weather radar off",1400);
   }
   try{ localStorage.setItem("cw_radar",S.radarOn?"1":"0"); }catch(e){}
+  try{ radarLegend(S.radarOn); }catch(e){}
   var st=$("radarState"); if(st) st.textContent=S.radarOn?"On — live precipitation":"Off — tap to show rain & snow";
+}
+/* v286 — colour key for the radar. Blue/green/yellow/red means nothing to a driver who hasn't
+   been told, and the radar auto-enables on launch, so most people meet it with no explanation
+   at all. Sits bottom-left above the trip badge, only while radar is on, and is dismissible —
+   once you know what it means you don't need it on screen every drive.
+   Colours match RainViewer's own scale (the /2/ in the tile path selects that palette). */
+function radarLegend(show){
+  var el=document.getElementById("radarKey");
+  if(!show){ if(el) el.remove(); return; }
+  if(el) return;
+  try{ if(localStorage.getItem("cw_radarKeyHid")==="1") return; }catch(e){}
+  el=document.createElement("div");
+  el.id="radarKey";
+  el.innerHTML='<span class="rk-t">Precipitation</span>'+
+    '<span class="rk-bar"></span>'+
+    '<span class="rk-l"><i>Light</i><i>Heavy</i></span>'+
+    '<button class="rk-x" aria-label="Hide radar key">✕</button>';
+  el.querySelector(".rk-x").onclick=function(){
+    try{ localStorage.setItem("cw_radarKeyHid","1"); }catch(e){}
+    el.remove();
+    toast("Radar key hidden — turn radar off and on to bring it back",2600);
+  };
+  document.body.appendChild(el);
 }
 function openCategorySearch(cat){ curCat=cat; curRadius=8000; openSheet("discoverSheet"); var t=$("discoverTitle"); if(t)t.textContent=cat.emoji+" "+cat.label+" — nearest first"; runCategory(); }
 function discoverByPoi(tag){ var cat=POI_TAGS[tag]; if(cat){ cat=Object.assign({key:tag},cat); openCategorySearch(cat); } }
