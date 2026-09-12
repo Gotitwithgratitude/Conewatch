@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v281";
+const APP_VERSION="v282";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -5163,7 +5163,23 @@ async function radarOn(){
   try{
     if(map.getLayer("cw-radar")) map.removeLayer("cw-radar");
     if(map.getSource("cw-radar")) map.removeSource("cw-radar");
-    map.addSource("cw-radar",{type:"raster",tiles:["https://tilecache.rainviewer.com"+path+"/256/{z}/{x}/{y}/2/1_1.png"],tileSize:256,maxzoom:10});
+    /* v282 — THE "Zoom Level Not Supported" WALLPAPER. Confirmed on device: toggling radar off
+       makes it vanish, at the same zoom and position where it had appeared for 20+ builds.
+       It was never the basemap, never satellite, never the tile cache — all of which were
+       cleared, audited and proven clean while the wallpaper was still on screen.
+       Mechanism: this source was capped at maxzoom 10, so MapLibre requested radar tiles
+       DIRECTLY at z8/z9/z10 — precisely the band every screenshot showed the text in. Wider
+       zooms rendered radar correctly (the continent-view screenshot has real precipitation on
+       it) and above z10 MapLibre reuses the z10 tile stretched, so the failure was confined to
+       that middle band. RainViewer answers a tile it won't serve with an error image at
+       HTTP 200, same trap ArcGIS sets, so nothing downstream could tell it from real weather —
+       and because RainViewer isn't in sw.js's TILE_HOSTS list it was never cached, which is why
+       the cache audit came back clean and every cache-side fix changed nothing.
+       Capping the source at 7 puts the whole failing band out of reach: MapLibre never requests
+       z8-10 at all, and overzooms a z7 tile instead. Radar is diffuse precipitation blobs, so
+       the stretch is invisible — and correctness beats sharpness on a layer that had been
+       painting error text over the map. */
+    map.addSource("cw-radar",{type:"raster",tiles:["https://tilecache.rainviewer.com"+path+"/256/{z}/{x}/{y}/2/1_1.png"],tileSize:256,minzoom:0,maxzoom:7});
     // insert BENEATH the route line so navigation is never obscured by weather
     var before=null; try{ if(map.getLayer("route-line")) before="route-line"; }catch(e){}
     map.addLayer({id:"cw-radar",type:"raster",source:"cw-radar",paint:{"raster-opacity":0.55}}, before||undefined);
