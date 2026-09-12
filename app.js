@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v278";
+const APP_VERSION="v279";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -871,16 +871,20 @@ let mapStyleTheme="dark";
    panel can state a FACT — "N requests went to arcgisonline.com" — instead of another theory.
    transformRequest is called for every tile/resource the map fetches, tile or otherwise. */
 var _cwHostCounts = {};
-function _cwTrackReq(url){
-  try{ var h=new URL(url).hostname; _cwHostCounts[h]=(_cwHostCounts[h]||0)+1; }catch(e){}
+function _cwTrackReq(url,tag){
+  try{ var h=(tag||"")+new URL(url).hostname; _cwHostCounts[h]=(_cwHostCounts[h]||0)+1; }catch(e){}
 }
 function _cwReqTxt(){
   try{
     var keys=Object.keys(_cwHostCounts);
     if(!keys.length) return "netreq  none yet";
-    var arc=_cwHostCounts["server.arcgisonline.com"]||0;
+    var arc=keys.some(function(k){ return /arcgisonline\.com$/.test(k); });
+    /* v279 — satMapObj/tourMap were never instrumented, so if either is still alive from an
+       earlier session (never properly .remove()'d) it could be fetching Esri tiles this counter
+       couldn't see at all. This line makes that visible directly rather than by inference. */
     return "netreq  "+keys.map(function(k){ return k.replace(/^(tile|api|server)\./,"")+":"+_cwHostCounts[k]; }).join(" ")+
-           (arc>0 ? "  ⚠ ARCGIS HIT" : "");
+           (arc ? "  ⚠ ARCGIS HIT" : "")+
+           "\nmaps    sat="+(satMapObj?"ALIVE":"none")+"  tour="+(tourMap?"ALIVE":"none");
   }catch(e){ return "netreq  err"; }
 }
 (async function boot(){
@@ -6132,6 +6136,7 @@ function openSat(lat,lng,name){
   $("satPreview").style.display="block";
   if(satMapObj){satMapObj.remove();satMapObj=null;}
   satMapObj=new maplibregl.Map({container:"satMap",
+    transformRequest:function(url,resourceType){ try{ _cwTrackReq(url,"sat:"); }catch(e){} return {url:url}; },
     // v278 — minzoom floor added for consistency with the main map's SAT_MINZ guard. This
     // preview opens at a fixed 17.6 so it was never the z8-11 regional-gap risk, but there's
     // no reason to leave it as the one Esri source in the app with no floor at all.
@@ -6293,6 +6298,7 @@ function openDriveTour(){
   if(tourMap){try{tourMap.remove();}catch(e){}tourMap=null;}
   tourPuck=null; tourPins.forEach(p=>{try{p.remove();}catch(e){}}); tourPins=[];
   tourMap=new maplibregl.Map({container:"driveMap",
+    transformRequest:function(url,resourceType){ try{ _cwTrackReq(url,"tour:"); }catch(e){} return {url:url}; },
     // v278 — this was the one Esri source in the app with NO minzoom floor at all, and
     // _openZoom can be as low as 13.2 for a long route — inside the same regional coverage
     // band that produced the z8-9 wallpaper on the main map. Same SAT_MINZ floor as everywhere
