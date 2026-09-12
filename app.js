@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v284";
+const APP_VERSION="v285";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3959,8 +3959,20 @@ function attachPullToDismiss(el, onDismiss, opts){
   function pos(e){ return e.clientY; }
   el.addEventListener("pointerdown", function(e){
     if(e.target.closest("input,textarea,select")) return;
-    var sc=e.target.closest("[data-scroll],.sheet,#dockMore");
-    if(sc && sc.scrollTop>0) return;                 // let content scroll first
+    /* v285 — the grabber is an unconditional drag handle.
+       Previously EVERY pull was refused unless the sheet was scrolled to the very top
+       (`sc.scrollTop>0 → return`). On a long sheet — the route card especially, which runs well
+       past a screen with stats, endpoints, options, hazards, elevation and three buttons — you
+       are almost never at scrollTop 0 when you reach for the gesture, so swipe-to-close simply
+       did nothing. Apple's sheets always honour a pull from the grabber no matter how far the
+       content is scrolled; the scroll-position rule only needs to apply to the CONTENT, so that
+       a drag inside a list still scrolls that list. */
+    var fromHandle = !!(e.target.closest(".grabber,#dockGrip") ||
+                        (e.target===el && (e.clientY - el.getBoundingClientRect().top) < 44));
+    if(!fromHandle){
+      var sc=e.target.closest("[data-scroll],.sheet,#dockMore");
+      if(sc && sc.scrollTop>0) return;               // let content scroll first
+    }
     if(opts.canStart && !opts.canStart()) return;
     armed=true; live=false; startY=pos(e); base=el.style.transition;
     /* v259: the overflow lock used to go on HERE, at pointerdown, whenever the sheet was at

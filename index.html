@@ -184,12 +184,12 @@
   /* Brand and badge on one baseline at the left, status block hard right, the gap between them
      doing the spacing. Everything sits on one horizontal axis — no element floating above or
      below another, which is what made the old row read as three stacked afterthoughts. */
-  #brandrow{display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;gap:14px;
+  #brandrow{display:grid;grid-template-columns:auto auto 1fr max-content;align-items:center;gap:14px;
     min-height:46px}
   #brandrow #brand{align-self:center}
   /* version, theme and connection travel together as one cluster beside the wordmark, evenly
      spaced, so the eye reads brand -> status -> time straight across */
-  #badgeRow{display:flex;align-items:center;gap:9px}
+  #badgeRow{display:flex;align-items:center;gap:9px;min-width:0}
   /* The season pill lives INSIDE the wordmark, so it is centred on the lettering's optical
      midline rather than the line box — inline-flex with a fixed square and no padding keeps it
      a true circle at any font size, and the -1px lift sits it on the cap-height axis. */
@@ -202,7 +202,14 @@
   #seasonPill.on{display:inline-flex}
   #verBadge{flex:0 0 auto}
   /* the clock owns the right edge on its own */
-  #clock{justify-self:end;display:flex;align-items:center;line-height:1}
+  /* v285 — "PM" was clipping off the right edge. Three things ganged up: the grid's last column
+     was `auto` (which can be squeezed when the two `auto` columns to its left refuse to shrink),
+     #clockTime's 1.5px letter-spacing adds a trailing gap AFTER the final glyph, and .mer added
+     3px more on top. max-content guarantees the column is never squeezed below what it needs,
+     min-width:0 lets the badge cluster absorb the squeeze instead, and killing the trailing
+     letter-spacing on the meridiem reclaims the last few pixels. */
+  #clock{justify-self:end;display:flex;align-items:center;line-height:1;
+    flex:0 0 auto;white-space:nowrap;padding-right:2px}
   /* Digital readout: fixed-width digits so the clock never jitters as the minute rolls over,
      and a colon that pulses on the second like a dash display. */
   #clockTime{font-family:var(--tech,ui-monospace,monospace);font-size:23px;font-weight:700;
@@ -211,7 +218,7 @@
     text-shadow:0 0 12px rgba(255,255,255,.14)}
   #clockTime .cln{animation:cwtick 2s steps(1,end) infinite;opacity:1}
   @keyframes cwtick{0%,49%{opacity:1}50%,100%{opacity:.25}}
-  #clockTime .mer{font-size:11px;letter-spacing:1px;color:var(--mute);margin-left:3px}
+  #clockTime .mer{font-size:11px;letter-spacing:0;color:var(--mute);margin-left:3px}
   /* status pills — same height, same radius, sitting on one line */
   .cw-pill{display:inline-flex;align-items:center;gap:5px;height:19px;padding:0 9px;
     white-space:nowrap;flex:0 0 auto;
@@ -682,12 +689,24 @@
      variable that something else is shadowing. */
   [data-theme="light"] .sheet{background:#FFFFFF;color:#11151c;
     box-shadow:0 -1px 0 rgba(0,0,0,.06) inset,0 -18px 44px rgba(20,26,36,.22)}
+  /* v285 — the sheet surface was pinned per theme but its CONTENTS still resolved --text/--mute
+     from whatever the variable said, which is how the route sheet ended up with washed-out grey
+     labels on white. Pin the text colours to the surface too, so a row is readable no matter
+     which variable is in play. */
+  [data-theme="light"] .sheet .sub,
+  [data-theme="light"] .sheet small{color:#5a6472}
+  [data-theme="light"] .sheet h3,
+  [data-theme="light"] .sheet b,
+  [data-theme="light"] .sheet strong{color:#11151c}
   [data-theme="light"] #stepsHead b{color:#11151c}
   [data-theme="light"] #stepsHead small{color:#5a6472}
   @media (prefers-reduced-motion:reduce){.sheet{transition:none}}
   .sheet h3{font-family:var(--display);letter-spacing:1px;text-transform:uppercase;font-size:15px;margin:0 0 4px}
   .sub{font-size:12px;color:var(--mute);margin:0 0 12px;line-height:1.5}
-  .grabber{width:150px;height:26px;margin:-6px auto 2px;background:linear-gradient(var(--line),var(--line)) center/46px 4px no-repeat;border-radius:13px;cursor:pointer}
+  /* v285 — touch-action:none so the browser hands the whole vertical drag to the pull-to-dismiss
+     handler instead of claiming it for scrolling the sheet mid-gesture. Slightly wider target
+     too: this is now the reliable way to close a long sheet. */
+  .grabber{width:150px;height:26px;margin:-6px auto 2px;background:linear-gradient(var(--line),var(--line)) center/46px 4px no-repeat;border-radius:13px;cursor:pointer;touch-action:none}
   .sheetX{position:absolute;top:10px;right:12px;width:36px;height:36px;border-radius:50%;border:1px solid var(--edge);background:rgba(255,255,255,.08);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);color:var(--mute);font-size:16px;cursor:pointer;box-shadow:var(--hair);z-index:2}
   .sheetX:active{box-shadow:var(--btn-pressed)}
   .sheet{position:fixed}
@@ -958,10 +977,19 @@
   /* meaning colours stay saturated instead of washing out on white */
   [data-theme="light"] #fab911{background:#E0302C !important;color:#fff !important}
   [data-theme="light"] #fabReport{background:#EF7510 !important}
+  /* v285 — lite mode was hardcoding a DARK panel with !important and no light-theme variant, so
+     in light mode the route sheet painted a dark surface while the text stayed dark: the
+     unreadable grey-on-black Kobi hit on "Est. fuel cost / Hazards on route". Lite mode exists
+     to drop blur and shadows on weak GPUs, not to override the theme — so it now picks the
+     surface that matches the active theme. */
   html[data-lite="1"] .sheet,
   html[data-lite="1"] .panel,
   html[data-lite="1"] #navbanner,
   html[data-lite="1"] #topbar{ background:rgba(18,21,26,.94) !important; }
+  html[data-lite="1"][data-theme="light"] .sheet,
+  html[data-lite="1"][data-theme="light"] .panel,
+  html[data-lite="1"][data-theme="light"] #navbanner,
+  html[data-lite="1"][data-theme="light"] #topbar{ background:#FFFFFF !important; color:#11151c }
   html[data-lite="1"] *{ text-shadow:none !important; }
   html[data-lite="1"] .btn,
   html[data-lite="1"] .row-btn,
