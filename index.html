@@ -233,7 +233,17 @@
   .sat-beacon{display:flex;flex-direction:column;align-items:center;position:relative}
   .sat-pin{font-size:34px;line-height:1;filter:drop-shadow(0 3px 5px rgba(0,0,0,.75))}
   .sat-pulse{position:absolute;bottom:3px;width:42px;height:42px;border-radius:50%;background:rgba(255,107,26,.5);box-shadow:0 0 0 2px rgba(255,107,26,.6);animation:satpulse 1.9s ease-out infinite;pointer-events:none}
-  #verBadge{display:inline-block;margin-left:6px;vertical-align:super;font-family:var(--tech,monospace);font-size:9px;font-weight:800;letter-spacing:.5px;color:#fff;padding:2px 6px;border-radius:8px;background:linear-gradient(135deg,#FF6B1A,#ff9a4d);box-shadow:0 0 10px rgba(255,107,26,.55),inset 0 1px 0 rgba(255,255,255,.3);border:1px solid rgba(255,255,255,.25);transform:translateY(-2px)}
+  /* v283 — the version badge was the odd one out in the header: a glowing gradient chip with a
+     drop shadow, sitting super-scripted next to two flat outlined pills. Matching it to the
+     .cw-pill geometry (same height, radius, type scale) makes the header read as one row of
+     consistent chips instead of three unrelated shapes. It keeps the cone-orange tint so it's
+     still findable at a glance — and it's still the long-press target for the debug panel. */
+  #verBadge{display:inline-flex;align-items:center;height:19px;padding:0 9px;margin:0;
+    vertical-align:middle;transform:none;
+    font-family:var(--tech,monospace);font-size:9px;font-weight:700;letter-spacing:1.4px;
+    border-radius:10px;color:var(--cone);
+    background:rgba(255,107,26,.12);border:1px solid rgba(255,107,26,.38);
+    box-shadow:none}
   #brandrow.searching #brand,#brandrow.searching #clock{display:none}
   #brandrow.searching #searchwrap{flex:1 1 100%}
   #searchClear{position:absolute;right:44px;top:50%;transform:translateY(-50%);border:none;background:var(--line);color:var(--text);width:22px;height:22px;border-radius:50%;font-size:13px;line-height:1;cursor:pointer;display:none}
@@ -255,8 +265,12 @@
     margin:0 auto 12px;cursor:pointer}
   #dock #searchwrap{flex:none;width:100%}
   #dock #search{font-size:17px;height:52px;border-radius:16px}
-  #dock #quick{margin-top:10px}
-  #dock #modes{margin-top:10px}
+  /* v283 — the three groups (search / shortcuts / travel mode) were stacked at 10px with no
+     separation, so the sheet read as one dense block. Apple's sheet gives each group real air
+     and a hairline between sections; this does the same without changing any behaviour. */
+  #dock #quick{margin-top:14px;padding-top:14px;border-top:1px solid rgba(127,127,127,.14)}
+  #dock #quick:empty{margin-top:0;padding-top:0;border-top:none}
+  #dock #modes{margin-top:14px;padding-top:14px;border-top:1px solid rgba(127,127,127,.14)}
   /* collapsed still shows the search bar — the one control that always has to be reachable */
   /* detents are driven from JS via --dockY so the drag and the snap share one mechanism */
   #dock{transform:translateY(var(--dockY,0px))}
@@ -378,6 +392,11 @@
   /* ═══════════ FAB size ═══════════ */
   body[data-fab="s"] .fab{width:42px;height:42px;font-size:16px}
   body[data-fab="l"] .fab{width:58px;height:58px;font-size:22px}
+  /* v283 — the button-size setting has to keep working inside the tray. Tray buttons run one
+     step smaller than loose ones (the tray's own padding supplies the visual mass), so these
+     mirror the sizes above rather than letting the generic .fab rule win. */
+  body[data-fab="s"] #fabTray .fab{width:40px;height:40px;font-size:15px}
+  body[data-fab="l"] #fabTray .fab{width:54px;height:54px;font-size:21px}
   .mode{flex:1;background:var(--btn-face);-webkit-backdrop-filter:var(--glass-lite);backdrop-filter:var(--glass-lite);border:1px solid var(--edge);color:var(--mute);border-radius:12px;padding:8px 0;font-size:15px;cursor:pointer;text-align:center;box-shadow:var(--hair)}
   .mode:active{box-shadow:var(--btn-pressed);transform:translateY(1px)}
   .mode.on{color:var(--text);border-color:var(--nav-accent);box-shadow:var(--btn-shadow),0 0 12px var(--glow)}
@@ -488,6 +507,25 @@
   [data-theme="light"] #compass small{color:rgba(10,70,60,.85);text-shadow:none}
 
   #fabs{position:fixed;right:12px;top:calc(var(--hdrH,190px) + 12px);bottom:calc(var(--dockH,150px) + 12px);z-index:998;display:flex;flex-direction:column;justify-content:flex-end;gap:9px;align-items:flex-end;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;pointer-events:none}
+  /* ═══════════ v283 UI pass: group the rail ═══════════
+     Four separate translucent circles floating loose over the map each competed for attention
+     and read as clutter next to Apple's grouped control clusters. The buttons keep their own
+     hit targets and handlers; they just sit inside one soft container now, so the eye parses
+     "controls" once instead of four times. 911 stays visually separate — it should never look
+     like part of a group you might tap by accident. */
+  #fabTray{display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:26px;
+    background:rgba(22,24,28,.42);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);
+    border:1px solid var(--edge);box-shadow:var(--hair),0 8px 26px rgba(0,0,0,.4);pointer-events:auto}
+  [data-theme="light"] #fabTray{background:rgba(255,255,255,.62)}
+  /* inside the tray the buttons lose their own chrome — the tray provides it */
+  #fabTray .fab{background:transparent;border:none;box-shadow:none;
+    -webkit-backdrop-filter:none;backdrop-filter:none;width:46px;height:46px}
+  #fabTray .fab.active{background:rgba(127,127,127,.16);border:none;box-shadow:none}
+  #fabTray .fab.primary{background:linear-gradient(150deg,#FF8A45,#E85A0C);color:#141619}
+  /* hairline separators between grouped buttons, the way iOS segments a control cluster */
+  #fabTray .fab + .fab{position:relative}
+  #fabTray .fab + .fab::before{content:"";position:absolute;top:-1px;left:9px;right:9px;
+    height:1px;background:rgba(127,127,127,.18)}
   #fabs>*{pointer-events:auto;flex-shrink:0}
   /* 911 must never be the thing that scrolls away — pin it to the top of the rail */
 
@@ -1112,9 +1150,13 @@
     <button class="fab" id="fabVoice" aria-label="Voice command">🎤</button>
     <button class="fab" id="fabSettings" aria-label="Settings">⚙️</button>
   </div>
-  <button class="fab" id="fabMore" aria-label="More tools">⋯</button>
-  <button class="fab primary key" id="fabReport" aria-label="Report hazard">⚠️</button>
-  <button class="fab key" id="fabLocate" aria-label="My location">◎</button>
+  <!-- v283: grouped into one tray. Same buttons, same ids, same handlers — only the container
+       is new, so every existing onclick in app.js keeps working untouched. -->
+  <div id="fabTray">
+    <button class="fab" id="fabMore" aria-label="More tools">⋯</button>
+    <button class="fab primary" id="fabReport" aria-label="Report hazard">⚠️</button>
+    <button class="fab" id="fabLocate" aria-label="My location">◎</button>
+  </div>
 </div>
 
 <!-- full-screen search panel (Apple-style: opens from the search bar, live suggestions) -->
