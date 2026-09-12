@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v280";
+const APP_VERSION="v281";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -416,6 +416,59 @@ function baseTileURL(dark){
    many entries each holds, and whether a service worker controls the page — so a stale worker,
    a stale cache and a live failure stop looking identical from a screenshot. */
 var _swTxt="sw       checking…";
+/* v281 — STOP GUESSING, READ THE CACHE.
+   Every network-level theory is now disproven by the device's own debug panel: no ArcGIS
+   requests (netreq), no satellite layer in the style (raster), no stray map instances (maps),
+   probe retired. If nothing is FETCHING the wallpaper, it is being SERVED FROM STORAGE — and
+   conewatch-tiles-v4 is still sitting there at 1431 entries, frozen but alive, long after the
+   worker that is supposed to delete it demonstrably activated (v5 exists and is growing).
+   So: enumerate every cached URL by hostname and report any non-OSM host holding tiles. This
+   turns "I think it's cached Esri tiles" into a fact or eliminates it outright. */
+var _cacheAuditTxt="cache    auditing…";
+async function cwCacheAudit(){
+  try{
+    if(!("caches" in window)){ _cacheAuditTxt="cache    unsupported"; return; }
+    var names=await caches.keys(), lines=[], suspect=0;
+    for(var i=0;i<names.length;i++){
+      try{
+        var c=await caches.open(names[i]);
+        var keys=await c.keys();
+        var byHost={};
+        for(var j=0;j<keys.length;j++){
+          var h="?";
+          try{ h=new URL(keys[j].url).hostname; }catch(e){}
+          byHost[h]=(byHost[h]||0)+1;
+        }
+        var hosts=Object.keys(byHost).sort(function(a,b){ return byHost[b]-byHost[a]; });
+        var desc=hosts.map(function(h){
+          var bad=/arcgisonline|maptiler|cartocdn/.test(h);
+          if(bad) suspect+=byHost[h];
+          return (bad?"⚠":"")+h.replace(/^(tile|api|server)\./,"")+":"+byHost[h];
+        }).join(" ");
+        lines.push(names[i].replace(/^conewatch-/,"")+" → "+(desc||"empty"));
+      }catch(e){ lines.push(names[i]+" → unreadable"); }
+    }
+    _cacheAuditTxt="cache    "+(suspect?("⚠ "+suspect+" NON-OSM TILES CACHED"):"clean (osm only)")+
+                   (lines.length?("\n         "+lines.join("\n         ")):"");
+  }catch(e){ _cacheAuditTxt="cache    audit err: "+((e&&e.message)||"?"); }
+}
+/* Nuke any tile cache that is not the current one, from the PAGE side. The service worker's own
+   activate() handler should already have removed conewatch-tiles-v4 and provably has not — a
+   worker's activate only fires on version change and can be skipped entirely if the browser
+   decides the byte-identical worker is already installed. The page can delete caches directly,
+   with no such condition, so this does not depend on worker lifecycle at all. */
+async function cwPurgeStaleTileCaches(){
+  try{
+    if(!("caches" in window)) return 0;
+    var names=await caches.keys(), killed=0;
+    for(var i=0;i<names.length;i++){
+      if(/tiles/i.test(names[i]) && names[i]!=="conewatch-tiles-v5"){
+        try{ if(await caches.delete(names[i])) killed++; }catch(e){}
+      }
+    }
+    return killed;
+  }catch(e){ return 0; }
+}
 (async function reportSW(){
   try{
     var parts=[];
@@ -438,6 +491,13 @@ var _swTxt="sw       checking…";
       }
     }
   }catch(e){ _swTxt="sw       error: "+((e&&e.message)||"?"); }
+  /* v281 — purge stale tile caches from the page, then audit what actually remains. Order
+     matters: purge first so the audit reports the post-purge truth, not the pre-purge one. */
+  try{
+    var _k=await cwPurgeStaleTileCaches();
+    if(_k) try{ console.log("ConeWatch: page-side purge removed "+_k+" stale tile cache(s)"); }catch(e){}
+    await cwCacheAudit();
+  }catch(e){}
 })();
 
 (async function purgePoisonedTiles(){
@@ -6872,6 +6932,10 @@ try{
       /* Opening the debug panel forces a fresh probe. Waiting a week for the cache to expire is
          no use while we are actively hunting this. */
       try{ if(!_probeRan){ _probeRan=true; probeBasemapFloor(true); } }catch(e){}
+      /* v281 — re-audit on every debug open so the panel shows the cache as it is RIGHT NOW,
+         not as it was at boot. If a poisoned entry gets written back mid-session, this catches
+         it; a boot-time-only audit never could. */
+      try{ if(typeof cwCacheAudit==="function") cwCacheAudit(); }catch(e){}
       try{
         if(typeof cwdbAll!=="function"){ _corrTxt="corridor  n/a (old build)"; return; }
         cwdbAll().then(function(all){
@@ -6893,6 +6957,7 @@ try{
                    ((typeof _searchTxt!=="undefined" && _searchTxt) ? ("\n"+_searchTxt) : "")+
                    ((typeof _rasterTxt==="function") ? ("\n"+_rasterTxt()) : "")+
                    ((typeof _cwReqTxt==="function") ? ("\n"+_cwReqTxt()) : "")+
+                   ((typeof _cacheAuditTxt!=="undefined") ? ("\n"+_cacheAuditTxt) : "")+
                    ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
