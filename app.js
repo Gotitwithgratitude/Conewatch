@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v287";
+const APP_VERSION="v288";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -1182,9 +1182,15 @@ function swapMapStyle(theme,force){
      swap if anything is missing (different provider, season change, layer not there yet), so
      this can only ever be faster, never less correct. */
   try{
-    var _seasonNow=(typeof seasonActive==="function")?seasonActive():false;
+    var _seasonNow=(typeof seasonActive==="function")?!!seasonActive():false;
+    /* v288 — _seasonPainted is never initialised anywhere: it's `undefined` until a season swap
+       actually happens. v286's fast path compared it with `===` against a boolean, so the test
+       was `undefined === false` — false — and the fast path never ran once. The theme toggle
+       kept doing the full setStyle teardown, which is why it still felt slow.
+       Normalise both sides to booleans and treat "never painted a season" as "no season". */
+    var _seasonPrev=(typeof _seasonPainted==="undefined"||_seasonPainted===null)?false:!!_seasonPainted;
     if(!force && map && map.getLayer && map.getLayer("basemap") && map.getSource("basemap")
-       && _seasonPainted===_seasonNow){
+       && _seasonPrev===_seasonNow){
       var _src=map.getStyle().sources.basemap;
       var _url=(_src&&_src.tiles&&_src.tiles[0])||"";
       // only safe when the tile URL for the target theme matches what's already loaded
