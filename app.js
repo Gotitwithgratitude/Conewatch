@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v288";
+const APP_VERSION="v291";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -706,18 +706,17 @@ function rasterStyleObj(dark){
      map. Apple's night style keeps colour and darkens LUMINANCE instead, so that's what we do:
      brightness down, saturation slightly UP to hold colour through the darkening, contrast up
      so road hierarchy survives it. */
-  /* v284 — "ours looks dead." Pushed considerably harder than v276's cautious bump, which was
-     too timid to read as a change at all. Light especially: OSM's default style is pastel by
-     design (built for legibility on a desktop, not for punch on a phone in a moving car), so it
-     needs a big saturation lift before it stops looking washed out next to Apple's.
-     This is the CEILING for a raster basemap though, and worth being honest about: filters can
-     only push pixels OSM already baked. They can't recolor water separately from parks, or
-     darken land while keeping road colour saturated — which is exactly how Apple gets a dark
-     map that still feels vivid. Going past this trades legibility for punch. The real fix is
-     vector tiles (see note at styleFor). */
-  let paint = dark
-    ? {"raster-brightness-max":0.62,"raster-brightness-min":0.03,"raster-saturation":0.52,"raster-contrast":0.42,"raster-opacity":1}
-    : {"raster-saturation":0.48,"raster-contrast":0.30,"raster-brightness-min":0.04,"raster-opacity":1};
+  /* v290 — ONE source of truth for basemap paint.
+     v284 chased "ours looks dead" by pushing dark saturation from NEGATIVE to +0.52 and
+     brightness up — which inverted the night treatment: dark mode came out brighter and more
+     vivid than light, exactly the opposite of the intent. v286 then duplicated those same
+     numbers inside swapMapStyle's fast path, so the two copies could drift independently and
+     a fix in one place wouldn't reach the other.
+     Now both callers read this function. Dark darkens LUMINANCE hard (that's what makes a night
+     map read as night) while keeping a little saturation so parks, water and road classes stay
+     distinguishable instead of collapsing to grey — which was the original complaint. Light
+     gets a real lift over stock OSM without going neon. */
+  var paint = basePaintFor(dark);
   let bgc = dark?"#0E1013":"#EAE6DF";
   /* THIS is the function styleFor() actually calls. Every seasonal treatment I wrote before
      went into rasterStyle() instead — a dead twin — which is why none of it ever appeared.
@@ -946,6 +945,19 @@ function sweepHazards(){ const now=Date.now(); for(let i=S.hazards.length-1;i>=0
 setInterval(sweepHazards,60000);
 
 let mapStyleTheme="dark";
+/* v290 — the single definition of basemap raster paint. Both the style builder and the
+   instant-swap fast path call this, so the two can never disagree about what "dark" means.
+   Dark: luminance capped low (this is what actually makes it read as night), saturation kept
+   mildly positive so colour survives the darkening rather than collapsing to grey, contrast up
+   so the road hierarchy stays legible at speed.
+   Light: a genuine lift over stock OSM's desktop-pastel palette, stopping short of neon. */
+function basePaintFor(dark){
+  return dark
+    ? {"raster-brightness-max":0.44,"raster-brightness-min":0.02,"raster-saturation":0.12,
+       "raster-contrast":0.30,"raster-hue-rotate":0,"raster-opacity":1}
+    : {"raster-brightness-max":1,"raster-brightness-min":0.03,"raster-saturation":0.30,
+       "raster-contrast":0.18,"raster-hue-rotate":0,"raster-opacity":1};
+}
 /* v278 — the v277 fix was correct (confirmed: Kobi's own debug panel now shows no esri-sat
    layer in the style at all) but the wallpaper still appeared, worse than before. That means
    satellite wasn't the whole story, or wasn't this device's story. Rather than guess a third
@@ -1196,9 +1208,8 @@ function swapMapStyle(theme,force){
       // only safe when the tile URL for the target theme matches what's already loaded
       if(_url===baseTileURL(theme!=="light")){
         var dark=(theme!=="light");
-        var p = dark
-          ? {"raster-brightness-max":0.62,"raster-brightness-min":0.03,"raster-saturation":0.52,"raster-contrast":0.42,"raster-opacity":1}
-          : {"raster-saturation":0.48,"raster-contrast":0.30,"raster-brightness-min":0.04,"raster-brightness-max":1,"raster-opacity":1};
+        // v290 — same helper the style builder uses, so fast swap and full rebuild always agree
+        var p = basePaintFor(dark);
         Object.keys(p).forEach(function(k){ try{ map.setPaintProperty("basemap",k,p[k]); }catch(e){} });
         try{ map.setPaintProperty("bg","background-color",dark?"#0E1013":"#EAE6DF"); }catch(e){}
         try{ map.setSky(dark
@@ -1337,12 +1348,19 @@ function gpsOpts(){
   // ACCURACY FIRST. The old build asked for LOW accuracy whenever you weren't navigating, which
   // falls back to wifi/cell positioning and can sit 100m+ off — that's what made the dot look wrong
   // while just viewing the map. Real GPS now runs any time the app is open.
-  if(S.navigating) return { enableHighAccuracy:true, maximumAge:0, timeout:15000 };
+  /* v290 — offline gets a far longer timeout. The GPS receiver itself needs no network, but
+     ASSISTED GPS does: with no signal the phone can't download satellite orbit data, so a cold
+     fix has to decode it from the satellites directly — tens of seconds instead of a couple.
+     At a 15s timeout that fix was being abandoned right before it would have landed, which
+     makes GPS look broken offline when it was only cut off mid-acquisition. */
+  var _off=false; try{ _off=(navigator.onLine===false); }catch(e){}
+  var TO = _off ? 60000 : 15000;
+  if(S.navigating) return { enableHighAccuracy:true, maximumAge:0, timeout:TO };
   /* maximumAge lets the OS answer instantly from its cache. Useful once we are running, but on
      the very first fix that cache is usually a stale cell-tower estimate — so demand a fresh
      reading until we have a real position. */
-  if(!S.pos) return { enableHighAccuracy:true, maximumAge:0, timeout:15000 };
-  return { enableHighAccuracy:true, maximumAge:S.saver?4000:1500, timeout:15000 };
+  if(!S.pos) return { enableHighAccuracy:true, maximumAge:0, timeout:TO };
+  return { enableHighAccuracy:true, maximumAge:S.saver?4000:1500, timeout:TO };
 }
 function startGPS(){
   if(!("geolocation" in navigator)){ toast("No GPS available on this device."); return; }
@@ -3087,12 +3105,25 @@ function beelineTo(dest){
     // which indexed the compass table with NaN and printed "undefined" as the heading
     var d=distM(S.pos,dest), b=_brg([S.pos.lng,S.pos.lat],[dest.lng,dest.lat]);
     var pts=["N","NE","E","SE","S","SW","W","NW"], dir=pts[Math.round(((b%360)+360)%360/45)%8];
+    /* v291 — the beeline drew a line and stopped. It never set S.route, so there was no route
+       object, no route card and nothing to press Start on: offline, tapping Go put a line on
+       the map and then appeared to do nothing at all. That's the "it doesn't go" Kobi hit.
+       Populating S.route with the direct line makes it a first-class (if crude) route, so the
+       route card opens and guidance can actually be started. Distance is the straight-line
+       distance and the duration is an estimate from it — both are honestly labelled below as a
+       direct line rather than dressed up as turn-by-turn, because the roads will be longer. */
+    var _mph = (S.mode==="foot"||S.mode==="hike") ? 3.1 : (S.mode==="bike" ? 9.5 : 22);
+    var _secs = Math.max(60, Math.round((d/1609.34) / _mph * 3600));
+    S.route={ geometry:geo, duration:_secs, distance:d, legs:[], _beeline:true };
+    S.steps=[]; S.stepIdx=0; S.peekIdx=null;
     try{
       var bb=new maplibregl.LngLatBounds(geo.coordinates[0],geo.coordinates[0]);
       geo.coordinates.forEach(function(c){ bb.extend(c); });
-      map.fitBounds(bb,{padding:{top:150,bottom:120,left:50,right:50}});
+      map.fitBounds(bb,{padding:{top:160,bottom:90,left:50,right:50}});
     }catch(e){}
-    toast("Offline — no turn-by-turn. Direct line: "+fmtDist(d)+" "+dir+".",4600);
+    // open the card so there is something to act on, same as every other routing outcome
+    try{ openSheet("routeSheet"); renderRouteSheet(S.route); }catch(e){}
+    toast("Offline — direct line only, no turn-by-turn. "+fmtDist(d)+" "+dir+".",4600);
     return true;
   }catch(e){ return false; }
 }
@@ -3813,7 +3844,12 @@ function renderRouteSheet(r){
     else if(S.avoidMode==="best") avoidTxt=` · least-freeway route`;
     else avoidTxt=` · freeway unavoidable here`;
   }
-  if(el("rsStats")) setTxt("rsMeta",`${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`);
+  /* v291 — a beeline is a straight line to the destination, not a road route. Say so on the
+     card: the distance and time shown are straight-line estimates and the real drive will be
+     longer. Better a plain label than a driver trusting an ETA that never accounted for roads. */
+  if(el("rsStats")) setTxt("rsMeta", r && r._beeline
+    ? "offline · direct line only — no turn-by-turn, actual drive will be longer"
+    : `${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`);
   try{
     // second line = full address, the way a maps app shows it
     const da=el("rsDestAddr");
