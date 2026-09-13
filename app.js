@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v298";
+const APP_VERSION="v299";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -189,7 +189,35 @@ const S = {
 try{ S.avoidTolls=localStorage.getItem("cw_avoidTolls")==="1"; S.avoidHwy=localStorage.getItem("cw_avoidHwy")==="1"; }catch(e){}
 const $ = (id)=>document.getElementById(id);
 let toastTimer;
-function toast(msg,ms=2800){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),ms);}
+/* v299 — toasts can now carry an action. Pass a function as the third argument and the toast
+   becomes tappable: tapping runs it and dismisses. Used for the low-battery power-saver offer,
+   so the app can suggest something without doing it uninvited. Without an action the toast
+   behaves exactly as before, including staying pointer-transparent so it never eats a map tap. */
+function toast(msg,ms=2800,action){
+  const t=$("toast"); if(!t) return;
+  t.textContent=msg;
+  t.onclick=null;
+  t.classList.remove("tappable");
+  t.style.pointerEvents="none";
+  if(typeof action==="function"){
+    t.classList.add("tappable");
+    t.style.pointerEvents="auto";
+    t.onclick=function(ev){
+      ev.stopPropagation();
+      t.classList.remove("show","tappable");
+      t.style.pointerEvents="none";
+      t.onclick=null;
+      try{ action(); }catch(e){}
+    };
+  }
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){
+    t.classList.remove("show","tappable");
+    t.style.pointerEvents="none";
+    t.onclick=null;
+  },ms);
+}
 
 /* ═══════════ adaptive theme engine ═══════════ */
 function isDayNow(){
@@ -1544,7 +1572,20 @@ var _fpsRing=[], _thermalOn=false, _thermalLast=0;
           try{ map.easeTo({pitch:0,duration:400}); }catch(e){}
           toast("Device running hot — Power Saver on automatically: flat 2D map to cool things down.",6000);
         } else if(_thermalOn && avg>40){
-          _thermalOn=false; _thermalLast=Date.now();   // recovered; leave saver for the user to undo
+          /* v299 — actually restore on recovery. This used to leave power saver on "for the user
+             to undo", which was already poor (the driver never chose it) and is now impossible:
+             the settings row that would have undone it is gone. Since the app imposed it, the
+             app lifts it — but only if the driver hasn't separately accepted the low-battery
+             prompt, which is their choice and must stick. */
+          _thermalOn=false; _thermalLast=Date.now();
+          if(!_autoSaver || !S.saver){
+            try{
+              S.saver=false; startGPS();
+              var ss2=$("saverState"); if(ss2) ss2.textContent="Off — full GPS rate + animations";
+              if(S.navigating) map.easeTo({pitch:60,duration:600});
+              toast("Device cooled down — full map restored",3000);
+            }catch(e){}
+          }
         }
       }
     }
@@ -5815,13 +5856,25 @@ try{
     const upd=()=>{
       battPct=Math.round(b.level*100);
       const el=$("battStat"); if(el)el.textContent=`${battPct}%${b.charging?" ⚡charging":""}`;
-      // auto-enable Power Saver once when battery is low and unplugged
+      /* v299 — OFFER power saver at low battery, don't impose it.
+         Turning it on automatically meant deciding, on the driver's behalf, that stretching the
+         charge matters more than the 3D map and smooth camera they were using a second earlier.
+         For a driver ten minutes from home at 18%, that trade is simply wrong — and the app has
+         no way to know which case it's in. So: one tap-to-apply prompt, once per discharge.
+         (The framerate trigger below stays automatic: a nav display dropping under 22fps while
+         someone is driving is a safety problem, not a preference, and it restores itself when
+         the frames come back.) */
       if(!b.charging && b.level<=0.20 && !S.saver && !_autoSaver){
-        _autoSaver=true; S.saver=true; try{startGPS();}catch(e){}
-        const ss=$("saverState"); if(ss)ss.textContent="On — auto (low battery)";
-        try{if(S.navigating)map.easeTo({pitch:0,duration:0});}catch(e){}
-        toast("🔋 Low battery — Power Saver on automatically: 2D map + reduced GPS to stretch your charge.",7000);
+        _autoSaver=true;
+        toast("🔋 Battery at "+battPct+"% — tap to reduce GPS and animations",8000,function(){
+          S.saver=true; try{startGPS();}catch(e){}
+          try{ var ss=$("saverState"); if(ss)ss.textContent="On — reduced GPS rate, minimal animation"; }catch(e){}
+          try{ if(S.navigating)map.easeTo({pitch:0,duration:400}); }catch(e){}
+          toast("Battery saver on — 2D map, reduced GPS",3000);
+        });
       }
+      // plugging back in re-arms the prompt for the next time they unplug and run low
+      if(b.charging && _autoSaver && !S.saver) _autoSaver=false;
     };
     upd();b.addEventListener("levelchange",upd);b.addEventListener("chargingchange",upd);
   });
@@ -6116,7 +6169,10 @@ function updateFollowUI(){
   try{ var fl=$("fabLocate"); if(fl) fl.classList.toggle("active",S.follow); }catch(e){}
   try{ var fs=$("followState"); if(fs) fs.textContent=S.follow?"On — map recenters as you drive":"Off — tap ◎ to re-center"; }catch(e){}
 }
-$("toggleSaver").onclick=()=>{S.saver=!S.saver;$("saverState").textContent=S.saver?"On — reduced GPS rate, minimal animation":"Off — full GPS rate + animations";startGPS();toast(S.saver?"Battery saver on":"Battery saver off");};
+/* v299 — the Battery saver settings row is gone. It offered a choice nobody goes hunting for,
+   and the two moments it actually matters now surface themselves: a tap-to-apply prompt at 20%
+   unplugged, and the automatic framerate trigger. Every remaining $("saverState") write is
+   already null-guarded, so the missing row is harmless. */
 $("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").textContent=S.audioAlerts?"On — beeps near hazards while navigating":"Off — visual alerts only";};
 /* v298 — impact detection and the road-quality heatmap have no off switch any more. They are
    the sensing layer the whole product rests on: every hard bump logged is a data point nobody

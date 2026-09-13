@@ -297,6 +297,11 @@
     transition:transform .28s cubic-bezier(.32,.72,0,1)}
   /* v298 — settings group headers. A flat list of 25 rows has no shape; four small labelled
      bands give the eye somewhere to land without adding chrome. */
+  /* v299 — a toast carrying an action looks pressable: brighter edge and a subtle lift. Plain
+     toasts are unchanged and stay pointer-transparent so they can never swallow a map tap. */
+  #toast.tappable{border-color:var(--cone);cursor:pointer;
+    box-shadow:0 0 0 1px rgba(255,107,26,.35),0 10px 30px rgba(0,0,0,.45)}
+  #toast.tappable::after{content:"  ›";font-weight:700;color:var(--cone)}
   .set-grp{font-family:var(--tech,monospace);font-size:10px;letter-spacing:1.4px;
     text-transform:uppercase;color:var(--mute);margin:18px 0 7px;padding-bottom:5px;
     border-bottom:1px solid var(--line)}
@@ -1478,7 +1483,6 @@
   <div class="set-grp">Driving</div>
   <button class="row-btn" id="toggleAlerts"><span class="ic">🔊</span><span>Audio hazard alerts<small id="alertState">On — beeps near hazards while navigating</small></span></button>
   <button class="row-btn" id="dlOffline"><span class="ic">📥</span><span>Download this area for offline<small>Saves the map around you — plus turns on roads it covers. Traffic and closures need signal.</small></span></button>
-  <button class="row-btn" id="toggleSaver"><span class="ic">🔋</span><span>Battery saver<small id="saverState">Off — full GPS rate + animations</small></span></button>
   <button class="row-btn" id="viewTrips"><span class="ic">🕘</span><span>Trip history<small id="tripCount">Your recent drives</small></span></button>
   <button class="row-btn" id="testCue"><span class="ic">📳</span><span>Test turn cue<small>Feel the pre-exit haptic + tone on this device</small></span></button>
 
