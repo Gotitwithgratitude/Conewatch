@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v295";
+const APP_VERSION="v296";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3290,25 +3290,64 @@ async function fetchRoute(silent){
       }
       return;
     }
-    // planning a NEW trip offline: a route we already drove to this destination is real
-    // turn-by-turn and should be handed back rather than refused
+    /* ═══════════ v296 — OFFLINE ROUTING: ordered best-to-worst, and always labelled ═══════════
+       Two problems fixed here.
+       1) The corridor router (routeOffline) already existed and computes a REAL route from the
+          cached road graph — but planning a new trip never called it. It only ran on mid-drive
+          reroutes. So a driver planning offline fell straight to a straight line even when the
+          corridor cache could have produced actual turns. Strictly worse than what the app was
+          already capable of.
+       2) Nothing told the driver which of these three answers they got, and they are wildly
+          different in quality. S.offlineKind records it so the route card and nav banner can
+          say so plainly — see rsMeta and renderNav.
+       Order is best-available-first: a saved route you actually drove beats a computed one,
+       which beats a straight line. */
     var stored=offlineRouteFor(S.dest);
     if(stored){
       installStoredRoute(stored);
+      /* A saved route starts where you were when you first built it. If you are nowhere near
+         that start, its turns are real but they do not apply to you — which is more dangerous
+         than an obvious straight line, because it looks authoritative. Measure and say so. */
+      var _startGap = (stored.coords && stored.coords.length && S.pos)
+        ? distM(S.pos,{lat:stored.coords[0][1],lng:stored.coords[0][0]}) : 0;
+      S.offlineKind = (_startGap>800) ? "saved-far" : "saved";
+      S.offlineStartGap = _startGap;
       try{
         var bb=new maplibregl.LngLatBounds(stored.coords[0],stored.coords[0]);
         stored.coords.forEach(function(c){ bb.extend(c); });
         map.fitBounds(bb,{padding:{top:160,bottom:90,left:50,right:50}});
         openSheet("routeSheet"); try{ renderRouteSheet(S.route); }catch(e){}
       }catch(e){}
-      toast("Offline — using your saved route to "+(stored.destName||"this place")+".",3600);
+      toast(_startGap>800
+        ? ("Offline — saved route to "+(stored.destName||"this place")+", but it starts "+fmtDist(_startGap)+" away. Directions begin from there, not here.")
+        : ("Offline — using your saved route to "+(stored.destName||"this place")+"."),
+        _startGap>800?5200:3600);
       return;
     }
-    if(beelineTo(S.dest)) return;
+    // no saved trip — try to compute one locally from the cached corridor graph
+    try{
+      var _lr=await routeOffline(S.pos,S.dest);
+      if(_lr && installOfflineRoute(_lr)){
+        S.offlineKind="computed";
+        try{
+          var bb2=new maplibregl.LngLatBounds(_lr.coords[0],_lr.coords[0]);
+          _lr.coords.forEach(function(c){ bb2.extend(c); });
+          map.fitBounds(bb2,{padding:{top:160,bottom:90,left:50,right:50}});
+          openSheet("routeSheet"); try{ renderRouteSheet(S.route); }catch(e){}
+        }catch(e){}
+        toast("Offline — route built from your downloaded map. No traffic or closures.",4200);
+        return;
+      }
+    }catch(e){}
+    if(beelineTo(S.dest)){ S.offlineKind="beeline"; return; }
+    S.offlineKind=null;
     toast("Offline — no saved route here. Search this place once with signal.",4200);
     return;
   }
   S.rerouting=true; S._reroutingAt=Date.now();
+  /* v296 — an online route is authoritative, so clear any offline label left from a previous
+     trip. Without this the card could keep saying "direct line only" over a real road route. */
+  S.offlineKind=null; S.offlineStartGap=0;
   // During active turn-by-turn, a reroute MUST start from where you are now — never the
   // original planned origin. Using S.origin on a reroute sent drivers back toward their
   // start point (the "rerouting the wrong direction" bug). Planning (not navigating) still
@@ -3870,12 +3909,22 @@ function renderRouteSheet(r){
     else if(S.avoidMode==="best") avoidTxt=` · least-freeway route`;
     else avoidTxt=` · freeway unavoidable here`;
   }
-  /* v291 — a beeline is a straight line to the destination, not a road route. Say so on the
-     card: the distance and time shown are straight-line estimates and the real drive will be
-     longer. Better a plain label than a driver trusting an ETA that never accounted for roads. */
-  if(el("rsStats")) setTxt("rsMeta", r && r._beeline
-    ? "offline · direct line only — no turn-by-turn, actual drive will be longer"
-    : `${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`);
+  /* v296 — say which KIND of offline answer this is. The four are not interchangeable and the
+     driver can't tell them apart by looking at the line on the map:
+       saved      — real turns, from a trip you actually drove to here
+       saved-far  — real turns, but they start somewhere you aren't (the dangerous one: it looks
+                    authoritative and isn't)
+       computed   — real turns built locally from the downloaded map, no traffic or closures
+       beeline    — a straight line; distance and ETA are straight-line, the drive will be longer
+     Online routes are unchanged. */
+  var _okind = (r && r._beeline) ? "beeline" : (navigator.onLine===false ? (S.offlineKind||null) : null);
+  var _offMeta = {
+    "saved":     "offline · saved route — real turn-by-turn, no traffic or closures",
+    "saved-far": "offline · saved route starts "+(S.offlineStartGap?fmtDist(S.offlineStartGap):"far")+" from you — turns begin there, not here",
+    "computed":  "offline · built from downloaded map — no traffic or closures",
+    "beeline":   "offline · direct line only — no turn-by-turn, actual drive will be longer"
+  }[_okind];
+  if(el("rsStats")) setTxt("rsMeta", _offMeta || `${S.mode}${rush}${S.origin?" · custom start":""}${avoidTxt}`);
   try{
     // second line = full address, the way a maps app shows it
     const da=el("rsDestAddr");
