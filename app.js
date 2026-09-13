@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v292";
+const APP_VERSION="v293";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -6648,7 +6648,15 @@ function startTour(co,cum,total,marks){
      minute at 1x — roughly 17,000 mph of ground speed — so 0.5x only halved something already
      impossible to read. Duration now scales with distance up to five minutes, and the camera
      compensates for whatever speed remains (see _tourRender). */
-  const baseDur=Math.min(480000,Math.max(14000, total*7)); // ~7ms per metre, 14s–8min
+  /* v293 — DURATION LAW. v262 fixed a real problem (a 285-mile route flown in 60s) by making
+     duration LINEAR in distance at 7ms/metre, capped at 8 minutes. That over-corrected: linear
+     means a 13-mile route takes 2.5 minutes and a long one runs the full eight, which is the
+     sluggishness — the preview is not slow per frame, it is simply too long.
+     What a viewer actually wants is roughly constant READABILITY, not constant ground speed, so
+     playback time should grow with the square root of distance: short routes keep their detail,
+     long ones compress instead of dragging. Calibrated at ~18s for 1.4mi, ~55s for 13mi,
+     clamped to 150s so even a cross-state route stays watchable. */
+  const baseDur=Math.min(150000,Math.max(12000, Math.round(379*Math.sqrt(Math.max(1,total)))));
   /* Default 1x, not 0.5x. Duration now scales with distance, so 0.5x on top of that was
      genuinely sluggish on a short route — the two slowdowns were compounding. */
   tourState={co,cum,total,marks,baseDur,frac:0,speed:1,paused:false,done:false,curBrg:_brg(co[0],_posAt(co,cum,Math.min(total,20)))};
@@ -6658,16 +6666,31 @@ function startTour(co,cum,total,marks){
   $("tourPlay").innerHTML="&#10073;&#10073;";
   runTour();
 }
-function _tourRender(){
+function _tourRender(dt){
   const st=tourState; if(!st||!tourMap)return;
+  /* v293 — FRAME-RATE INDEPENDENCE. This is why the turns stopped feeling right.
+     The camera smoothing and the body lean were both computed PER FRAME with fixed constants:
+     the bearing eased 14% of the way to target each frame, and lean came from the bearing delta
+     between consecutive frames. Both therefore change with refresh rate and with frame drops —
+     on a 120Hz phone the camera converges twice as fast and each frame's delta is half as big,
+     so the lean is half as strong; when frames drop under tile load the deltas spike and it
+     lurches. Same code, different feel on every device and every load condition.
+     Normalising to elapsed time makes the motion identical at 60Hz, 120Hz, or a stuttering 30. */
+  var _dt=Math.max(1,Math.min(50,dt||16.67));
+  var _k=1-Math.pow(1-0.14,_dt/16.67);          // same easing, expressed per-millisecond
   const d=st.frac*st.total;
   const pos=_posAt(st.co,st.cum,d);                 // the car
   const ahead=_posAt(st.co,st.cum,Math.min(st.total,d+16));  // short look-ahead → car sits low, road fills the top
   const tgt=_brg(pos,ahead);
   const prevBrg=st.curBrg;
-  st.curBrg=_lerpAng(st.curBrg,tgt,0.14);
+  st.curBrg=_lerpAng(st.curBrg,tgt,_k);
   var dB=((st.curBrg-prevBrg+540)%360)-180;
-  st._lean=(st._lean||0)*0.80 + (-dB*2.6)*0.20;
+  /* Lean now follows TURN RATE (degrees per second) rather than degrees-per-frame, so a given
+     corner leans the same amount regardless of how many frames were spent taking it. The 0.043
+     factor keeps the visual strength where v262 had it at a steady 60fps. */
+  var _turnRate=dB/(_dt/1000);
+  var _leanK=1-Math.pow(0.80,_dt/16.67);
+  st._lean=(st._lean||0)*(1-_leanK) + (-_turnRate*0.043)*_leanK;
   var lean=Math.max(-6,Math.min(6,st._lean));
   var spd=st._eff||st.speed||1;
   /* Tile budget is the real limit at 4x: the camera outruns the network. Games solve this with
@@ -6748,7 +6771,7 @@ function runTour(){
     if(st._boostOn && !_boosting) endBoost();
     st._eff=st.speed*(_boosting?2.4:1);
     st.frac=Math.min(1, st.frac+(dt/st.baseDur)*st._eff); // rate-based: speed changes never jump the camera
-    _tourRender();
+    _tourRender(dt);
     if(st.frac>=1){ st.done=true; arriveCinematic(); return; }
     tourRAF=requestAnimationFrame(frame);
   };
