@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v296";
+const APP_VERSION="v297";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -7211,6 +7211,7 @@ try{
                    ((typeof _rasterTxt==="function") ? ("\n"+_rasterTxt()) : "")+
                    ((typeof _cwReqTxt==="function") ? ("\n"+_cwReqTxt()) : "")+
                    ((typeof _cacheAuditTxt!=="undefined") ? ("\n"+_cacheAuditTxt) : "")+
+                   ((typeof _liteTxt==="function") ? ("\n"+_liteTxt()) : "")+
                    ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
@@ -8771,9 +8772,25 @@ function liteMode(){
    they're bad — that catches the phones no user-agent rule would have predicted. Only ever
    turns lite ON; it never flips back mid-drive, because a display that keeps changing under a
    driver is worse than one that stays plain. */
+/* v297 — this was demoting capable phones and never letting them back.
+   Three faults, all of which fired on Kobi's iPhone (lite has been silently on for builds —
+   it is what removed the tailpipe smoke and what caused the dark-on-dark route sheet in v285):
+     1) WRONG MOMENT. It sampled 6s after launch — the worst four seconds of the session, with
+        tiles inbound, caches hydrating, the corridor harvesting and the map first painting.
+        Judging a device on its cold start is judging it at its worst.
+     2) ONE SAMPLE, PERMANENT VERDICT. A single bad window wrote the flag forever, on a setting
+        no user could see or undo.
+     3) NO WAY BACK. It only ever turned on. A phone that was hot once stayed degraded for good.
+   Now: start measuring later, require the device to be genuinely busy-but-slow across THREE
+   separate windows before demoting, and re-check periodically so a device that recovers gets
+   its effects back. A second sample costs nothing; a wrong permanent verdict costs the whole
+   look of the app. */
+var _liteStrikes=0, _liteAuto=false;
 function watchFrames(ms){
-  if(liteMode()) return;                        // already lite, nothing to measure for
-  var frames=[], start=performance.now(), last=start, bad=0;
+  var v=null; try{ v=localStorage.getItem("cw_lite"); }catch(e){}
+  if(v==="1"&&!_liteAuto) return;               // user (or an old build) forced it — respect that
+  if(v==="0") return;                           // explicit opt-out always wins
+  var frames=[], start=performance.now(), last=start;
   function tick(now){
     var dt=now-last; last=now;
     if(dt>0&&dt<500) frames.push(dt);
@@ -8781,20 +8798,57 @@ function watchFrames(ms){
     if(frames.length<20) return;
     frames.sort(function(a,b){return a-b;});
     var median=frames[Math.floor(frames.length/2)];
-    if(median>28){                              // slower than ~36fps sustained
-      bad++;
-      try{ localStorage.setItem("cw_lite","1"); }catch(e){}
-      applyLite();
-      try{ console.log("ConeWatch: lite mode on — median frame "+median.toFixed(1)+"ms"); }catch(e){}
+    if(median>28){
+      _liteStrikes++;
+      /* three bad windows, not one — a single stutter is traffic, a tab switch, or a tile burst */
+      if(_liteStrikes>=3){
+        _liteAuto=true;
+        try{ localStorage.setItem("cw_lite","1"); }catch(e){}
+        applyLite();
+        try{ console.log("ConeWatch: lite mode on — median frame "+median.toFixed(1)+"ms x3"); }catch(e){}
+      }
+    } else if(_liteStrikes>0){
+      _liteStrikes--;                           // a good window forgives a bad one
+      /* and if we were the ones who turned it on, give the effects back */
+      if(_liteAuto && _liteStrikes===0){
+        _liteAuto=false;
+        try{ localStorage.removeItem("cw_lite"); }catch(e){}
+        applyLite();
+      }
     }
   }
   requestAnimationFrame(tick);
 }
-try{ setTimeout(function(){ watchFrames(4000); }, 6000); }catch(e){}
+/* First measurement at 20s, not 6 — well clear of the cold-start storm — then every 45s. */
+try{
+  setTimeout(function(){
+    watchFrames(4000);
+    setInterval(function(){ if(!document.hidden) watchFrames(4000); }, 45000);
+  }, 20000);
+}catch(e){}
 function applyLite(){
   try{ document.documentElement.setAttribute("data-lite", liteMode()?"1":"0"); }catch(e){}
 }
+/* v297 — one-time amnesty. Every device demoted by the old single-sample-at-6-seconds rule is
+   carrying a permanent cw_lite=1 it never earned and cannot clear. Wipe that verdict once so
+   the new, fairer measurement can make its own decision. A device that genuinely is slow will
+   be re-demoted within a couple of minutes; one that was misjudged gets its app back. */
+try{
+  if(localStorage.getItem("cw_liteAmnesty")!=="1"){
+    localStorage.setItem("cw_liteAmnesty","1");
+    if(localStorage.getItem("cw_lite")==="1") localStorage.removeItem("cw_lite");
+  }
+}catch(e){}
 try{ applyLite(); }catch(e){}
+/* Surfaced in the debug panel — lite silently changing how the app looks, with no way to see
+   that it happened, is what made this take builds to notice. */
+function _liteTxt(){
+  try{
+    var v=null; try{ v=localStorage.getItem("cw_lite"); }catch(e){}
+    return "lite    "+(liteMode()?"ON":"off")+
+           (v==="1"?" (stored)":"")+(_liteStrikes?("  strikes:"+_liteStrikes):"");
+  }catch(e){ return "lite    ?"; }
+}
 function isStandalone(){ return (window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true; }
 function isIOSdev(){ return /iphone|ipad|ipod/i.test(navigator.userAgent); }
 function isAndroidDev(){ return /android/i.test(navigator.userAgent); }
