@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v293";
+const APP_VERSION="v294";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -133,7 +133,9 @@ function cycleSeason(){
      even though every other part of the UI reverted. An explicit toggle has no reason to be
      gated: rebuild the style unconditionally so the map always matches the setting. */
   try{
-    _seasonPainted = (typeof seasonActive==="function") ? seasonActive() : null;
+    // v294 — keep this a strict boolean. It used to fall back to null here, which is the same
+    // class of problem as the undefined above: every other site compares it with !== or ===.
+    _seasonPainted = (typeof seasonActive==="function") ? !!seasonActive() : false;
     paintSeasonTint();          // direct paint — no style rebuild, so nothing to race
   }catch(e){}
   toast(next==="auto"?"Halloween theme: Auto":next==="on"?"Halloween theme: On":"Halloween theme: Off",1400);
@@ -945,6 +947,16 @@ function sweepHazards(){ const now=Date.now(); for(let i=S.hazards.length-1;i>=0
 setInterval(sweepHazards,60000);
 
 let mapStyleTheme="dark";
+/* v294 — _seasonPainted is the ONE piece of cross-function state in this file that was never
+   declared anywhere: it existed only as an implicit global created the first time a season swap
+   assigned to it. Until that happened it was `undefined`, not `false`, which is precisely what
+   silently killed the theme fast-path in v286 (an `=== false` test against `undefined`) and
+   cost two builds to find. An audit of every other shared global in this file found them all
+   properly declared — this was the only one. Declared here, initialised to its real starting
+   value, so no future check can be comparing against undefined. */
+var _seasonPainted = (function(){
+  try{ return (typeof seasonActive==="function") ? !!seasonActive() : false; }catch(e){ return false; }
+})();
 /* v290 — the single definition of basemap raster paint. Both the style builder and the
    instant-swap fast path call this, so the two can never disagree about what "dark" means.
    Dark: luminance capped low (this is what actually makes it read as night), saturation kept
