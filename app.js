@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v297";
+const APP_VERSION="v298";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -6110,12 +6110,18 @@ $("fabLocate").onclick=()=>{hideRelock();S.follow=true;updateFollowUI();
   } else { startGPS(); toast("Acquiring GPS…"); }
 };
 document.querySelectorAll(".grabber").forEach(g=>g.onclick=closeSheets);
-function updateFollowUI(){$("fabLocate").classList.toggle("active",S.follow);$("followState").textContent=S.follow?"On — map recenters as you drive":"Off — tap ◎ to re-center";}
-$("toggleFollow").onclick=()=>{S.follow=!S.follow;updateFollowUI();};
+/* v298 — the "Follow my position" settings row is gone (the ◎ button and auto-recenter both
+   do this already), so this only updates the map button now and must not assume the row exists. */
+function updateFollowUI(){
+  try{ var fl=$("fabLocate"); if(fl) fl.classList.toggle("active",S.follow); }catch(e){}
+  try{ var fs=$("followState"); if(fs) fs.textContent=S.follow?"On — map recenters as you drive":"Off — tap ◎ to re-center"; }catch(e){}
+}
 $("toggleSaver").onclick=()=>{S.saver=!S.saver;$("saverState").textContent=S.saver?"On — reduced GPS rate, minimal animation":"Off — full GPS rate + animations";startGPS();toast(S.saver?"Battery saver on":"Battery saver off");};
 $("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").textContent=S.audioAlerts?"On — beeps near hazards while navigating":"Off — visual alerts only";};
-$("toggleBump").onclick=()=>{S.bumpOn=!S.bumpOn;$("bumpState").textContent=S.bumpOn?"On — hard bumps prompt a pothole report":"Off";saveSettings();};
-$("toggleHeat")&&($("toggleHeat").onclick=()=>{toggleHeat();saveSettings();});
+/* v298 — impact detection and the road-quality heatmap have no off switch any more. They are
+   the sensing layer the whole product rests on: every hard bump logged is a data point nobody
+   else in Michigan is collecting, and a driver who quietly turns them off still gets the
+   warnings while contributing nothing back. Forced on below in loadSettings. */
 $("toggleSeason")&&($("toggleSeason").onclick=()=>{cycleSeason();});
 $("toggleRadar")&&($("toggleRadar").onclick=function(){ toggleRadar(); });
 $("shareApp")&&($("shareApp").onclick=function(){ shareApp(); });
@@ -6123,9 +6129,10 @@ try{ var _ct=$("clockTheme"); if(_ct){ _ct.style.cursor="pointer";
   _ct.style.textDecorationStyle="dotted"; _ct.style.textUnderlineOffset="3px";
   _ct.title="Tap to switch theme";
   _ct.onclick=function(ev){ ev.stopPropagation(); cycleThemeLabel(); }; } }catch(e){}
-document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.onclick=function(){ setMarkerSize(c.dataset.size); }; });
-document.querySelectorAll("#fabChips .chip").forEach(function(c){ c.onclick=function(){ setFabSize(c.dataset.fab); }; });
-document.querySelectorAll("#toolsChips .chip").forEach(function(c){ c.onclick=function(){ setToolsStyle(c.dataset.tools); }; });
+/* v298 — the marker-size, button-size and tool-menu choosers are gone from Settings. The
+   underlying functions stay (they still apply saved/default values, and fleet builds may want
+   larger targets), they simply have no chooser wired to them now. querySelectorAll on a missing
+   container returns an empty list, so these would have been harmless — removed for clarity. */
 $("hdrToggle")&&($("hdrToggle").onclick=function(ev){ ev.stopPropagation(); toggleHdrCompact(); });
 $("toggleFilters")&&($("toggleFilters").onclick=function(){
   buildHzFilters();
@@ -6133,9 +6140,7 @@ $("toggleFilters")&&($("toggleFilters").onclick=function(){
 });
 try{ applyHdrCompact(); applyFabSize(); applyToolsStyle(); applyHzFilters(); }catch(e){}
 try{ var _mr=$("myReports"); if(_mr){ var n=myReportCount(); _mr.textContent=n+(n===1?" report":" reports"); } }catch(e){}
-try{ var _mk=markerSizeKey();
-  document.querySelectorAll("#sizeChips .chip").forEach(function(c){ c.classList.toggle("on",c.dataset.size===_mk); });
-}catch(e){}
+
 try{ applySeason(); }catch(e){}
 document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
   document.querySelectorAll("#themeChips .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");
@@ -6168,7 +6173,9 @@ function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}")
   try{ if(!localStorage.getItem("cw_themeDarkDefault")){ S.themeMode="dark"; localStorage.setItem("cw_themeDarkDefault","1"); } }catch(e){}
   if(c.saver!==undefined)S.saver=c.saver;
   if(c.alerts!==undefined)S.audioAlerts=c.alerts;
-  if(c.bump!==undefined)S.bumpOn=c.bump;
+  /* v298 — bump/heat are no longer user-settable, so a stored "off" from an older build must
+     not survive the upgrade and silently keep a driver from contributing data. Forced on. */
+  S.bumpOn=true; S.heatOn=true;
   if(c.mapMode)S.mapMode=c.mapMode;
   if(c.units)S.units=c.units;
   if(c.voice!==undefined)S.voiceOn=c.voice;

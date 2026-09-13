@@ -295,6 +295,13 @@
     border-top:1px solid var(--line);border-radius:22px 22px 0 0;
     box-shadow:0 -16px 44px rgba(0,0,0,.55);
     transition:transform .28s cubic-bezier(.32,.72,0,1)}
+  /* v298 — settings group headers. A flat list of 25 rows has no shape; four small labelled
+     bands give the eye somewhere to land without adding chrome. */
+  .set-grp{font-family:var(--tech,monospace);font-size:10px;letter-spacing:1.4px;
+    text-transform:uppercase;color:var(--mute);margin:18px 0 7px;padding-bottom:5px;
+    border-bottom:1px solid var(--line)}
+  .set-grp:first-of-type{margin-top:4px}
+  .set-note{font-size:11.5px;color:var(--mute);margin:-2px 0 8px;line-height:1.4}
   #dockGrip{width:40px;height:5px;border-radius:3px;background:rgba(255,255,255,.26);
     margin:0 auto 12px;cursor:pointer}
   #dock #searchwrap{flex:none;width:100%}
@@ -1459,45 +1466,46 @@
   <div class="grabber"></div>
   <h3>⚙️ Settings</h3>
   <p class="sub"><b>Privacy:</b> no account, no analytics, no tracking. Location, motion, and light sensing are processed on this device only.</p>
-  <div class="kv" style="font-weight:700"><span>App version</span><span id="appVer" style="color:var(--nav-accent)">—</span></div>
+  <!-- ═══════════ v298: settings grouped ═══════════
+       25 flat rows became four labelled groups. Removed outright: button size, marker size,
+       tool menu (drawer/radial) and "Follow my position" — the last is done three ways already
+       (the ◎ button, auto-recenter after a pan, and it defaults on), and the other three were
+       preferences nobody changed. The read-only Battery row went too: the phone's own status
+       bar already shows it.
+       Impact detection and the road-quality heatmap are no longer toggles at all. They are the
+       data layer this whole product is built on, not preferences — an off switch on them is an
+       off switch on the moat. -->
+  <div class="set-grp">Driving</div>
+  <button class="row-btn" id="toggleAlerts"><span class="ic">🔊</span><span>Audio hazard alerts<small id="alertState">On — beeps near hazards while navigating</small></span></button>
+  <button class="row-btn" id="dlOffline"><span class="ic">📥</span><span>Download this area for offline<small>Saves the map around you — plus turns on roads it covers. Traffic and closures need signal.</small></span></button>
+  <button class="row-btn" id="toggleSaver"><span class="ic">🔋</span><span>Battery saver<small id="saverState">Off — full GPS rate + animations</small></span></button>
+  <button class="row-btn" id="viewTrips"><span class="ic">🕘</span><span>Trip history<small id="tripCount">Your recent drives</small></span></button>
+  <button class="row-btn" id="testCue"><span class="ic">📳</span><span>Test turn cue<small>Feel the pre-exit haptic + tone on this device</small></span></button>
+
+  <div class="set-grp">Map</div>
   <div class="kv"><span>Theme</span><span id="themeChips" style="display:flex;gap:6px">
     <button class="chip on" data-theme-set="auto">Auto</button>
     <button class="chip" data-theme-set="light">Light</button>
     <button class="chip" data-theme-set="dark">Dark</button></span></div>
-  <div class="kv"><span>Button size</span><span id="fabChips" style="display:flex;gap:6px">
-    <button class="chip" data-fab="s">S</button>
-    <button class="chip on" data-fab="m">M</button>
-    <button class="chip" data-fab="l">L</button></span></div>
-  <div class="kv"><span>Tool menu</span><span id="toolsChips" style="display:flex;gap:6px">
-    <button class="chip on" data-tools="drawer">Drawer</button>
-    <button class="chip" data-tools="radial">Radial</button></span></div>
-  <div class="kv"><span>Marker size</span><span id="sizeChips" style="display:flex;gap:6px">
-    <button class="chip" data-size="s">S</button>
-    <button class="chip on" data-size="m">M</button>
-    <button class="chip" data-size="l">L</button>
-    <button class="chip" data-size="xl">XL</button></span></div>
-  <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
-  <button class="row-btn" id="shareApp"><span class="ic">📣</span><span>Share ConeWatch<small>Send the link — more drivers means better hazard data</small></span></button>
-  <div class="kv"><span>Your reports</span><span id="myReports" style="font-weight:700">0 reports</span></div>
   <button class="row-btn" id="toggleRadar"><span class="ic">🌧</span><span>Weather radar<small id="radarState">Off — tap to show rain &amp; snow</small></span></button>
   <button class="row-btn" id="toggleFilters"><span class="ic">👁</span><span>Show on map<small id="filterState">All hazard types visible</small></span></button>
   <div id="hzFilters" style="display:none;flex-wrap:wrap;gap:6px;margin:8px 0 2px"></div>
+  <button class="row-btn" id="toggleSeason"><span class="ic">🎃</span><span>Halloween theme<small id="seasonState">Auto — on Oct 1–Nov 1</small></span></button>
+
+  <div class="set-grp">Vehicle</div>
+  <p class="set-note">Used for the fuel-cost estimate on the route card.</p>
   <div class="kv"><span>Units</span><span id="unitChips" style="display:flex;gap:6px"><button class="chip on" data-u="mi">mi</button><button class="chip" data-u="km">km</button></span></div>
-  <div class="kv"><span>Vehicle economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
+  <div class="kv"><span>Economy (mpg)</span><input class="field" id="mpg" value="22" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
   <div class="kv"><span>Gas price ($/gal)</span><input class="field" id="gasPrice" value="2.89" inputmode="decimal" style="width:96px;margin:0;text-align:right"></div>
-  <div class="kv"><span>Battery</span><span id="battStat">—</span></div>
-  <button class="row-btn" id="toggleFollow" style="margin-top:10px"><span class="ic">🧲</span><span>Follow my position<small id="followState">On — map recenters as you drive</small></span></button>
-  <button class="row-btn" id="toggleSaver"><span class="ic">🔋</span><span>Battery saver<small id="saverState">Off — full GPS rate + animations</small></span></button>
-  <button class="row-btn" id="viewTrips"><span class="ic">🕘</span><span>Trip history<small id="tripCount">Your recent drives</small></span></button>
-  <button class="row-btn" id="dlOffline"><span class="ic">📥</span><span>Download this area for offline<small>Saves the map around you — plus turns on roads it covers. Traffic and closures need signal.</small></span></button>
-  <button class="row-btn" id="toggleAlerts"><span class="ic">🔊</span><span>Audio hazard alerts<small id="alertState">On — beeps near hazards while navigating</small></span></button>
-  <button class="row-btn" id="toggleBump"><span class="ic">📳</span><span>Impact detection<small id="bumpState">On — hard bumps prompt a pothole report</small></span></button>
-  <button class="row-btn" id="toggleHeat"><span class="ic">🌡️</span><span>Road-quality heatmap<small id="heatState">Off — pothole & rough-road density</small></span></button>
-  <div style="display:none">
+
+  <div class="set-grp">About</div>
+  <div class="kv" style="font-weight:700"><span>App version</span><span id="appVer" style="color:var(--nav-accent)">—</span></div>
+  <div class="kv"><span>Your reports</span><span id="myReports" style="font-weight:700">0 reports</span></div>
+  <button class="row-btn" id="shareApp"><span class="ic">📣</span><span>Share ConeWatch<small>Send the link — more drivers means better hazard data</small></span></button>
+  <button class="row-btn" id="replayTut"><span class="ic">🎓</span><span>How-to tutorial<small>Replay the guided walkthrough of every feature</small></span></button>
+  <div class="kv" id="satKeyRow" style="display:none"><span>Satellite key</span>
     <input class="field" id="satKey"/><button id="satKeySave"></button>
   </div>
-  <button class="row-btn" id="testCue" style="margin-top:12px"><span class="ic">📳</span><span>Test turn cue<small>Feel the pre-exit haptic + tone on this device</small></span></button>
-  <button class="row-btn" id="replayTut"><span class="ic">🎓</span><span>How-to tutorial<small>Replay the guided walkthrough of every feature</small></span></button>
   <button class="row-btn" id="installBtn"><span class="ic">📲</span><span>Add to Home Screen<small>Install ConeWatch as an app — one-tap launch, no browser bar</small></span></button>
   <div style="display:none">
     <input class="field" id="sbUrl"/><input class="field" id="sbKey"/>
