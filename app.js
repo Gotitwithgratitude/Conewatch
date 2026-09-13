@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v291";
+const APP_VERSION="v292";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2066,7 +2066,21 @@ async function upgradePoiDistances(els){
 /* The dock's orange arrow — the "force search" box — went straight to forceGeocode, which is
    the pipeline that keeps returning local matches. My last fix only covered the Search button
    inside the panel, so this one stayed broken. Both routes now go through the same place. */
-function doSearch(){const q=$("search").value.trim();if(!q)return;$("results").style.display="none";const cat=poiCategory(q);if(cat){$("search").blur();openCategorySearch(cat);return;}forceGeocode(q);}
+function doSearch(){
+  const q=$("search").value.trim(); if(!q) return;
+  $("results").style.display="none";
+  const cat=poiCategory(q);
+  /* v292 — the arrow was dead offline. A category word ("pharmacy", "gas", "food") sent the
+     search straight to openCategorySearch, which can only work against live Overpass/Photon —
+     so offline it opened the Discover sheet and reported "couldn't reach the map servers",
+     and the destination was never set. From the driver's seat the arrow simply did nothing.
+     Category search is an online-only feature, so offline we fall through to forceGeocode,
+     which does have offline sources: cached geocodes, saved places, and the harvested area
+     index. Online behaviour is unchanged. */
+  var online=true; try{ online=(navigator.onLine!==false); }catch(e){}
+  if(cat && online){ $("search").blur(); openCategorySearch(cat); return; }
+  forceGeocode(q);
+}
 $("searchbtn").onclick=doSearch;
 $("search").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doSearch();}});
 document.addEventListener("click",e=>{if(!$("searchwrap").contains(e.target))$("results").style.display="none";});
@@ -6503,6 +6517,15 @@ $("photoClose")&&($("photoClose").onclick=()=>{$("photoSheet").style.display="no
 
 function openDriveTour(){
   if(!S.route||!S.route.geometry||!S.route.geometry.coordinates||S.route.geometry.coordinates.length<2){ toast("Building route…"); if(S.dest)fetchRoute(); return; }
+  /* v292 — clear the cue banner before the preview opens. It holds whatever it last said, so a
+     preview could open still showing "You've arrived — <previous destination>" from an earlier
+     trip, sitting over a route to somewhere else entirely. Reset it here rather than waiting
+     for the first cue, since the first cue can be a long way down a route. */
+  try{
+    var _ti=$("tourInstr"), _td=$("tourDist");
+    if(_ti) _ti.textContent = S.destName ? ("Preview — "+S.destName) : "Building preview…";
+    if(_td) _td.textContent = "";
+  }catch(e){}
   pushUI();
   const co=S.route.geometry.coordinates.slice();
   const cum=[0]; for(let i=1;i<co.length;i++)cum[i]=cum[i-1]+_hav(co[i-1],co[i]);
