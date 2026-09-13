@@ -145,8 +145,13 @@
     [data-season="halloween"] #map::after{animation:none;opacity:.9}
     [data-season="halloween"] .rtile.fired{animation:none}
   }
+  /* v295 — the seasonal badge kept the flat chip's cone-orange TEXT over a purple-to-orange
+     gradient, which is orange on orange: the version was barely readable in the screenshot.
+     White text and a transparent border keep the festive fill while staying legible, and the
+     geometry stays identical to the normal chip so the row's width doesn't change with season. */
   [data-season="halloween"] #verBadge{
     background:linear-gradient(135deg,#B565FF,#FF7A12);
+    color:#fff;border-color:rgba(255,255,255,.28);
     box-shadow:0 0 10px rgba(181,101,255,.55),inset 0 1px 0 rgba(255,255,255,.3)}
   [data-season="halloween"][data-theme="light"]{
     --bg:#F4EDE2; --panel:rgba(255,252,247,.86); --panel-solid:#FFFCF7; --panel-hi:#EFE4D4;
@@ -177,6 +182,12 @@
   .maplibregl-ctrl-attrib{background:var(--panel)!important;font-size:9px}
   .maplibregl-ctrl-attrib a{color:var(--mute)!important}
 
+  /* v289 — long-pressing LIVE (or the version badge) was selecting the clock text instead:
+     iOS treats a press-and-hold on selectable text as "start a selection", and the header is
+     the one chrome area that never had the selection guard the map and buttons already carry.
+     Nothing in this bar is meant to be selected — it's a status strip, not content — so the
+     whole header opts out, along with the iOS callout menu (Copy / Look Up / Translate). */
+  #hdr,#hdr *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   #hdr{position:fixed;top:0;left:0;right:0;z-index:1000;padding:max(10px,env(safe-area-inset-top)) 12px 10px;-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);background:linear-gradient(180deg,rgba(8,9,11,.72),rgba(8,9,11,.32));
     background:var(--panel-solid);
     border-bottom:1px solid var(--line)}
@@ -189,8 +200,19 @@
      ("LIVE" sitting behind 05:04). Everything in this row is fixed-width, so the only real fix
      is to buy back horizontal space: tighter gap, slightly smaller wordmark and clock. The row
      now fits on a 390px screen with room to spare instead of fighting over the last few px. */
-  #brandrow{display:grid;grid-template-columns:auto auto 1fr max-content;align-items:center;gap:9px;
-    min-height:46px}
+  /* v295 — STRUCTURAL FIX for the header, third time this row has overflowed (clipped "PM",
+     then LIVE sliding under the clock, now the Halloween pill shoving everything right).
+     The pattern each time: a column sized `auto` cannot shrink, so any extra content — a season
+     badge, a longer version string — pushes its neighbours off the edge instead of the row
+     adapting. minmax(0,auto) lets the brand and badge columns give way under pressure while the
+     clock stays max-content, so the clock is never encroached on no matter what gets added to
+     the left of it. Whatever we add to this row next, it degrades instead of overlapping. */
+  #brandrow{display:grid;grid-template-columns:minmax(0,auto) minmax(0,auto) 1fr max-content;
+    align-items:center;gap:9px;min-height:46px}
+  #brand{overflow:hidden}
+  /* the season pill costs ~29px inside the brand block; buy it back rather than overflow */
+  html[data-season="halloween"] #brandrow{gap:7px}
+  html[data-season="halloween"] #brand{font-size:16px;letter-spacing:.3px}
   #brandrow #brand{align-self:center}
   /* version, theme and connection travel together as one cluster beside the wordmark, evenly
      spaced, so the eye reads brand -> status -> time straight across */
@@ -199,8 +221,8 @@
      midline rather than the line box — inline-flex with a fixed square and no padding keeps it
      a true circle at any font size, and the -1px lift sits it on the cap-height axis. */
   #brand{display:inline-flex;align-items:center;white-space:nowrap}
-  #seasonPill{display:none;width:20px;height:20px;flex:0 0 20px;border-radius:50%;
-    align-items:center;justify-content:center;margin:0 0 0 9px;padding:0;
+  #seasonPill{display:none;width:18px;height:18px;flex:0 0 18px;border-radius:50%;
+    align-items:center;justify-content:center;margin:0 0 0 6px;padding:0;
     font-size:12px;line-height:1;position:relative;top:-1px;
     background:linear-gradient(135deg,#B565FF,#FF7A12);color:#fff;
     box-shadow:0 0 9px rgba(255,122,18,.45);border:1px solid rgba(255,255,255,.16)}
