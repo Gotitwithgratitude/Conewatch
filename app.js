@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v299";
+const APP_VERSION="v300";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -6043,6 +6043,9 @@ $("hudFlip")&&($("hudFlip").onclick=(e)=>{e.stopPropagation();hudFlip=!hudFlip;a
 
 /* ═══════════ voice ═══════════ */
 let _rec=null,_recBusy=false;
+/* v300 — the mic on the search bar drives the same voice flow as the old drawer row. One
+   handler, two entry points: no second implementation to drift out of sync. */
+try{ var _sm=$("searchMic"); if(_sm) _sm.onclick=function(ev){ ev.stopPropagation(); var fv=$("fabVoice"); if(fv&&fv.onclick) fv.onclick(); }; }catch(e){}
 $("fabVoice").onclick=()=>{
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){ toast("Voice isn't supported here — type your destination instead.",3200); try{$("search").focus();}catch(e){} return; }
@@ -6054,7 +6057,9 @@ $("fabVoice").onclick=()=>{
     _rec.lang="en-US"; _rec.continuous=false; _rec.interimResults=false; _rec.maxAlternatives=1;
     _recBusy=true;
     const fab=$("fabVoice"); if(fab) fab.classList.add("lit");
-    const done=()=>{ _recBusy=false; const f=$("fabVoice"); if(f) f.classList.remove("lit"); };
+    try{ var m0=$("searchMic"); if(m0) m0.classList.add("listening"); }catch(e){}
+    const done=()=>{ _recBusy=false; const f=$("fabVoice"); if(f) f.classList.remove("lit");
+      try{ var m1=$("searchMic"); if(m1) m1.classList.remove("listening"); }catch(e){} };
     const guard=setTimeout(()=>{ try{_rec&&_rec.stop();}catch(e){} },9000);   // never hang the mic open
     _rec.onresult=(e)=>{
       clearTimeout(guard);
@@ -6173,7 +6178,13 @@ function updateFollowUI(){
    and the two moments it actually matters now surface themselves: a tap-to-apply prompt at 20%
    unplugged, and the automatic framerate trigger. Every remaining $("saverState") write is
    already null-guarded, so the missing row is harmless. */
-$("toggleAlerts").onclick=()=>{S.audioAlerts=!S.audioAlerts;$("alertState").textContent=S.audioAlerts?"On — beeps near hazards while navigating":"Off — visual alerts only";};
+/* v300 — the audio-alerts row is gone and alerts are simply on.
+   Worth being precise about why it isn't conditional on silent mode: the web has no way to read
+   the iPhone ringer switch — Apple exposes no such API to Safari — so an app cannot know. It
+   doesn't need to: iOS already routes web audio through the silent switch, so a phone on silent
+   stays silent without us detecting anything, and a phone with volume up gets the warning. The
+   toggle was offering a choice the hardware already makes. */
+S.audioAlerts=true;
 /* v298 — impact detection and the road-quality heatmap have no off switch any more. They are
    the sensing layer the whole product rests on: every hard bump logged is a data point nobody
    else in Michigan is collecting, and a driver who quietly turns them off still gets the
@@ -6228,7 +6239,7 @@ function loadSettings(){try{const c=JSON.parse(localStorage.getItem("cw")||"{}")
      migrated once (new key, since the old reset already fired for them). */
   try{ if(!localStorage.getItem("cw_themeDarkDefault")){ S.themeMode="dark"; localStorage.setItem("cw_themeDarkDefault","1"); } }catch(e){}
   if(c.saver!==undefined)S.saver=c.saver;
-  if(c.alerts!==undefined)S.audioAlerts=c.alerts;
+  S.audioAlerts=true;   // v300 — no longer user-settable; the phone's own silent switch governs
   /* v298 — bump/heat are no longer user-settable, so a stored "off" from an older build must
      not survive the upgrade and silently keep a driver from contributing data. Forced on. */
   S.bumpOn=true; S.heatOn=true;
@@ -7090,6 +7101,13 @@ function renderQuick(){
   if(QK.park)chip("🚶 Find my car",()=>walkToCar());
   (QK.favorites||[]).slice(0,4).forEach(f=>chip("⭐ "+clip(f.name,16),()=>setDestination({lat:f.lat,lng:f.lng},f.name),f.name));
   (QK.recents||[]).slice(0,3).forEach(r=>chip("🕘 "+clip(r.name,18),()=>setDestination({lat:r.lat,lng:r.lng},r.name),r.name));
+  /* v300 — two entries added to the row that already sits under the search bar, rather than
+     building new surfaces for either. Recents were ALREADY here as chips; what was missing was
+     a way to reach the rest of them, which lived behind a Settings row nobody would look in
+     while driving. Discover was three taps deep in the tools drawer for the same reason.
+     Both now sit one thumb-reach from the search field, next to the places you actually go. */
+  chip("📍 Nearby", function(){ try{ var d=$("fabDiscover"); if(d&&d.onclick) d.onclick(); }catch(e){} });
+  if((QK.recents||[]).length>3) chip("🕘 All recents", function(){ try{ var v=$("viewTrips"); if(v&&v.onclick) v.onclick(); }catch(e){} });
   q.style.display=q.children.length?"flex":"none";
   layout();
 }
