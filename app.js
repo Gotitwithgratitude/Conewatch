@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v301";
+const APP_VERSION="v302";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3471,6 +3471,7 @@ async function fetchRoute(silent){
     S.offlineRoute=false;                          // a live route supersedes any offline one
     /* v301 — a good route clears the failure state and un-dims the line. */
     S._rerouteFails=0;
+    S._etaShown=NaN;                 // v302 — new route: don't ease the ETA from the old one
     try{ map.setPaintProperty("route-line","line-opacity",1); }catch(e){}
     try{ map.setPaintProperty("route-casing","line-opacity",1); }catch(e){}
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
@@ -4384,8 +4385,39 @@ function navTick(){
   // remaining = distance to the next maneuver + every step AFTER it (the current step was being
   // double-counted, inflating distance and ETA)
   let rem=dNext;for(let i=S.stepIdx+1;i<S.steps.length;i++)rem+=S.steps[i].distance;
-  const frac=S.route.distance?Math.min(1,rem/S.route.distance):0;
-  const secsLeft=S.route.duration*frac*rushFactor();
+  /* ═══════════ v302 — ETA FROM TIME, NOT FROM DISTANCE RATIO ═══════════
+     This was scaling the whole route's duration by the fraction of DISTANCE remaining:
+         secsLeft = totalDuration × (metresLeft / totalMetres)
+     which silently assumes you travel the entire route at one constant speed. Mixed routes
+     break that badly. On a trip that's 12 freeway miles then 3 city miles, the freeway portion
+     is ~20% of the time but ~60% of the distance — so while you're on I-94 the ratio understates
+     time remaining, and the moment you exit onto surface streets it lurches upward. That is
+     exactly the "times vary tremendously" behaviour: the number isn't noisy, it's being derived
+     from the wrong quantity and re-derived every GPS fix.
+     The router already returns a per-step duration. Summing the steps still ahead — plus the
+     unfinished fraction of the current one — gives time remaining directly, no speed assumption
+     anywhere. Falls back to the old ratio only if a router ever omits step durations. */
+  var secsLeft;
+  var _haveStepDur = S.steps.length && S.steps.every(function(st){ return isFinite(st.duration); });
+  if(_haveStepDur){
+    var _cur=S.steps[S.stepIdx]||null;
+    var _curFrac = (_cur && _cur.distance>0) ? Math.max(0,Math.min(1,dNext/_cur.distance)) : 0;
+    secsLeft = (_cur ? _cur.duration*_curFrac : 0);
+    for(var _i=S.stepIdx+1;_i<S.steps.length;_i++) secsLeft += S.steps[_i].duration;
+    secsLeft *= rushFactor();
+  } else {
+    var frac=S.route.distance?Math.min(1,rem/S.route.distance):0;
+    secsLeft=S.route.duration*frac*rushFactor();
+  }
+  /* Smooth the displayed value. Even a correct ETA recomputed at every GPS fix will twitch by a
+     few seconds; drivers read a jittering number as unreliable. Ease toward the new value and
+     snap only on a large genuine change (a reroute, or a step boundary). */
+  if(isFinite(S._etaShown) && Math.abs(S._etaShown-secsLeft) < 180){
+    S._etaShown = S._etaShown*0.7 + secsLeft*0.3;
+  } else {
+    S._etaShown = secsLeft;
+  }
+  secsLeft = S._etaShown;
   const arr=new Date(Date.now()+secsLeft*1000).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
   S.etaArr=arr; S.etaMin=Math.max(1,Math.round(secsLeft/60));
   $("pillMin").textContent=fmtDur(secsLeft);
@@ -5030,7 +5062,22 @@ function addHazardMarker(h){
     el.dataset.basePx=px;
   }
   el.textContent=m.emoji;
-  const mk=new maplibregl.Marker({element:el}).setLngLat([h.lng,h.lat])
+  /* ═══════════ v302 — HAZARD MARKERS DRIFT OFF THE ROAD WHEN THE MAP IS PITCHED ═══════════
+     These were created with no options beyond the element, so they took MapLibre's defaults:
+     pitchAlignment "auto" (which resolves to viewport) and anchor "center".
+     Flat on a 2D map that looks correct. Tilt the camera for navigation — 60° pitch — and it
+     stops being: a viewport-aligned marker is pasted onto the screen plane, so as the ground
+     recedes toward the horizon the icon stays the same screen size and its centre no longer
+     sits over the ground point it represents. The further up the screen the hazard is (i.e. the
+     further ahead of the car), the larger the discrepancy. A pothole a quarter-mile up the road
+     renders visibly off the roadway — which is precisely the "off track" Kobi is seeing, and
+     why it looks fine on the flat planning map.
+     anchor "bottom" pins the icon's base to the ground coordinate the way a map pin behaves,
+     so the point of contact is the hazard's actual location rather than the icon's midpoint.
+     The route line and the signal/stop-sign layers are already map-aligned GeoJSON layers, which
+     is why those stayed correctly placed while these DOM markers wandered. */
+  const mk=new maplibregl.Marker({element:el,anchor:"bottom",pitchAlignment:"viewport",rotationAlignment:"viewport"})
+    .setLngLat([h.lng,h.lat])
     .setPopup(trackPopup(new maplibregl.Popup({offset:16}).setHTML(hazPopupHTML(h))))
     .addTo(map);
   hzMarkers.push(mk); h._marker=mk;
