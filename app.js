@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v302";
+const APP_VERSION="v303";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -982,6 +982,44 @@ let mapStyleTheme="dark";
    cost two builds to find. An audit of every other shared global in this file found them all
    properly declared — this was the only one. Declared here, initialised to its real starting
    value, so no future check can be comparing against undefined. */
+/* ═══════════ v303 — RETURN-VISIT TRACKING ═══════════
+   "312 visitors" is a vanity number: it counts arrivals, not people who came back. The metric
+   that tells you whether this product works is how many drivers open it a SECOND day, and
+   nothing in the app measured it.
+   Deliberately local-only and anonymous: a list of distinct calendar days the app was opened,
+   kept on the device, no identifier and nothing sent anywhere. That is enough to answer "do
+   people return" honestly without collecting anything about who they are — and for a product
+   asking drivers to trust it with location, collecting less is the right default.
+   Counts a day once (not per reload) and keeps 180 days. */
+function _visitLog(){
+  try{ return JSON.parse(localStorage.getItem("cw_visits")||"[]")||[]; }catch(e){ return []; }
+}
+function recordVisit(){
+  try{
+    var d=new Date(), key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    var v=_visitLog();
+    if(v[v.length-1]===key) return v;        // already logged today
+    if(v.indexOf(key)===-1) v.push(key);
+    while(v.length>180) v.shift();
+    localStorage.setItem("cw_visits",JSON.stringify(v));
+    return v;
+  }catch(e){ return []; }
+}
+function visitStats(){
+  var v=_visitLog();
+  if(!v.length) return {days:0,first:null,streak:0,last30:0};
+  var today=new Date(), streak=0;
+  for(var i=0;i<400;i++){
+    var d=new Date(today.getTime()-i*864e5);
+    var k=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    if(v.indexOf(k)>-1) streak++; else if(i>0) break;
+  }
+  var cut=new Date(today.getTime()-30*864e5).toISOString().slice(0,10);
+  var last30=v.filter(function(k){ return k>=cut; }).length;
+  return {days:v.length,first:v[0],streak:streak,last30:last30};
+}
+try{ recordVisit(); }catch(e){}
+
 var _seasonPainted = (function(){
   try{ return (typeof seasonActive==="function") ? !!seasonActive() : false; }catch(e){ return false; }
 })();
@@ -6308,6 +6346,12 @@ $("toggleFilters")&&($("toggleFilters").onclick=function(){
 });
 try{ applyHdrCompact(); applyFabSize(); applyToolsStyle(); applyHzFilters(); }catch(e){}
 try{ var _mr=$("myReports"); if(_mr){ var n=myReportCount(); _mr.textContent=n+(n===1?" report":" reports"); } }catch(e){}
+/* v303 — days-used sits beside reports in About: two honest numbers about this driver's own
+   use, both computed on-device. */
+try{
+  var _vs=visitStats(), _dv=$("daysUsed");
+  if(_dv) _dv.textContent = _vs.days ? (_vs.days+(_vs.days===1?" day":" days")+(_vs.streak>1?(" · "+_vs.streak+"-day streak"):"")) : "first day";
+}catch(e){}
 
 try{ applySeason(); }catch(e){}
 document.querySelectorAll("#themeChips .chip").forEach(c=>c.onclick=()=>{
@@ -7394,6 +7438,12 @@ try{
                    ((typeof _cwReqTxt==="function") ? ("\n"+_cwReqTxt()) : "")+
                    ((typeof _cacheAuditTxt!=="undefined") ? ("\n"+_cacheAuditTxt) : "")+
                    ((typeof _liteTxt==="function") ? ("\n"+_liteTxt()) : "")+
+                   ((typeof visitStats==="function") ? (function(){
+                     try{ var v=visitStats();
+                       return "\nuse     "+v.days+" days total · "+v.last30+" in last 30 · streak "+v.streak+
+                              (v.first?("\n        first opened "+v.first):"");
+                     }catch(e){ return ""; }
+                   })() : "")+
                    ((typeof _swTxt!=="undefined") ? ("\n"+_swTxt) : "")+
                    ((typeof _toolsLog!=="undefined" && _toolsLog.length)
                       ? ("\n--- tools ---\n"+_toolsLog.join("\n")) : "")+
