@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v300";
+const APP_VERSION="v301";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -3311,7 +3311,13 @@ async function fetchRoute(silent){
   // A stuck "in flight" flag used to wedge routing permanently: if any routing request hung,
   // every later request returned instantly and the route card never opened. Now it expires.
   if(S.rerouting){
-    if(Date.now()-(S._reroutingAt||0) < 20000) return;
+    /* v301 — 20s was far too long to hold the lock during a drive. A mid-drive reroute now
+       budgets 6s + a 7s retry, so any attempt is finished or dead by ~14s; holding the lock to
+       20 meant up to 6 further seconds where a driver moving away from a stale line could not
+       trigger a fresh attempt. At 35mph that's another 300 feet in the wrong direction.
+       Match the lock to the actual work: 15s while navigating, 20s when planning. */
+    var _lock = S.navigating ? 15000 : 20000;
+    if(Date.now()-(S._reroutingAt||0) < _lock) return;
     S.rerouting=false;                                   // previous attempt clearly died — move on
   }
   if(!navigator.onLine){
@@ -3410,6 +3416,40 @@ async function fetchRoute(silent){
         new Promise(res=>setTimeout(()=>res({code:"Timeout"}),7000))
       ]);
     }
+    /* ═══════════ v301 — REROUTE THAT ACTUALLY RECOVERS ═══════════
+       Reported symptom: mid-drive it says "rerouting" over and over while the route line stays
+       behind the car. Three faults compounding:
+         1) When the reroute request timed out or failed, this returned and left the OLD route
+            line on the map. The driver kept seeing a line to a position they had already left,
+            with nothing indicating it was stale.
+         2) There was no fallback. routeOffline() can build a route from the cached corridor
+            graph — the same router v296 wired into trip planning — but a failing mid-drive
+            reroute, the moment it matters most, never called it.
+         3) Every failed attempt re-announced "Off route — rerouting…", so the driver heard the
+            app trying and never heard it give up or succeed.
+       Now: on any failure, fall back to the local corridor router; if that also fails, say so
+       ONCE and mark the stale line rather than pretending it's live. */
+    var _navFail = (data && data.code==="Timeout") || !data || data.code!=="Ok" || !data.routes || !data.routes.length;
+    if(_navFail && S.navigating){
+      var _local=null;
+      try{ _local=await routeOffline(S.pos,S.dest); }catch(e){ _local=null; }
+      if(_local && installOfflineRoute(_local)){
+        S.offlineKind="computed"; S._rerouteFails=0;
+        speak("Rerouted.");
+        toast("Rerouted from your downloaded map — no traffic data",3200);
+        return;
+      }
+      S._rerouteFails=(S._rerouteFails||0)+1;
+      /* Say it once, not every attempt. And dim the line so a route the driver has already
+         driven past doesn't keep reading as current guidance. */
+      if(S._rerouteFails===1){
+        speak("Can't reroute. Follow the road ahead.");
+        toast("Can't reroute right now — the line shown is your last route",4200);
+        try{ map.setPaintProperty("route-line","line-opacity",0.35); }catch(e){}
+        try{ map.setPaintProperty("route-casing","line-opacity",0.25); }catch(e){}
+      }
+      return;
+    }
     if(data&&data.code==="Timeout"){ toast("Routing is slow right now — try again.",3000); return; }
     if(!data||data.code!=="Ok"||!data.routes||!data.routes.length){toast("No route found for this mode.",2600);return;}
     // We already ask OSRM for alternatives=3 but only ever used routes[0] (the extras were
@@ -3429,6 +3469,10 @@ async function fetchRoute(silent){
     const r=S.routeAlts[0]||data.routes[0];
     S.route=r;S.steps=r.legs.flatMap(l=>l.steps);S.stepIdx=0;S.peekIdx=null;S.offRouteCount=0;S.alerted.clear();
     S.offlineRoute=false;                          // a live route supersedes any offline one
+    /* v301 — a good route clears the failure state and un-dims the line. */
+    S._rerouteFails=0;
+    try{ map.setPaintProperty("route-line","line-opacity",1); }catch(e){}
+    try{ map.setPaintProperty("route-casing","line-opacity",1); }catch(e){}
     S._ri=undefined;S._riT=0;                      // reset along-route progress cache for the new line
     try{map.getSource("route").setData({type:"Feature",geometry:r.geometry});}catch{}
     try{refreshRouteCondition();}catch(e){}
@@ -4231,6 +4275,12 @@ try{
 
 function endNavigation(){
   S.navigating=false;S.headingUp=false;S.remoteStart=false;stopSmooth();try{setDrivingChrome(false);}catch(e){}
+  /* v301 — clear the reroute failure state at the end of a drive. Otherwise a trip that ended
+     with a failed reroute would start the NEXT drive already "in failure": the first off-route
+     event would skip its announcement and the route line would still be dimmed. */
+  S._rerouteFails=0;
+  try{ map.setPaintProperty("route-line","line-opacity",1); }catch(e){}
+  try{ map.setPaintProperty("route-casing","line-opacity",1); }catch(e){}
   try{ if(S.pendingTheme){ const t=S.pendingTheme; S.pendingTheme=null; swapMapStyle(t); } }catch(e){}
 
   try{speechSynthesis.cancel();}catch{}
@@ -4435,7 +4485,11 @@ function navTick(){
       const need = (dR>thresh*1.4 || dR>130) ? 1 : (turnedOff && dR<=thresh ? 2 : 1);
       if(++S.offRouteCount>=need && Date.now()-(S.lastReroute||0)>2500){
         S.offRouteCount=0;S.lastReroute=Date.now();
-        toast("Off route — rerouting…",1400);speak("Rerouting.");fetchRoute(true);
+        /* v301 — announce the FIRST attempt of an episode only. Repeating "rerouting" on every
+           retry is what made it feel stuck: the driver heard the app trying indefinitely and
+           never heard an outcome. The success and give-up messages come from fetchRoute. */
+        if(!(S._rerouteFails>0)){ toast("Off route — rerouting…",1400); speak("Rerouting."); }
+        fetchRoute(true);
       }
     } else S.offRouteCount=0;
   }
