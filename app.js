@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v304";
+const APP_VERSION="v305";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -4758,8 +4758,16 @@ function cwInjectFX(){
       "#navbanner{padding-top:42px;transition:padding .18s ease}"+
       // Compact "cruising" state (no turn imminent): hide non-critical rows so the driver can
       // see the map ahead. Expands automatically as a turn nears.
-      "#navbanner.nb-collapsed{padding:12px 14px 10px}"+
-      "#navbanner.nb-collapsed .nb-btns{display:none}"+
+      /* v305 — the collapsed "cruising" banner used to hide .nb-btns entirely. That row is not
+         decoration: it holds mute, Map, HUD and END. Collapsing happens whenever no turn is
+         imminent — i.e. most of a drive, and all of a long freeway stretch — so for most of the
+         trip the driver had no way to mute guidance, switch view, or even stop navigating. The
+         only escape was waiting for a turn to approach so the banner would expand again.
+         Keep the row; shrink it. Smaller buttons and tighter padding preserve the point of
+         collapsing (see more road ahead) without removing the controls. */
+      "#navbanner.nb-collapsed{padding:32px 14px 10px}"+
+      "#navbanner.nb-collapsed .nb-btns{top:6px;right:7px;gap:5px}"+
+      "#navbanner.nb-collapsed .nb-btns button{padding:3px 8px;font-size:11px;border-radius:7px}"+
       "#navbanner.nb-collapsed #laneRow{display:none!important}"+
       "#navbanner.nb-collapsed .nb-meta{display:none}"+
       // Keep the EXIT prominent even when collapsed (like Google) — it's the one cue a driver
