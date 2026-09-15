@@ -297,6 +297,12 @@
     transition:transform .28s cubic-bezier(.32,.72,0,1)}
   /* v298 — settings group headers. A flat list of 25 rows has no shape; four small labelled
      bands give the eye somewhere to land without adding chrome. */
+  #clearDest{display:none;align-items:center;justify-content:center;
+    width:38px;height:38px;margin-bottom:9px;border-radius:50%;pointer-events:auto;
+    background:var(--panel-solid);color:var(--text);font-size:15px;line-height:1;
+    border:1px solid var(--line);-webkit-backdrop-filter:var(--glass-lite);
+    backdrop-filter:var(--glass-lite);box-shadow:var(--hair),0 6px 18px rgba(0,0,0,.34);cursor:pointer}
+  #clearDest:active{background:var(--panel-hi)}
   /* v300 — mic on the search bar, mirroring the clear/go buttons already there. */
   #searchMic{position:absolute;right:52px;top:50%;transform:translateY(-50%);
     width:34px;height:34px;border:none;background:transparent;font-size:16px;line-height:1;
@@ -1275,6 +1281,10 @@
   </div>
   <!-- v283: grouped into one tray. Same buttons, same ids, same handlers — only the container
        is new, so every existing onclick in app.js keeps working untouched. -->
+  <!-- v304 — clear-destination chip. Hidden until there is a destination, route or POI pin to
+       clear, and hidden again during navigation (Exit ends a drive; this is for before one).
+       Sits apart from the tray so it reads as "undo what's on the map", not another tool. -->
+  <button id="clearDest" aria-label="Clear destination">✕</button>
   <div id="fabTray">
     <!-- v300 — satellite promoted out of the drawer into the main tray. It's a view you want
          mid-drive ("what does this intersection actually look like"), and three taps through a

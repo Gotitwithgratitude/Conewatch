@@ -20,7 +20,7 @@ const HZ_META = {
   traffic:{emoji:"🚦",color:"#FF9F0A",label:"Heavy traffic"},
   alert:{emoji:"📢",color:"#FFD60A",label:"Emergency alert"},
 };
-const APP_VERSION="v303";
+const APP_VERSION="v304";
 
 /* ═══════════ seasonal theme (Halloween) ═══════════
    Deliberately narrow. The palette shifts and a few NON-hazard glyphs change, but every
@@ -2185,12 +2185,58 @@ function addStop(latlng,name){
   if(S.dest) fetchRoute();
 }
 function clearStops(){S.stops=[];stopMarkers.forEach(m=>m.remove());stopMarkers.length=0;}
+/* ═══════════ v304 — CLEARING A DESTINATION ═══════════
+   Picking a place from Discover (or search, or a recent) set a destination, dropped a pin and
+   drew a route — and there was no way to undo any of it. The teardown existed, but only inside
+   endNavigation(), so the sole route back to a clean map was: start navigating, then end it.
+   Change your mind before driving and the pin and line were simply stuck there.
+   Extracted here so every caller shares one implementation — endNavigation now calls this too,
+   rather than keeping its own copy that could drift. */
+function clearDestination(opts){
+  opts=opts||{};
+  try{
+    S.route=null; S.steps=[]; S.stepIdx=0; S.offRouteCount=0; S.peekIdx=null;
+    S._rerouteFails=0; S._etaShown=NaN; S.offlineKind=null; S.offlineStartGap=0;
+    if(S.alerted&&S.alerted.clear) S.alerted.clear();
+    S.passedQueue=[];
+    S.dest=null; S.destName=""; S.destLabel="";
+    S.origin=null; S.originName=""; S.originAddr="";
+    const empty={type:"FeatureCollection",features:[]};
+    ["route","routeCond","routeArrows","routeCasing"].forEach(id=>{
+      try{ if(map.getSource(id)) map.getSource(id).setData(empty); }catch(e){}
+    });
+    try{ map.setPaintProperty("route-line","line-opacity",1); }catch(e){}
+    try{ map.setPaintProperty("route-casing","line-opacity",1); }catch(e){}
+    try{ if(destMarker){ destMarker.remove(); destMarker=null; } }catch(e){}
+    try{ clearStops(); }catch(e){}
+    try{ clearPoiMarkers(); }catch(e){}
+    try{ $("search").value=""; }catch(e){}
+    try{ var sc=$("searchClear"); if(sc) sc.style.display="none"; }catch(e){}
+    try{ $("confirmBar").style.display="none"; }catch(e){}
+    try{ closeSheets(); }catch(e){}
+    try{ _setFromUI(); }catch(e){}
+    try{ updateClearBtn(); }catch(e){}
+  }catch(e){}
+  if(!opts.silent) toast("Destination cleared",1600);
+}
+/* The control itself: a small ✕ chip on the map, visible only when there is something to
+   clear. A button that is absent until it is useful beats one more permanent icon competing
+   for attention on a screen a driver glances at. */
+function updateClearBtn(){
+  try{
+    var b=document.getElementById("clearDest");
+    if(!b) return;
+    var show = !!(S.dest || (S.route&&S.route.geometry) || (poiMarkers&&poiMarkers.length));
+    b.style.display = (show && !S.navigating) ? "flex" : "none";
+  }catch(e){}
+}
 function setDestination(latlng,name){
   try{clearPoiMarkers();}catch(e){}
   try{clearStops();}catch(e){}                                   // drop leftover waypoints from the last trip
   S.route=null; S.steps=[]; S.stepIdx=0;                         // forget the old route entirely
   try{map.getSource("route").setData({type:"FeatureCollection",features:[]});}catch(e){}  // wipe the old line immediately
   S.dest=latlng;S.destName=name||"Destination";
+  try{ updateClearBtn(); }catch(e){}
   if(!latlng||!latlng._keepLabel) S.destLabel=S.destLabel||"";
   if(name&&!["Home","Work","My parked car"].includes(name)){
     QK.recents=[{lat:latlng.lat,lng:latlng.lng,name},...(QK.recents||[]).filter(r=>r.name!==name)].slice(0,6);
@@ -4331,22 +4377,8 @@ function endNavigation(){
   clearInterval(limitTimer); $("limitBadge").style.display="none"; S.limit=null;
   // Clear the trip itself — the line, destination pin and route state used to stay on the map
   // after exiting, so the app still looked like it was navigating.
-  try{
-    S.route=null; S.steps=[]; S.stepIdx=0; S.offRouteCount=0;
-    if(S.alerted&&S.alerted.clear) S.alerted.clear();
-    S.passedQueue=[];
-    S.dest=null; S.destName=""; S.destLabel="";
-    S.origin=null; S.originName=""; S.originAddr="";
-    const empty={type:"FeatureCollection",features:[]};
-    ["route","routeCond","routeArrows","routeCasing"].forEach(id=>{
-      try{ if(map.getSource(id)) map.getSource(id).setData(empty); }catch(e){}
-    });
-    try{ if(destMarker){ destMarker.remove(); destMarker=null; } }catch(e){}
-    try{ clearStops(); }catch(e){}
-    try{ $("search").value=""; }catch(e){}
-    try{ $("confirmBar").style.display="none"; }catch(e){}
-    try{ _setFromUI(); }catch(e){}
-  }catch(e){}
+  // v304 — one shared teardown (see clearDestination) instead of a second copy here
+  try{ clearDestination({silent:true}); }catch(e){}
   map.easeTo({pitch:S.is3d?55:0,bearing:0});
   // A new version arrived mid-drive and the reload was held so it couldn't wipe the live route.
   // The trip is over and cleanup has run, so it's safe to apply now.
@@ -5484,7 +5516,7 @@ function poiCategory(q){
   return null;
 }
 let poiMarkers=[],curCat=null,curRadius=8000;
-function clearPoiMarkers(){ poiMarkers.forEach(m=>{try{m.remove();}catch(e){}}); poiMarkers=[]; }
+function clearPoiMarkers(){ poiMarkers.forEach(m=>{try{m.remove();}catch(e){}}); poiMarkers=[]; try{ updateClearBtn(); }catch(e){} }
 function placeLabelMarker(lat,lng,text,color,emoji){
   try{
     const el=document.createElement("div");
@@ -6184,6 +6216,8 @@ $("hudFlip")&&($("hudFlip").onclick=(e)=>{e.stopPropagation();hudFlip=!hudFlip;a
 let _rec=null,_recBusy=false;
 /* v300 — the mic on the search bar drives the same voice flow as the old drawer row. One
    handler, two entry points: no second implementation to drift out of sync. */
+try{ var _cd=$("clearDest"); if(_cd) _cd.onclick=function(ev){ ev.stopPropagation(); clearDestination(); }; }catch(e){}
+try{ updateClearBtn(); }catch(e){}
 try{ var _sm=$("searchMic"); if(_sm) _sm.onclick=function(ev){ ev.stopPropagation(); var fv=$("fabVoice"); if(fv&&fv.onclick) fv.onclick(); }; }catch(e){}
 $("fabVoice").onclick=()=>{
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
